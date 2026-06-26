@@ -1929,12 +1929,18 @@ void init_triton_ir(py::module_ &m) {
 
                  return false;
                };
+               // By default we only print the IR *before* each pass (the
+               // "After" dump is suppressed unless the pass fails). Setting
+               // MLIR_DUMP_AFTER_PASS=1 flips printAfterOnlyOnFailure off so we
+               // emit both a "Before" and an "After" snapshot for every pass.
+               bool dumpAfter =
+                   ::triton::tools::getBoolEnv("MLIR_DUMP_AFTER_PASS");
                self.enableIRPrinting(
                    /*shouldPrintBeforePass=*/printAlways,
                    /*shouldPrintAfterPass=*/printAlways,
                    /*printModuleScope=*/true,
                    /*printAfterOnlyOnChange=*/false,
-                   /*printAfterOnlyOnFailure*/ true,
+                   /*printAfterOnlyOnFailure*/ !dumpAfter,
                    ::mlir::triton::tools::mlirDumpsOrDbgs(), printingFlags);
              }
              return haveDump;
