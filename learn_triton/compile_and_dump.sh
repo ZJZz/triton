@@ -14,7 +14,7 @@
 #   1024       a constexpr value (tl.constexpr args are passed as literals)
 set -euo pipefail
 
-ROOT=/LocalRun/jiangzhe.zhao/triton
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PY=$ROOT/.venv/bin/python
 
 KERNEL_FILE=${1:?kernel file}
@@ -24,7 +24,8 @@ GRID=${4:?grid}
 OUT=${5:?out subdir}
 
 DUMP=$ROOT/learn_triton/dump/$OUT
-mkdir -p "$DUMP/stage_dump" "$DUMP/aot"
+LOG=$DUMP/mlir-pass-dump.log
+mkdir -p "$DUMP" "$DUMP/stage_dump" "$DUMP/aot"
 
 PYTHONPATH=$ROOT/python \
 TRITON_ALWAYS_COMPILE=1 \
@@ -38,10 +39,10 @@ MLIR_ENABLE_DUMP=1 \
   --out-name "$KERNEL_NAME" \
   --out-path "$DUMP/aot/$KERNEL_NAME" \
   "$KERNEL_FILE" \
-  > "$DUMP/mlir-pass-dump.log" 2>&1
+  > "$LOG" 2>&1
 
 "$PY" "$ROOT/learn_triton/split_pass_dump.py" \
-  "$DUMP/mlir-pass-dump.log" "$DUMP/mlir-pass-dump.split" >/dev/null
+  "$LOG" "$DUMP/mlir-pass-dump.split" >/dev/null
 
 echo "Dumps written under: $DUMP"
 echo "  stage_dump/<hash>/$KERNEL_NAME.{ttir,ttgir,llir,ptx,sass,cubin}  <- the 5 stage boundaries"

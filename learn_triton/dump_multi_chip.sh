@@ -11,7 +11,7 @@
 #   sm_90  Hopper      (H100)                - wgmma + warp specialization + TMA
 # (sm_100 Blackwell needs ptxas-blackwell; add it if available.)
 set -euo pipefail
-ROOT=/LocalRun/jiangzhe.zhao/triton
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 PY=$ROOT/.venv/bin/python
 FILE=${1:?}; KERNEL=${2:?}; SIG=${3:?}; GRID=${4:?}; OUT=${5:?}; STAGES=${6:-3}
 

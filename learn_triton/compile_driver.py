@@ -22,6 +22,7 @@ from pathlib import Path
 
 import triton
 from triton.backends.compiler import GPUTarget
+from triton.compiler import ASTSource
 
 
 def load_kernel(path, name):
@@ -61,8 +62,7 @@ def main():
         signature[k] = "constexpr"
     attrs = {k: [["tt.divisibility", 16]] for k, v in hints.items() if v == 16}
 
-    kernel.create_binder()
-    src = kernel.ASTSource(fn=kernel, constexprs=constants, signature=signature, attrs=attrs)
+    src = ASTSource(fn=kernel, constexprs=constants, signature=signature, attrs=attrs)
 
     target = GPUTarget("cuda", arch, 32)  # <-- arch is an int here (the bug fix)
     backend = triton.compiler.make_backend(target)
