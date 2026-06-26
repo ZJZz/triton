@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Operand A ↔ A_scale ↔ packed-block · 逐元素映射（悬停联动）</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#fff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#0891b2; --hl:#ea580c;
+    --A:#2563eb; --S:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#fff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px}
+  header h1 .g{color:var(--accent)}
+  .badge{font-size:11px;font-weight:700;color:#fff;background:var(--accent);padding:3px 10px;border-radius:20px}
+  .badge.a{background:var(--A)} .badge.s{background:var(--S)}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:260px}
+  .sub b{color:#11305c}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  main{flex:1;display:grid;gap:9px;padding:9px;min-height:0;
+    grid-template-columns:minmax(0,1.5fr) minmax(150px,0.6fr) minmax(0,1.1fr);
+    grid-template-rows:minmax(0,1.3fr) minmax(0,0.72fr);
+    grid-template-areas:"a s p" "phys phys phys";}
+  #pA{grid-area:a} #pS{grid-area:s} #pP{grid-area:p} #pPhys{grid-area:phys}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);
+    background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none}
+  .phead .tag{font-size:10.5px;font-weight:700;color:#fff;padding:1px 9px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:10.5px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;justify-content:center;align-items:flex-start}
+  .gridsvg{display:block}
+  .gridsvg{cursor:crosshair}
+
+  footer{flex:none;border-top:1px solid var(--line);background:#fff;padding:8px 14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  .read{font-size:12px;line-height:1.5;flex:1;min-width:280px}
+  .read .lead{font-weight:800;color:var(--hl)}
+  .read code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  .legend{display:flex;gap:7px 12px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);align-items:center}
+  .legend span{display:inline-flex;gap:4px;align-items:center}
+  .legend i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
+  @media(max-width:1100px){
+    body{height:auto;overflow:auto}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto auto}
+    .pbody{min-height:300px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>Operand A <span class="g">↔</span> A_scale <span class="g">↔</span> packed-block · 逐元素映射</h1>
+    <span class="badge a">Operand A [128,128]</span>
+    <span class="badge s">A_scale [128,4]</span>
+    <span class="badge">VEC_SIZE=32</span>
+    <div class="sub"><b>在任意一个面板上滑动鼠标</b>：左=operand A 的 <code>[BLOCK_M,BLOCK_K]=[128,128]</code> tile；
+      中=它用的 <code>A_scale[128,4]</code> tile；右=A_scale 经 <b>packed-block</b> 重排后的字节。
+      三者实时联动 —— 一个 scale 覆盖 A 同一行连续 <code>VEC=32</code> 个元素。</div>
+  </div>
+</header>
+
+<main>
+  <div class="panel" id="pA">
+    <div class="phead"><span class="tag" style="background:var(--A)">① Operand A tile</span>[BLOCK_M=128, BLOCK_K=128]（原始量化数据）
+      <span class="hint">颜色 = 该列属于哪个 scale 列 s = k//32</span></div>
+    <div class="pbody"><div id="svgA"></div></div>
+  </div>
+  <div class="panel" id="pS">
+    <div class="phead"><span class="tag" style="background:var(--S)">② A_scale tile</span>[128, 4]
+      <span class="hint">k//VEC</span></div>
+    <div class="pbody"><div id="svgS"></div></div>
+  </div>
+  <div class="panel" id="pP">
+    <div class="phead"><span class="tag" style="background:#475569">③ packed-block 后（逻辑）</span>[32, 4, 4] 的 512 字节顺序
+      <span class="hint">d2·16 + d1·4 + s</span></div>
+    <div class="pbody"><div id="svgP"></div></div>
+  </div>
+  <div class="panel" id="pPhys">
+    <div class="phead"><span class="tag" style="background:#0f766e">④ 物理内存对比 · 为什么要 packed-block</span>global memory 字节（地址按行展开）
+      <span class="hint">悬停任意面板 → 同一个 scale 在两种布局里的物理位置</span></div>
+    <div class="pbody" style="justify-content:flex-start"><div id="svgPhys"></div></div>
+  </div>
+</main>
+
+<footer>
+  <div class="read" id="read"></div>
+  <div class="legend" id="legend"></div>
+</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+
+/* ===== 真实参数 ===== */
+const VEC=32, BM=128, BK=128;
+const SCOLS=BK/VEC;            // 4 个 scale 列
+const RB=BM/32;               // 4 个 32 行块 (d1)
+const SC=['#2563eb','#0d9488','#d97706','#7c3aed'];   // 按 scale 列 s 配色
+const scol=s=>SC[s%4];
+
+/* packed 位置：A_scale[m,s] → 第几个字节
+   reshape[1,4,32,1,4] permute(0,3,2,1,4) → 顺序 d2(32)→d1(4)→s(4) */
+const packedPos=(m,s)=> (m%32)*16 + Math.floor(m/32)*4 + s;
+
+/* ===== 几何 ===== */
+const A={ox:40, oy:26, cs:4.2, W:0, H:0};              // operand A：128×128
+const S={ox:54, oy:26, cw:26, ch:A.cs, W:0, H:0};      // A_scale：128×4，行高与 A 对齐
+const P={ox:40, oy:30, cw:24, ch:15, gap:12, W:0, H:0};// packed：32 行 × (4 组×4)
+
+/* ===== 构建静态网格（一次）===== */
+function buildA(){
+  const {ox,oy,cs}=A, gw=BK*cs, gh=BM*cs;
+  A.W=ox+gw+16; A.H=oy+gh+30;
+  let g='';
+  // 4 个 scale 列对应的竖直色带
+  for(let s=0;s<SCOLS;s++)
+    g+=`<rect x="${ox+s*VEC*cs}" y="${oy}" width="${VEC*cs}" height="${gh}" fill="${lighten(scol(s),.10)}"/>`;
+  // 细网格线（每个 cell）
+  for(let k=0;k<=BK;k++){ const x=ox+k*cs; const vec=k%VEC===0;
+    g+=`<line x1="${x}" y1="${oy}" x2="${x}" y2="${oy+gh}" stroke="${vec?'#94a3b8':'#e3ebf3'}" stroke-width="${vec?1.1:0.4}"/>`; }
+  for(let m=0;m<=BM;m++){ const y=oy+m*cs; const blk=m%32===0;
+    g+=`<line x1="${ox}" y1="${y}" x2="${ox+gw}" y2="${y}" stroke="${blk?'#cbd5e1':'#eef2f7'}" stroke-width="${blk?1:0.4}"/>`; }
+  // 轴
+  g+=`<text x="${ox+gw/2}" y="16" text-anchor="middle" style="font-size:11px;font-weight:700" fill="#1c2733">BLOCK_K = ${BK} 列（每 VEC=32 列共享 1 个 scale）→</text>`;
+  g+=`<text x="22" y="${oy+gh/2}" text-anchor="middle" transform="rotate(-90 22 ${oy+gh/2})" style="font-size:11px;font-weight:700" fill="#1c2733">BLOCK_M = ${BM} 行 ↓</text>`;
+  for(let s=0;s<SCOLS;s++)
+    g+=`<text x="${ox+(s+0.5)*VEC*cs}" y="${oy+gh+14}" text-anchor="middle" style="font-size:9px;font-weight:700" fill="${scol(s)}">s=${s}（k=${s*VEC}..${s*VEC+VEC-1}）</text>`;
+  g+=`<g id="ovA"></g>`;
+  setSvg('svgA', g, A.W, A.H);
+}
+function buildS(){
+  const {ox,oy,cw,ch}=S, gw=SCOLS*cw, gh=BM*ch;
+  S.W=ox+gw+18; S.H=oy+gh+24;
+  let g='';
+  for(let m=0;m<BM;m++)for(let s=0;s<SCOLS;s++){
+    const c=scol(s);
+    g+=`<rect x="${ox+s*cw}" y="${oy+m*ch}" width="${cw-0.6}" height="${ch-0.4}" fill="${lighten(c,.30)}" stroke="${c}" stroke-width="0.4"/>`;
+  }
+  // 32 行块分隔
+  for(let b=1;b<RB;b++) g+=`<line x1="${ox}" y1="${oy+b*32*ch}" x2="${ox+gw}" y2="${oy+b*32*ch}" stroke="#94a3b8" stroke-width="1"/>`;
+  g+=`<text x="${ox+gw/2}" y="16" text-anchor="middle" style="font-size:10.5px;font-weight:700" fill="#1c2733">SCALE_K=4 列 →</text>`;
+  for(let s=0;s<SCOLS;s++) g+=`<text x="${ox+(s+0.5)*cw}" y="${oy-3}" text-anchor="middle" style="font-size:8.5px;font-weight:700" fill="${scol(s)}">s${s}</text>`;
+  for(let m=0;m<BM;m+=16) g+=`<text x="${ox-4}" y="${oy+m*ch+ch}" text-anchor="end" style="font-size:7.5px" fill="#90a0b0">${m}</text>`;
+  g+=`<text x="${ox}" y="${oy+gh+16}" style="font-size:9px" fill="#7a8694">每格 = 1 个 scale（管 A 同行 32 个元素）</text>`;
+  g+=`<g id="ovS"></g>`;
+  setSvg('svgS', g, S.W, S.H);
+}
+function buildP(){
+  const {ox,oy,cw,ch,gap}=P, groupW=4*cw, gw=RB*groupW+(RB-1)*gap, gh=32*ch;
+  P.W=ox+gw+16; P.H=oy+gh+40; P.groupW=groupW;
+  let g='';
+  g+=`<text x="${ox+gw/2}" y="16" text-anchor="middle" style="font-size:10.5px;font-weight:700" fill="#1c2733">落盘字节顺序：32 行(d2) × [4 行块(d1) × 4 列(s)]</text>`;
+  for(let d2=0;d2<32;d2++)for(let d1=0;d1<RB;d1++)for(let s=0;s<SCOLS;s++){
+    const m=d1*32+d2, c=scol(s);
+    const x=ox+d1*(groupW+gap)+s*cw, y=oy+d2*ch;
+    g+=`<rect x="${x}" y="${y}" width="${cw-0.6}" height="${ch-0.5}" fill="${lighten(c,.30)}" stroke="${c}" stroke-width="0.4"/>`;
+  }
+  // d1 组框 + 标注
+  for(let d1=0;d1<RB;d1++){ const gx=ox+d1*(groupW+gap);
+    g+=`<rect x="${gx-2}" y="${oy-2}" width="${groupW+4}" height="${gh+4}" rx="4" fill="none" stroke="#475569" stroke-width="1.2" stroke-dasharray="4 3"/>`;
+    g+=`<text x="${gx+groupW/2}" y="${oy+gh+14}" text-anchor="middle" style="font-size:8.5px;font-weight:700" fill="#475569">d1=${d1}（行 ${d1*32}–${d1*32+31}）</text>`;
+  }
+  for(let d2=0;d2<32;d2+=4) g+=`<text x="${ox-4}" y="${oy+d2*ch+ch}" text-anchor="end" style="font-size:7.5px" fill="#90a0b0">d2=${d2}</text>`;
+  g+=`<text x="${ox}" y="${oy+gh+30}" style="font-size:9px" fill="#7a8694">同一 d2 行里 4 个行块(c0c1c2c3)交错 → 16B 单元；32 个 = 512B 连续（TMA 256B 内维）</text>`;
+  g+=`<g id="ovP"></g>`;
+  setSvg('svgP', g, P.W, P.H);
+}
+function setSvg(id, inner, W, H){
+  $(id).innerHTML=`<svg class="gridsvg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`;
+}
+
+/* ===== ④ 物理内存：自然(无pack) vs packed ===== */
+const NAT={ox:34, oy:46, bw:4, gap:9, perLine:32, lineH:24, bh:14};
+NAT.segW=SCOLS*NAT.bw+NAT.gap;
+const PK={ox:34, oy:0, bw:5, perLine:128, lineH:15, bh:11};
+function natXY(m,s){const L=Math.floor(m/NAT.perLine),c=m%NAT.perLine;return {x:NAT.ox+c*NAT.segW+s*NAT.bw, y:NAT.oy+L*NAT.lineH};}
+function pkXY(m,s){const i=packedPos(m,s),L=Math.floor(i/PK.perLine),c=i%PK.perLine;return {x:PK.ox+c*PK.bw, y:PK.oy+L*PK.lineH};}
+function buildPhys(){
+  const natLines=Math.ceil(BM/NAT.perLine), natH=NAT.oy+natLines*NAT.lineH;
+  PK.oy=natH+52;
+  const pkLines=Math.ceil(512/PK.perLine);
+  const W=Math.max(NAT.ox+NAT.perLine*NAT.segW, PK.ox+PK.perLine*PK.bw)+22;
+  const H=PK.oy+pkLines*PK.lineH+30;
+  let g=`<defs><pattern id="hp" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <rect width="5" height="5" fill="#f1f5f9"/><line x1="0" y1="0" x2="0" y2="5" stroke="#cbd5e1" stroke-width="1.6"/></pattern></defs>`;
+  // —— 自然布局 ——
+  g+=`<text x="${NAT.ox}" y="18" style="font-size:11.5px;font-weight:800" fill="#b91c1c">✗ 无 packed-block：自然 [M, SCALE_K] row-major</text>`;
+  g+=`<text x="${NAT.ox}" y="33" style="font-size:9px" fill="#7a8694">这一个 [128,4] 块沿 M 被 SCALE_K 跨距打散成 128 段，每段只有 4 字节连续（斜纹 = 其他 K 块的 scale，被跳过）→ TMA 发海量 16B 小消息、抖 L2。</text>`;
+  for(let m=0;m<BM;m++){
+    for(let s=0;s<SCOLS;s++){const {x,y}=natXY(m,s),c=scol(s);
+      g+=`<rect x="${x}" y="${y}" width="${NAT.bw-0.6}" height="${NAT.bh}" fill="${lighten(c,.3)}" stroke="${c}" stroke-width="0.4"/>`;}
+    const g0=natXY(m,0);
+    g+=`<rect x="${g0.x+SCOLS*NAT.bw}" y="${g0.y}" width="${NAT.gap-2}" height="${NAT.bh}" fill="url(#hp)" stroke="#d5dde6" stroke-width="0.3"/>`;
+  }
+  for(let m=0;m<BM;m+=NAT.perLine){const {x,y}=natXY(m,0);
+    g+=`<text x="${NAT.ox-3}" y="${y+NAT.bh-2}" text-anchor="end" style="font-size:7px" fill="#90a0b0">行${m}</text>`;}
+  // —— packed ——
+  g+=`<text x="${PK.ox}" y="${PK.oy-32}" style="font-size:11.5px;font-weight:800" fill="#15803d">✓ packed-block：同一块重排成连续 512 字节</text>`;
+  g+=`<text x="${PK.ox}" y="${PK.oy-18}" style="font-size:9px" fill="#7a8694">512B 整块连续（= 2×256B，TMA 当作 256B 内维）→ 一条 TMA 搬完、吃满 L2。教程实测约 <tspan fill="#15803d" font-weight="800">20× 提速</tspan>。</text>`;
+  for(let i=0;i<512;i++){
+    const d2=Math.floor(i/16),rem=i%16,s=rem%4,c=scol(s);
+    const L=Math.floor(i/PK.perLine),cc=i%PK.perLine,x=PK.ox+cc*PK.bw,y=PK.oy+L*PK.lineH;
+    g+=`<rect x="${x}" y="${y}" width="${PK.bw-0.5}" height="${PK.bh}" fill="${lighten(c,.3)}" stroke="${c}" stroke-width="0.3"/>`;
+    if(i%16===0&&i>0) g+=`<line x1="${x}" y1="${y-1}" x2="${x}" y2="${y+PK.bh+1}" stroke="#15803d" stroke-width="0.7"/>`;
+  }
+  g+=`<text x="${PK.ox}" y="${PK.oy+pkLines*PK.lineH+14}" style="font-size:9px" fill="#7a8694">绿色竖线 = 每 16 字节单元（4 行块 c0c1c2c3 的同一 d2 行）；整条无空洞。</text>`;
+  g+=`<g id="ovNat"></g><g id="ovPk"></g>`;
+  setSvg('svgPhys', g, W, H);
+}
+
+/* ===== 联动高亮 ===== */
+function rect(x,y,w,h,stroke,sw,fill){
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" fill="${fill||'none'}" stroke="${stroke}" stroke-width="${sw||2}" rx="2" pointer-events="none"/>`;
+}
+function setHL(m,k,s,src){
+  if(m<0||m>=BM||s<0||s>=SCOLS){clearHL();return;}
+  const hl='#ea580c';
+  // ① operand A：整行 m 的 s 段（32 列）+ 精确 cell（若来自 A）
+  let oa=`<rect x="${A.ox+s*VEC*A.cs}" y="${A.oy+m*A.cs}" width="${VEC*A.cs}" height="${A.cs}" fill="${lighten(hl,.30)}" stroke="${hl}" stroke-width="1.4" pointer-events="none"/>`;
+  if(src==='A'&&k!=null) oa+=`<rect x="${A.ox+k*A.cs}" y="${A.oy+m*A.cs}" width="${A.cs}" height="${A.cs}" fill="${hl}" stroke="#7a2e08" stroke-width="0.8" pointer-events="none"/>`;
+  // 引导：行 + 列段范围标尺
+  oa+=`<rect x="${A.ox}" y="${A.oy+m*A.cs}" width="${BK*A.cs}" height="${A.cs}" fill="none" stroke="${lighten(hl,.5)}" stroke-width="0.8" pointer-events="none"/>`;
+  $('ovA').innerHTML=oa;
+  // ② A_scale：cell (m,s)
+  $('ovS').innerHTML=rect(S.ox+s*S.cw, S.oy+m*S.ch, S.cw-0.6, S.ch, hl, 1.8, lighten(hl,.35));
+  // ③ packed：位置 d2=m%32, d1=⌊m/32⌋, col=s
+  const d2=m%32, d1=Math.floor(m/32);
+  const px=P.ox+d1*(P.groupW+P.gap)+s*P.cw, py=P.oy+d2*P.ch;
+  $('ovP').innerHTML=rect(px,py,P.cw-0.6,P.ch, hl, 2, lighten(hl,.35));
+  // ④ 物理：自然(散) vs packed(连)
+  if($('ovNat')){
+    const n=natXY(m,s), seg=natXY(m,0);
+    $('ovNat').innerHTML=
+      `<rect x="${seg.x-1.5}" y="${seg.y-1.5}" width="${SCOLS*NAT.bw+1}" height="${NAT.bh+3}" fill="none" stroke="${hl}" stroke-width="1.4" pointer-events="none"/>`+
+      `<rect x="${n.x-0.4}" y="${n.y-0.4}" width="${NAT.bw}" height="${NAT.bh+0.8}" fill="${hl}" pointer-events="none"/>`;
+    const p=pkXY(m,s);
+    $('ovPk').innerHTML=`<rect x="${p.x-1}" y="${p.y-1}" width="${PK.bw+1}" height="${PK.bh+2}" fill="${hl}" stroke="#7a2e08" stroke-width="0.7" pointer-events="none"/>`;
+  }
+  // 读数
+  const pos=packedPos(m,s);
+  $('read').innerHTML=
+    `<span class="lead">A_scale[m=${m}, s=${s}]</span> ＝ Operand A 第 ${m} 行、第 `+
+    `<code>${s*VEC}..${s*VEC+VEC-1}</code> 列（共 VEC=32 个元素）的<b>共享缩放因子</b>`+
+    `${src==='A'&&k!=null?`；当前悬停 <code>A[${m},${k}]</code> → s = k//32 = ${s}`:''}`+
+    `　·　packed-block 落在第 <code>${pos}</code> 字节（= d2·16 + d1·4 + s = ${d2}·16+${d1}·4+${s}）。`;
+}
+function clearHL(){ $('ovA').innerHTML=$('ovS').innerHTML=$('ovP').innerHTML='';
+  if($('ovNat')){$('ovNat').innerHTML=$('ovPk').innerHTML='';}
+  $('read').innerHTML=`<span class="lead">把鼠标移到任意面板上 →</span> 四个视图会一起高亮对应的数据：一个 scale 管 A 同一行连续 32 个元素；在 <b>④</b> 看它在「自然布局(散)」与「packed(连)」里的物理位置。`; }
+
+/* ===== 悬停事件 ===== */
+function pos(el,e){ const svg=el.querySelector('svg'); const r=svg.getBoundingClientRect();
+  return {x:(e.clientX-r.left)*(svg.viewBox.baseVal.width/r.width), y:(e.clientY-r.top)*(svg.viewBox.baseVal.height/r.height)}; }
+function attach(){
+  $('svgA').addEventListener('pointermove',e=>{ const {x,y}=pos($('svgA'),e);
+    const k=Math.floor((x-A.ox)/A.cs), m=Math.floor((y-A.oy)/A.cs);
+    if(k>=0&&k<BK&&m>=0&&m<BM) setHL(m,k,Math.floor(k/VEC),'A'); });
+  $('svgS').addEventListener('pointermove',e=>{ const {x,y}=pos($('svgS'),e);
+    const s=Math.floor((x-S.ox)/S.cw), m=Math.floor((y-S.oy)/S.ch);
+    if(s>=0&&s<SCOLS&&m>=0&&m<BM) setHL(m,null,s,'S'); });
+  $('svgP').addEventListener('pointermove',e=>{ const {x,y}=pos($('svgP'),e);
+    const d2=Math.floor((y-P.oy)/P.ch); const lx=x-P.ox; const d1=Math.floor(lx/(P.groupW+P.gap));
+    const within=lx-d1*(P.groupW+P.gap); const s=Math.floor(within/P.cw);
+    if(d2>=0&&d2<32&&d1>=0&&d1<RB&&s>=0&&s<SCOLS) setHL(d1*32+d2,null,s,'P'); });
+  $('svgPhys').addEventListener('pointermove',e=>{ const {x,y}=pos($('svgPhys'),e);
+    if(y<PK.oy-36){ // 自然区
+      const L=Math.floor((y-NAT.oy)/NAT.lineH), cseg=Math.floor((x-NAT.ox)/NAT.segW);
+      if(L<0||cseg<0||cseg>=NAT.perLine) return;
+      const m=L*NAT.perLine+cseg; if(m<0||m>=BM) return;
+      const s=Math.floor(((x-NAT.ox)-cseg*NAT.segW)/NAT.bw); if(s<0||s>=SCOLS) return;
+      setHL(m,null,s,'Nat');
+    } else { // packed 区
+      const L=Math.floor((y-PK.oy)/PK.lineH), c=Math.floor((x-PK.ox)/PK.bw);
+      if(L<0||c<0||c>=PK.perLine) return; const i=L*PK.perLine+c; if(i<0||i>=512) return;
+      const d2=Math.floor(i/16), d1=Math.floor((i%16)/4), s=i%4, m=d1*32+d2;
+      setHL(m,null,s,'Pk');
+    }
+  });
+  [['svgA'],['svgS'],['svgP'],['svgPhys']].forEach(([id])=>$(id).addEventListener('pointerleave',clearHL));
+}
+
+/* legend */
+$('legend').innerHTML = SC.map((c,s)=>`<span><i style="background:${lighten(c,.3)};border-color:${c}"></i>s=${s}</span>`).join('')
+  +`<span><i style="background:#ea580c"></i>当前悬停</span>`;
+
+buildA(); buildS(); buildP(); buildPhys(); attach(); clearHL();
+</script>
+</body>
+</html>

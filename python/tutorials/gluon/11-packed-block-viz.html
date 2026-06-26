@@ -1,0 +1,562 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>优化 2 详解 · swizzle_scales_packed_block（pad → reshape5D → permute → contiguous）</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#ffffff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#0891b2; --new:#ea580c;
+    --good:#16a34a; --bad:#dc2626; --view:#0891b2; --move:#db2777;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#ffffff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px;letter-spacing:.3px}
+  header h1 .g{color:var(--accent)}
+  .badge{font-size:11px;font-weight:600;color:#fff;background:var(--accent);
+    padding:3px 11px;border-radius:20px;white-space:nowrap}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:260px}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;
+    padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  .stepper{display:flex;align-items:center;gap:7px;margin-top:8px;flex-wrap:wrap}
+  .chip{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:#fff;
+    border-radius:9px;padding:5px 11px;cursor:pointer;transition:.15s}
+  .chip:hover{border-color:var(--accent)}
+  .chip.on{border-color:var(--accent);background:#e8f6fb;box-shadow:0 0 0 2px rgba(8,145,178,.12)}
+  .chip .num{width:20px;height:20px;border-radius:50%;background:var(--line);color:#445;
+    font-weight:800;font-size:11px;display:flex;align-items:center;justify-content:center}
+  .chip.on .num{background:var(--accent);color:#fff}
+  .chip .ct{display:flex;flex-direction:column;line-height:1.15}
+  .chip .ck{font-weight:700;font-size:12px}
+  .chip .cs{font-size:10px;color:var(--muted);font-family:Consolas,monospace}
+  .chevron{font-size:13px;color:#aebac8;font-weight:800}
+  .navbtns{margin-left:auto;display:flex;gap:6px}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 13px;
+    cursor:pointer;font-size:12px;font-weight:600;color:var(--txt)}
+  .btn:hover{border-color:var(--accent)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+  main{flex:1;display:grid;gap:9px;padding:9px;min-height:0;
+    grid-template-columns:minmax(0,1fr) 372px;
+    grid-template-rows:minmax(0,1.12fr) minmax(0,0.88fr);
+    grid-template-areas:"logic code" "phys code";}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  #pLogic{grid-area:logic}
+  #pPhys{grid-area:phys}
+  #pCode{grid-area:code}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);
+    background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none}
+  .phead .tag{font-size:10.5px;font-weight:600;color:#fff;padding:1px 8px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:11px;display:flex;align-items:center;gap:6px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:6px}
+  #pLogic .pbody,#pPhys .pbody{display:flex;overflow:hidden;padding:0}
+  #logicSvg,#physSvg{flex:1;min-width:0;min-height:0;position:relative;overflow:hidden;
+    cursor:grab;touch-action:none;background:
+      linear-gradient(#f7fafd 1px,transparent 1px) 0 0/22px 22px,
+      linear-gradient(90deg,#f7fafd 1px,transparent 1px) 0 0/22px 22px,#ffffff}
+  #logicSvg.grabbing,#physSvg.grabbing{cursor:grabbing}
+  #logicSvg svg,#physSvg svg{position:absolute;left:0;top:0;transform-origin:0 0}
+  .pzbtn{border:1px solid var(--line);background:#fff;border-radius:6px;padding:1px 8px;cursor:pointer;
+    font-size:10.5px;font-weight:700;color:var(--txt)}
+  .pzbtn:hover{border-color:var(--accent);color:var(--accent)}
+  .pzlvl{font-family:Consolas,monospace;color:var(--muted);min-width:42px;text-align:center}
+
+  .note{padding:8px 14px;border-top:1px solid var(--line);background:#fbfdff;font-size:12px;flex:none}
+  .note b{color:#11305c}
+  .note code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;
+    padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  .kind{display:inline-block;font-weight:800;border-radius:6px;padding:1px 9px;margin-right:8px;font-size:11px}
+  .kind.view{color:#fff;background:var(--view)}
+  .kind.move{color:#fff;background:var(--move)}
+  .kind.pad{color:#fff;background:#64748b}
+
+  .explain{padding:8px 12px;background:#e8f6fb;border-bottom:1px solid var(--line);
+    font-size:12px;line-height:1.55;flex:none;max-height:236px;overflow:auto}
+  .explain b{color:#11305c}
+  .explain code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;
+    padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  pre{margin:0;font-family:"Cascadia Code",Consolas,Menlo,monospace;font-size:11.5px;line-height:1.6;padding:4px 0}
+  .cl{padding:1px 10px 1px 12px;white-space:pre-wrap;border-left:3px solid transparent;color:#33414f}
+  .cl.on{background:#fff3cd;font-weight:600;color:#1c2733;border-left-color:var(--new)}
+  .cmt{color:#8a98a8}
+  .legend{display:flex;gap:8px 14px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);
+    padding:5px 12px;border-top:1px solid var(--line);align-items:center}
+  .legend span{display:inline-flex;gap:4px;align-items:center}
+  .legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .symtab{display:flex;gap:6px 9px;flex-wrap:wrap;padding:6px 12px;border-top:1px solid var(--line);
+    background:#fbfdff;font-size:10.5px;align-items:center}
+  .symtab .lead{font-weight:700;color:#11305c}
+  .symtab .lead b{font-family:Consolas,monospace;color:#0550ae}
+  .symtab .it{display:inline-flex;gap:5px;align-items:baseline;border:1px solid #e3ebf3;
+    border-radius:7px;padding:2px 8px;background:#fff}
+  .symtab .it b{font-family:Consolas,monospace;color:#0550ae}
+  .symtab .it .v{font-weight:800;color:var(--new)}
+  .symtab .it .mean{color:#5b6b7d}
+  @media(max-width:1040px){
+    body{height:auto;overflow:auto}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto auto;grid-template-areas:"logic" "phys" "code"}
+    #pLogic,#pPhys{min-height:340px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>优化 2 详解 <span class="g">·</span> swizzle_scales_packed_block</h1>
+    <span class="badge">pad → reshape 5D → permute → contiguous</span>
+    <div class="sub">真实结构：把 <b>128 行 = 4×32</b>、K 每 <b>4</b> 一组打包成 TMA 友好的连续大块。
+      示例取一个 <code>[126, 6]</code> 的 scale（需补齐到 <code>[128, 8]</code>）。
+      <b>图很大 → 用鼠标滚轮缩放、按住拖拽平移、「复位」还原。</b></div>
+  </div>
+  <div class="stepper" id="stepper"></div>
+</header>
+
+<main>
+  <div class="panel" id="pLogic">
+    <div class="phead"><span class="tag" id="logicTag" style="background:var(--accent)">逻辑视图</span><span id="logicTitle"></span>
+      <span class="hint">🖱 滚轮缩放 · 拖拽平移
+        <button class="pzbtn" id="logicReset">复位</button></span></div>
+    <div class="pbody"><div id="logicSvg"></div></div>
+    <div class="symtab" id="symtab"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <div class="panel" id="pPhys">
+    <div class="phead"><span class="tag" style="background:#475569">物理内存</span>字节顺序（global memory，地址 →）
+      <span class="hint" id="physHint"><span id="physKind"></span>
+        <button class="pzbtn" id="physReset">复位</button></span></div>
+    <div class="pbody"><div id="physSvg"></div></div>
+    <div class="note" id="note"></div>
+  </div>
+
+  <div class="panel" id="pCode">
+    <div class="phead"><span class="tag" style="background:#0550ae">代码 &amp; 讲解</span><span id="codeName"></span></div>
+    <div class="explain" id="explain"></div>
+    <div class="pbody"><pre id="codePanel"></pre></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+
+/* ===== 真实常量（不再用玩具缩减）=====
+   示例：原始 scale [126,6] → pad 到 [128,8]
+   128 = R(4) × G(32)，SCALE_K(8) = REP_K(2) × KIN(4) */
+const ORIG_MN=126, ORIG_K=6;        // 原始 scale 形状（未对齐）
+const MN=128, SK=8;                  // pad 后形状（对齐到 [128,4] 整数倍）
+const R=4, G=32;                     // 128 = R(4) × G(32)
+const REP_K=2, KIN=4;               // SCALE_K = REP_K × 4
+const REP_MN=1;                      // MN // 128
+const COL4=['#2563eb','#0d9488','#d97706','#7c3aed']; // d1 的 4 个颜色
+
+const d1=m=>Math.floor(m/G);         // “4” 维：第几个 32 行块（0..3）
+const d2=m=>m%G;                     // “32” 维：块内第几行（0..31）
+const d3=k=>Math.floor(k/KIN);       // REP_K 维
+const d4=k=>k%KIN;                   // inner “4” 维
+const isPad=(m,k)=> m>=ORIG_MN || k>=ORIG_K;
+const ccol=(m,k)=> COL4[d1(m)];
+
+/* ===== 三种顺序 ===== */
+const origOrder=[]; for(let m=0;m<ORIG_MN;m++)for(let k=0;k<ORIG_K;k++) origOrder.push({m,k});
+const padOrder=[];  for(let m=0;m<MN;m++)for(let k=0;k<SK;k++) padOrder.push({m,k});
+// permute(0,3,2,1,4)+contiguous 后的新顺序：iterate REP_K(d3) → 32(d2) → 4(d1) → 4(d4)
+const packedOrder=[];
+for(let v3=0;v3<REP_K;v3++)for(let v2=0;v2<G;v2++)for(let v1=0;v1<R;v1++)for(let v4=0;v4<KIN;v4++)
+  packedOrder.push({m:v1*G+v2, k:v3*KIN+v4});
+const padPos=(m,k)=> m*SK+k;
+const newPos=(m,k)=> packedOrder.findIndex(e=>e.m===m&&e.k===k);
+
+/* ===== 步骤定义 ===== */
+const STEPS=[
+ {tag:'原始', short:'[MN, SCALE_K]', kind:'state',
+  logicTitle:'2D 张量 [MN, SCALE_K] = [126, 6]，row-major',
+  codeName:'输入', codeLine:0,
+  explain:`输入 <code>scales</code> 形状 <code>[MN, SCALE_K] = [126, 6]</code>，沿 K（列）连续。
+    这是 <b>未经任何 relayout</b> 的原始 MX scale（packed-block 直接吃原始 2D scale，不依赖优化 1）。
+    目标：把“一个 program 要用的整 <b>128 行</b> scale”重排成 TMA 一次能搬的<b>连续大块</b>。`,
+  note:`<b>起点：</b>row-major 下，第 0 行的 6 个字节在地址 0..5，第 1 行紧随其后……
+    自然布局沿 K 连续，但<b>沿 M（行）跨距很大</b>，TMA 难以高效抓整列 128 行。`},
+
+ {tag:'pad', short:'对齐 [128,4]', kind:'pad',
+  logicTitle:'F.pad → 对齐到 [128, 4] 的整数倍 → [128, 8]',
+  codeName:'pad（补齐对齐）', codeLine:1,
+  explain:`packed-block 要求 MN 是 <b>128</b> 的倍数、SCALE_K 是 <b>4</b> 的倍数。
+    <code>F.pad(scales, (0, PAD_K, 0, PAD_MN))</code> 在<b>右侧补 PAD_K 列、下侧补 PAD_MN 行</b>零。<br>
+    本例：<code>PAD_MN = 128-126 = 2</code> 行，<code>PAD_K = 8-6 = 2</code> 列。补出的格子（斜纹）只占位，
+    不参与真实计算。`,
+  note:`<span class="kind pad">补齐 · 占位</span>灰色斜纹 = padding 字节。补齐到 [128,8] 后才能被
+    <code>reshape(1, 4, 32, 2, 4)</code> 整除拆分。`},
+
+ {tag:'reshape', short:'拆 5 维', kind:'view',
+  logicTitle:'reshape → [REP_MN, 4, 32, REP_K, 4] = [1, 4, 32, 2, 4]',
+  codeName:'reshape（拆 5 维）', codeLine:2,
+  explain:`<code>reshape</code> 把两条轴各劈开：<br>
+    · M 轴(128) → <b>(REP_MN=1) × (d1=4 个 32 行块) × (d2=32 行)</b>，即 <code>m = d1·32 + d2</code>。<br>
+    · K 轴(8) → <b>(d3=REP_K=2) × (d4=4 列)</b>，即 <code>k = d3·4 + d4</code>。<br>
+    每格得到 5 维下标 <code>(REP_MN,d1,d2,d3,d4)</code>。<b style="color:var(--view)">纯重新编号，不搬数据</b> ——
+    物理条与上一步<b>一模一样</b>，只是头顶多了分组括号。`,
+  note:`<span class="kind view">视图 · 不搬数据</span>颜色 = <b>d1</b>（“4” 这一维），记作 <b>c0–c3</b>（见下方图例）。
+    此刻同色（同一个 32 行块）在物理上是<b>连续整段</b> —— 4 个颜色 = 4 大段（各 256 字节）。`},
+
+ {tag:'permute', short:'(0,3,2,1,4)', kind:'view',
+  logicTitle:'permute(0,3,2,1,4) → [REP_MN, REP_K, 32, 4, 4] = [1, 2, 32, 4, 4]',
+  codeName:'permute（换维顺序）', codeLine:3,
+  explain:`<code>permute(0,3,2,1,4)</code> 把维顺序从 <code>(REP_MN, <b>d1=4</b>, d2=32, <b>d3=REP_K</b>, d4)</code>
+    换成 <code>(REP_MN, <b>d3=REP_K</b>, d2=32, <b>d1=4</b>, d4)</code> —— 即把 <b>“4”(d1)</b> 与 <b>REP_K(d3)</b> 对调，
+    让 <b>“4”</b> 落到<b>靠最内</b>的位置（仅次于 d4）。<br>
+    于是内存最内层将按 <code>d2(32) → d1(4) → d4(4)</code> 遍历：每个 32-行位置上，把
+    <b>4 个 32 行块的同一行</b>（第 p、32+p、64+p、96+p 行）紧挨着摆。<br>
+    <b style="color:var(--view)">仍是视图</b>（只改 stride）：沿新维序读，会在旧物理条上<b>反复跳跃</b>。`,
+  note:`<span class="kind view">视图 · 不搬数据</span>黄色路径 = 新维序的逐元素读取轨迹。
+    它在旧物理条上跳跃（4 色被穿插访问）→ 这正是下一步要落实的“交错打包”。`},
+
+ {tag:'contiguous', short:'落盘', kind:'move',
+  logicTitle:'.contiguous() → 按新维序真正落盘（packed block）',
+  codeName:'contiguous（落盘搬运）', codeLine:4,
+  explain:`<code>.contiguous()</code> 按新维序<b>真正把字节写到新内存</b>，遍历顺序
+    <code>REP_K → 32 → 4 → 4</code>。结果：<b style="color:var(--good)">4 个 32 行块被细密交错</b>成
+    <code>c0c0c0c0 c1c1c1c1 …</code> 的节奏（对比原始的“4 大段”）。<br>
+    每个 <code>(REP_K, 32位置)</code> 单元 = <code>4×4 = 16 字节</code>连续；32 个这种单元
+    拼成 <code>32×16 = 512 字节</code>，TMA 描述符再把它看作 <code>[…, 2, 256]</code> 的 <b>256B 内维</b> →
+    一次搬运吃满 L2、不发 16B 小消息。`,
+  note:`<span class="kind move">落盘 · 真搬数据</span>上=旧顺序（4 大段 + pad），下=新顺序
+    （<b style="color:var(--good)">4 色细密交错、整块连续</b>）。箭头 = gather 的实际数据搬运 —— 唯一付出拷贝成本的一步。`},
+];
+
+let step=0;
+
+/* ===== 缩放 / 平移 ===== */
+const PZ={logicSvg:{z:1,x:0,y:0,W:1,H:1}, physSvg:{z:1,x:0,y:0,W:1,H:1}};
+function setSvg(id, inner, W, H){
+  const el=$(id), st=PZ[id]; st.W=W; st.H=H;
+  el.innerHTML=`<svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" style="position:absolute;left:0;top:0;transform-origin:0 0">${inner}</svg>`;
+  fitPZ(id);
+}
+function fitPZ(id){
+  const el=$(id), st=PZ[id];
+  const cw=el.clientWidth||640, ch=el.clientHeight||320;
+  const fit=Math.min(cw/st.W, ch/st.H);
+  st.z = fit>0&&isFinite(fit) ? fit : 1;
+  st.x = Math.max(0,(cw-st.W*st.z)/2);
+  st.y = 6;
+  applyPZ(id);
+}
+function applyPZ(id){
+  const svg=$(id).querySelector('svg'); if(!svg) return;
+  const st=PZ[id];
+  svg.style.transform=`translate(${st.x}px,${st.y}px) scale(${st.z})`;
+}
+function attachPZ(id){
+  const el=$(id);
+  el.addEventListener('wheel',e=>{
+    e.preventDefault();
+    const st=PZ[id], r=el.getBoundingClientRect();
+    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    const f=e.deltaY<0?1.18:1/1.18;
+    const nz=Math.max(0.02,Math.min(40,st.z*f));
+    st.x=mx-(mx-st.x)*(nz/st.z); st.y=my-(my-st.y)*(nz/st.z); st.z=nz;
+    applyPZ(id);
+  },{passive:false});
+  let drag=null;
+  el.addEventListener('pointerdown',e=>{drag={x:e.clientX,y:e.clientY}; el.classList.add('grabbing'); el.setPointerCapture(e.pointerId);});
+  el.addEventListener('pointermove',e=>{ if(!drag) return; const st=PZ[id];
+    st.x+=e.clientX-drag.x; st.y+=e.clientY-drag.y; drag={x:e.clientX,y:e.clientY}; applyPZ(id);});
+  const stop=()=>{drag=null; el.classList.remove('grabbing');};
+  el.addEventListener('pointerup',stop); el.addEventListener('pointercancel',stop);
+}
+
+/* ===== stepper ===== */
+function buildStepper(){
+  let h='';
+  STEPS.forEach((s,i)=>{
+    if(i) h+=`<span class="chevron">›</span>`;
+    h+=`<div class="chip${i===step?' on':''}" data-i="${i}">
+      <span class="num">${i}</span><span class="ct"><span class="ck">${s.tag}</span><span class="cs">${s.short}</span></span></div>`;
+  });
+  h+=`<div class="navbtns">
+    <button class="btn" id="prev">◀</button>
+    <button class="btn primary" id="next">下一步 ▶</button></div>`;
+  $('stepper').innerHTML=h;
+  document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>setStep(+c.dataset.i));
+  $('prev').onclick=()=>setStep(step-1);
+  $('next').onclick=()=>setStep(step+1);
+}
+function setStep(i){ step=Math.max(0,Math.min(STEPS.length-1,i)); render(); }
+
+/* ===== 符号表 ===== */
+function buildSymtab(){
+  const items=[
+   ['REP_MN', 'MN//128', REP_MN, '行向重复块 (pid_m)'],
+   ['"4" (d1)', '固定 4', R, '128行里第几个32行块'],
+   ['"32" (d2)', '固定 32', G, '32行块内第几行'],
+   ['REP_K (d3)', 'SCALE_K//4', REP_K, 'K 方向重复块'],
+   ['"4" (d4)', '固定 4', KIN, 'K 块内第几列(最连续)'],
+  ];
+  $('symtab').innerHTML =
+    `<span class="lead">reshape 形状 [<b>REP_MN, 4, 32, REP_K, 4</b>] = [${[REP_MN,R,G,REP_K,KIN].join(', ')}]（真实值）：</span>`+
+    items.map(([s,d,v,m])=>`<span class="it"><b>${s}</b>=<span>${d}</span>=<span class="v">${v}</span><span class="mean">${m}</span></span>`).join('');
+}
+
+/* ===== 逻辑视图 ===== */
+function gcell(x,y,w,h,m,k){
+  if(isPad(m,k)){
+    let s=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="url(#hatchL)" stroke="#aab6c4" stroke-width="1"/>`;
+    s+=`<text x="${x+w/2}" y="${y+h/2+3.5}" text-anchor="middle" style="font-size:9px;font-weight:700" fill="#90a0b0">pad</text>`;
+    return s;
+  }
+  const c=ccol(m,k);
+  let s=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="3" fill="${lighten(c,.26)}" stroke="${c}" stroke-width="1.2"/>`;
+  s+=`<text x="${x+w/2}" y="${y+h/2+3.5}" text-anchor="middle" style="font-size:9px;font-weight:700" fill="${c}">${m},${k}</text>`;
+  return s;
+}
+function hatchDef(){return `<defs><pattern id="hatchL" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+  <rect width="6" height="6" fill="#eef2f7"/><line x1="0" y1="0" x2="0" y2="6" stroke="#c7d0db" stroke-width="2"/></pattern></defs>`;}
+
+function drawLogic(){
+  let g='', W, H;
+
+  if(step===0 || step===1){
+    const rows = step===0?ORIG_MN:MN, cols = step===0?ORIG_K:SK;
+    const cw=46, chh=20, ox=78, oy=48;
+    const gw=cols*cw, gh=rows*chh;
+    W=ox+gw+30; H=oy+gh+44;
+    g+=`<text x="${ox+gw/2}" y="26" text-anchor="middle" style="font-size:12px;font-weight:700" fill="#1c2733">SCALE_K 轴 = ${cols} 列${step===1?'（含 PAD_K=2 列）':''}</text>`;
+    g+=`<text x="36" y="${oy+gh/2}" text-anchor="middle" transform="rotate(-90 36 ${oy+gh/2})" style="font-size:12px;font-weight:700" fill="#1c2733">MN 轴 = ${rows} 行${step===1?'（含 PAD_MN=2 行）':''}</text>`;
+    for(let m=0;m<rows;m++)for(let k=0;k<cols;k++) g+=gcell(ox+k*cw, oy+m*chh, cw-3, chh-3, m,k);
+    if(step===1){
+      const yPad1=oy+ORIG_MN*chh, yPad2=oy+MN*chh-3;
+      g+=`<path d="M${ox-8},${yPad1} L${ox-15},${yPad1} L${ox-15},${yPad2} L${ox-8},${yPad2}" fill="none" stroke="#64748b" stroke-width="1.4"/>`;
+      g+=`<text x="${ox-19}" y="${(yPad1+yPad2)/2+3}" text-anchor="end" style="font-size:9.5px;font-weight:700" fill="#64748b">PAD_MN=2</text>`;
+      const xPad1=ox+ORIG_K*cw, xPad2=ox+SK*cw-3;
+      g+=`<path d="M${xPad1},${oy-6} L${xPad1},${oy-12} L${xPad2},${oy-12} L${xPad2},${oy-6}" fill="none" stroke="#64748b" stroke-width="1.4"/>`;
+      g+=`<text x="${(xPad1+xPad2)/2}" y="${oy-15}" text-anchor="middle" style="font-size:9.5px;font-weight:700" fill="#64748b">PAD_K=2</text>`;
+    }
+    g+=`<text x="${ox}" y="${oy+gh+26}" style="font-size:11px" fill="#7a8694">${step===0?'每格标注逻辑坐标 (m,k)；颜色 = d1 = ⌊m/32⌋（4 个 32 行块）':'补齐到 [128,8]（128=4×32，8=2×4）→ 可被 reshape(1,4,32,2,4) 整除'}</text>`;
+  }
+  else if(step===2 || step===3){
+    const cw=46, chh=18, ox=92, oy=58;
+    const gw=SK*cw, gh=MN*chh;
+    W=ox+gw+34; H=oy+gh+54;
+    for(let m=0;m<MN;m++)for(let k=0;k<SK;k++) g+=gcell(ox+k*cw, oy+m*chh, cw-3, chh-3, m,k);
+    g+=`<text x="${ox+gw/2}" y="26" text-anchor="middle" style="font-size:11px;font-weight:700" fill="#1c2733">K 轴 → REP_K(${REP_K}) 个块 × “4”(${KIN})</text>`;
+    for(let v3=0;v3<REP_K;v3++){
+      const x1=ox+v3*KIN*cw, x2=x1+KIN*cw-3;
+      g+=`<path d="M${x1},${oy-6} L${x1},${oy-12} L${x2},${oy-12} L${x2},${oy-6}" fill="none" stroke="#0891b2" stroke-width="1.4"/>`;
+      g+=`<text x="${(x1+x2)/2}" y="${oy-15}" text-anchor="middle" style="font-size:9px;font-weight:700" fill="#0891b2">d3=${v3}</text>`;
+    }
+    g+=`<text x="40" y="${oy+gh/2}" text-anchor="middle" transform="rotate(-90 40 ${oy+gh/2})" style="font-size:11px;font-weight:700" fill="#1c2733">M 轴 → “4”(${R}) 个块 × “32”(${G})</text>`;
+    for(let v1=0;v1<R;v1++){
+      const y1=oy+v1*G*chh, y2=y1+G*chh-3, c=COL4[v1];
+      g+=`<path d="M${ox-8},${y1} L${ox-16},${y1} L${ox-16},${y2} L${ox-8},${y2}" fill="none" stroke="${c}" stroke-width="1.8"/>`;
+      g+=`<text x="${ox-20}" y="${(y1+y2)/2+3}" text-anchor="end" style="font-size:9.5px;font-weight:800" fill="${c}">d1=${v1}</text>`;
+    }
+    if(step===3){
+      g+=`<text x="${ox+gw/2}" y="${oy+gh+22}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="#1c2733">permute：(REP_MN, <tspan fill="${COL4[0]}">d1=4</tspan>, d2, <tspan fill="#0891b2">d3=REP_K</tspan>, d4) → (REP_MN, <tspan fill="#0891b2">d3</tspan>, d2, <tspan fill="${COL4[0]}">d1</tspan>, d4)</text>`;
+      g+=`<text x="${ox+gw/2}" y="${oy+gh+38}" text-anchor="middle" style="font-size:9.5px" fill="#7a8694">把 “4”(d1) 与 REP_K(d3) 对调 → “4” 进到最内层附近，4 个 32 行块将被交错</text>`;
+    }else{
+      g+=`<text x="${ox+gw/2}" y="${oy+gh+22}" text-anchor="middle" style="font-size:10px" fill="#7a8694">reshape 仅给每格新增 5 维下标 (REP_MN,d1,d2,d3,d4) —— 字节没动</text>`;
+    }
+  }
+  else {
+    // contiguous：嵌套结构 REP_K → 32(G) → [4(R) × 4(KIN)]
+    const ox=70, oy=56, mcw=30, mch=15, gapRow=3, gapK=42;
+    const rowW=R*mcw, blockH=G*(mch+gapRow);
+    W=ox+REP_K*(rowW+gapK)+30; H=oy+blockH+66;
+    g+=`<text x="${W/2}" y="24" text-anchor="middle" style="font-size:11px;font-weight:700" fill="#1c2733">落盘后嵌套结构：REP_K(${REP_K}) → “32”(${G}) → “4”(${R}) × “4”(${KIN})</text>`;
+    let bx=ox;
+    for(let v3=0;v3<REP_K;v3++){
+      const blockW=rowW+10;
+      g+=`<rect x="${bx-6}" y="${oy-6}" width="${blockW+12}" height="${blockH+12}" rx="8" fill="none" stroke="#0891b2" stroke-width="2" stroke-dasharray="5 3"/>`;
+      g+=`<text x="${bx+blockW/2-5}" y="${oy-12}" text-anchor="middle" style="font-size:9.5px;font-weight:700" fill="#0891b2">REP_K d3=${v3}</text>`;
+      for(let v2=0;v2<G;v2++){
+        const ry=oy+v2*(mch+gapRow);
+        for(let v1=0;v1<R;v1++){
+          const m=v1*G+v2, k0=v3*KIN, ux=bx+v1*mcw, cwm=mcw/KIN;
+          for(let v4=0;v4<KIN;v4++){
+            const kk=k0+v4, pad=isPad(m,kk), c=COL4[v1];
+            g+=`<rect x="${ux+v4*cwm}" y="${ry}" width="${cwm-1}" height="${mch}" rx="1.5"
+              fill="${pad?'url(#hatchL)':lighten(c,.28)}" stroke="${pad?'#aab6c4':c}" stroke-width="0.7"/>`;
+          }
+        }
+        if(v2%4===0||v2===G-1) g+=`<text x="${bx-9}" y="${ry+mch/2+3}" text-anchor="end" style="font-size:8px;font-weight:700" fill="#5b6b7d">d2=${v2}</text>`;
+      }
+      bx+=rowW+gapK;
+    }
+    g+=`<text x="${W/2}" y="${oy+blockH+24}" text-anchor="middle" style="font-size:9.5px" fill="#16a34a">每个 d2 行 = 4 个 32 行块的同一行紧挨(c0 c1 c2 c3)，含 4 列(d4) = 一个 16B 单元；32 个单元 = 512B → TMA 256B 内维</text>`;
+    g+=`<text x="${ox}" y="${oy+blockH+42}" style="font-size:9px" fill="#7a8694">交错节奏 c0 c1 c2 c3 = 4 个 32 行块（d1）的同一逻辑行被打包到一起 —— 这就是 “packed block”。</text>`;
+  }
+  setSvg('logicSvg', hatchDef()+g, W, H);
+}
+
+/* ===== 物理内存条 ===== */
+function ribbon(order,y,cw,ch,x0,faint){
+  let s='';
+  order.forEach((e,i)=>{
+    const x=x0+i*cw, pad=isPad(e.m,e.k);
+    if(pad){
+      s+=`<rect x="${x}" y="${y}" width="${cw-2}" height="${ch}" rx="2" fill="url(#hatchP)" stroke="#aab6c4" stroke-width="0.8" ${faint?'opacity="0.5"':''}/>`;
+      s+=`<text x="${x+(cw-2)/2}" y="${y+ch/2+3}" text-anchor="middle" style="font-size:7px;font-weight:700" fill="#90a0b0" ${faint?'opacity="0.6"':''}>pad</text>`;
+      return;
+    }
+    const c=ccol(e.m,e.k);
+    s+=`<rect x="${x}" y="${y}" width="${cw-2}" height="${ch}" rx="2"
+      fill="${lighten(c,faint?.12:.28)}" stroke="${c}" stroke-width="${faint?0.8:1.1}" ${faint?'opacity="0.6"':''}/>`;
+    s+=`<text x="${x+(cw-2)/2}" y="${y+ch/2+3}" text-anchor="middle" style="font-size:7px;font-weight:700" fill="${c}" ${faint?'opacity="0.7"':''}>${e.m},${e.k}</text>`;
+  });
+  return s;
+}
+function physDefs(){return `<defs>
+  <marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#16a34a"/></marker>
+  <pattern id="hatchP" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+    <rect width="6" height="6" fill="#eef2f7"/><line x1="0" y1="0" x2="0" y2="6" stroke="#c7d0db" stroke-width="2"/></pattern></defs>`;}
+
+function drawPhys(){
+  const s=STEPS[step];
+  $('physKind').innerHTML = s.kind==='view'?'🔭 视图：与上一步物理顺序相同'
+    : s.kind==='move'?'💾 落盘：字节被真正重排'
+    : s.kind==='pad'?'➕ 补齐：尾部追加 pad 字节':'初始物理顺序';
+
+  let g='', W, H;
+
+  if(step===0){
+    const cw=30, ch=26, x0=20, n=origOrder.length;
+    W=x0+n*cw+10; H=92;
+    g+=`<text x="${x0}" y="16" style="font-size:10px;font-weight:700" fill="#5b6b7d">地址 0 → ${n-1}（${ORIG_MN}×${ORIG_K} 行优先，每格 (m,k)）</text>`;
+    g+=ribbon(origOrder,34,cw,ch,x0,false);
+    g+=`<text x="${x0}" y="${34+ch+20}" style="font-size:10px" fill="#7a8694">沿 K 连续（每行 ${ORIG_K} 字节），但沿 M 跨距大；下一步补齐到 [128,8]。</text>`;
+    setSvg('physSvg', physDefs()+g, W, H); return;
+  }
+
+  const cw=18, ch=22, x0=20, n=padOrder.length;
+  W=x0+n*cw+12;
+
+  if(step===4){
+    const oldY=36, newY=150; H=newY+ch+58;
+    g+=`<text x="${x0}" y="22" style="font-size:10px;font-weight:700" fill="#94a3b8">旧顺序（4 大段 + pad，row-major）</text>`;
+    g+=ribbon(padOrder,oldY,cw,ch,x0,true);
+    g+=`<text x="${x0}" y="${newY-8}" style="font-size:10px;font-weight:700" fill="#16a34a">新顺序（4 色细密交错，整块连续 ✓）</text>`;
+    g+=ribbon(packedOrder,newY,cw,ch,x0,false);
+    padOrder.forEach(e=>{
+      const op=padPos(e.m,e.k), np=newPos(e.m,e.k);
+      const x1=x0+op*cw+(cw-2)/2, y1=oldY+ch+1, x2=x0+np*cw+(cw-2)/2, y2=newY-1;
+      const c=isPad(e.m,e.k)?'#aab6c4':ccol(e.m,e.k);
+      g+=`<path d="M${x1},${y1} C${x1},${(y1+y2)/2} ${x2},${(y1+y2)/2} ${x2},${y2}" fill="none"
+        stroke="${c}" stroke-width="0.7" opacity="${isPad(e.m,e.k)?0.16:0.38}" marker-end="url(#ar)"/>`;
+    });
+    const unit=R*KIN, nUnit=packedOrder.length/unit;
+    for(let u=0;u<nUnit;u++){
+      const x1=x0+u*unit*cw, x2=x0+(u*unit+unit)*cw-2;
+      g+=`<path d="M${x1},${newY+ch+3} L${x1},${newY+ch+8} L${x2},${newY+ch+8} L${x2},${newY+ch+3}" fill="none" stroke="#16a34a" stroke-width="1.1"/>`;
+      if(u%4===0||u===nUnit-1) g+=`<text x="${(x1+x2)/2}" y="${newY+ch+19}" text-anchor="middle" style="font-size:8px;font-weight:700" fill="#16a34a">16B</text>`;
+    }
+    g+=`<text x="${x0}" y="${newY+ch+36}" style="font-size:9.5px" fill="#7a8694">每个 16B 单元 = 4 个 32 行块(c0c1c2c3) 的同一行；32 个单元拼 512B，TMA 当作 [·,·,·,2,256] 搬。</text>`;
+    setSvg('physSvg', physDefs()+g, W, H); return;
+  }
+
+  // step 1 / 2 / 3：同一条 row-major 物理带
+  const ribY=30;
+  if(step===1){ H=ribY+ch+30; }
+  else if(step===2){ H=ribY+ch+8+5*22+10; }
+  else { H=ribY+ch+44; }
+
+  g+=`<text x="${x0}" y="16" style="font-size:10px;font-weight:700" fill="#5b6b7d">地址 0 → ${n-1}（pad 后 128×8，row-major；(m,k)）</text>`;
+  g+=ribbon(padOrder,ribY,cw,ch,x0,false);
+
+  if(step===1){
+    g+=`<text x="${x0}" y="${ribY+ch+20}" style="font-size:10px" fill="#7a8694">尾部出现 pad 字节（斜纹）；真实数据仍是 4 大色段，物理顺序与原始一致（只是补了占位）。</text>`;
+  } else if(step===2){
+    // 5 层括号（真实组大小）
+    const levels=[
+      {sz:R*G*SK, col:'#475569', lbl:`REP_MN/d0：整段 = 4·32·SCALE_K(8) = ${R*G*SK} 字节`},
+      {sz:G*SK,   col:COL4[0],   lbl:`d1 = “4” = ${R}（每段 = 32×8 = ${G*SK} 字节，同色一大段）`},
+      {sz:SK,     col:'#d97706', lbl:`d2 = “32” = ${G}（每段 = SCALE_K = ${SK} 字节）`},
+      {sz:KIN,    col:'#0891b2', lbl:`d3 = REP_K = ${REP_K}（每段 = “4” = ${KIN} 字节）`},
+      {sz:1,      col:'#7c3aed', lbl:`d4 = “4” = ${KIN}（每格 1 字节，最连续）`},
+    ];
+    let ly=ribY+ch+6;
+    levels.forEach(L=>{
+      if(L.sz*cw>=5){
+        for(let i=0;i<n;i+=L.sz){ const x1=x0+i*cw, x2=x0+(i+L.sz)*cw-2;
+          g+=`<path d="M${x1},${ly} L${x1},${ly+4} L${x2},${ly+4} L${x2},${ly}" fill="none" stroke="${L.col}" stroke-width="1.1"/>`; }
+      }
+      g+=`<text x="${x0}" y="${ly+14}" style="font-size:9px;font-weight:700" fill="${L.col}">${L.lbl}</text>`;
+      ly+=22;
+    });
+  } else { // step3：read-path
+    const circY=ribY+ch+15;
+    let pts=[];
+    packedOrder.forEach((e,i)=>{
+      const p=padPos(e.m,e.k), cx=x0+p*cw+(cw-2)/2; pts.push(`${cx},${circY}`);
+      g+=`<circle cx="${cx}" cy="${circY}" r="6" fill="#fff" stroke="#ca8a04" stroke-width="1.1"/>`;
+      g+=`<text x="${cx}" y="${circY+2.6}" text-anchor="middle" style="font-size:6.5px;font-weight:800" fill="#ca8a04">${i+1}</text>`;
+    });
+    g+=`<path d="M${pts.join(' L')}" fill="none" stroke="#ca8a04" stroke-width="1.1" stroke-dasharray="4 3" opacity="0.75"/>`;
+    g+=`<text x="${x0}" y="${circY+22}" style="font-size:9.5px" fill="#7a8694">黄色编号 = 新维序读取次序(1→${packedOrder.length})；路径在物理条上<tspan fill="#ca8a04" font-weight="700"> 反复跳跃</tspan>（4 色被穿插）→ 物理仍未连续。</text>`;
+  }
+  setSvg('physSvg', physDefs()+g, W, H);
+}
+
+/* ===== 代码 ===== */
+const CODE=[
+  ['def swizzle_scales_packed_block(scales, VEC_SIZE):',0],
+  ['    # 对齐：MN→128 的倍数，SCALE_K→4 的倍数',null],
+  ['    PAD_MN = align_to(MN, 128) - MN',1],
+  ['    PAD_K  = align_to(SCALE_K, 4) - SCALE_K',1],
+  ['    scales = F.pad(scales, (0, PAD_K, 0, PAD_MN))   # 补齐',1],
+  ['    REP_MN = MN // 128;  REP_K = SCALE_K // 4',null],
+  ['    scales = scales.reshape(REP_MN, 4, 32, REP_K, 4)  # 拆5维',2],
+  ['    scales = scales.permute(0, 3, 2, 1, 4)            # 换维',3],
+  ['    return scales.contiguous()                        # 落盘',4],
+];
+function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function drawCode(){
+  const s=STEPS[step];
+  $('codeName').textContent=s.codeName;
+  $('explain').innerHTML=s.explain;
+  let h='';
+  CODE.forEach(([txt,ln])=>{
+    const on=ln===s.codeLine;
+    const inner=esc(txt).replace(/(#.*)$/,'<span class="cmt">$1</span>');
+    h+=`<div class="cl${on?' on':''}">${inner}</div>`;
+  });
+  $('codePanel').innerHTML=h;
+}
+
+/* ===== render ===== */
+function render(){
+  const s=STEPS[step];
+  $('logicTag').textContent=`${step}·${s.tag}`;
+  $('logicTitle').textContent=s.logicTitle;
+  $('note').innerHTML=s.note;
+  $('legend').innerHTML=COL4.map((c,i)=>`<span><i style="background:${lighten(c,.4)};border:1px solid ${c}"></i><b style="color:${c}">c${i}</b> = d1=${i}（第 ${i} 个 32 行块）</span>`).join('')
+    +`<span><i style="background-color:#eef2f7;border:1px solid #aab6c4"></i>pad 占位</span>`;
+  document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',+c.dataset.i===step));
+  $('prev').disabled=step===0; $('next').disabled=step===STEPS.length-1;
+  drawLogic(); drawPhys(); drawCode();
+}
+const _hs=parseInt(location.hash.slice(1)); if(_hs>=0&&_hs<STEPS.length) step=_hs;
+buildStepper(); buildSymtab();
+attachPZ('logicSvg'); attachPZ('physSvg');
+window.addEventListener('hashchange',()=>{const h=parseInt(location.hash.slice(1)); if(h>=0&&h<STEPS.length) setStep(h);});
+$('logicReset').onclick=()=>fitPZ('logicSvg');
+$('physReset').onclick=()=>fitPZ('physSvg');
+render();
+window.addEventListener('resize',()=>{fitPZ('logicSvg'); fitPZ('physSvg');});
+window.addEventListener('keydown',e=>{
+  if(e.target.tagName==='INPUT') return;
+  if(e.key==='ArrowRight'||e.key==='ArrowDown') setStep(step+1);
+  else if(e.key==='ArrowLeft'||e.key==='ArrowUp') setStep(step-1);
+});
+</script>
+</body>
+</html>

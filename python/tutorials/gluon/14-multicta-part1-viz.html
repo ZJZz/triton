@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第一部分 · CGA 与 Multi-CTA Layout（cga_layout）的关系</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#fff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#0891b2; --hl:#ea580c;
+    --cga:#7c3aed; --cta:#2563eb;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#fff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px}
+  header h1 .g{color:var(--accent)}
+  .badge{font-size:11px;font-weight:700;color:#fff;background:var(--accent);padding:3px 10px;border-radius:20px}
+  .badge.cga{background:var(--cga)} .badge.cta{background:var(--cta)}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:300px}
+  .sub b{color:#11305c}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  main{flex:1;display:grid;gap:9px;padding:9px;min-height:0;
+    grid-template-columns:minmax(0,0.92fr) minmax(0,1.25fr) minmax(0,0.95fr);
+    grid-template-rows:minmax(0,1.25fr) minmax(0,0.72fr);
+    grid-template-areas:"hier shard ctas" "contrast contrast contrast";}
+  #pHier{grid-area:hier} #pShard{grid-area:shard} #pCtas{grid-area:ctas} #pContrast{grid-area:contrast}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);
+    background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap}
+  .phead .tag{font-size:10.5px;font-weight:700;color:#fff;padding:1px 9px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:10.5px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;justify-content:center;align-items:flex-start}
+  .gridsvg{display:block;cursor:crosshair}
+
+  .btns{display:flex;gap:6px;flex-wrap:wrap}
+  .btns button{font-family:Consolas,monospace;font-size:11px;font-weight:700;cursor:pointer;
+    border:1px solid #c3cedb;background:#fff;color:#33485e;border-radius:7px;padding:3px 9px}
+  .btns button.on{background:var(--cta);color:#fff;border-color:var(--cta)}
+
+  table.ct{border-collapse:collapse;font-family:Consolas,monospace;font-size:11px;width:100%}
+  table.ct th{font-size:10px;color:var(--muted);font-weight:700;padding:3px 6px;text-align:center;border-bottom:1px solid var(--line)}
+  table.ct td{padding:3px 6px;text-align:center;border-bottom:1px solid #eef2f7}
+  table.ct tr.row{cursor:pointer}
+  table.ct tr.row.hot{background:#fff1e6}
+  .sw{display:inline-block;width:11px;height:11px;border-radius:3px;vertical-align:-1px;margin-right:4px}
+  .bits b{color:var(--hl)}
+
+  footer{flex:none;border-top:1px solid var(--line);background:#fff;padding:8px 14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  .read{font-size:12px;line-height:1.55;flex:1;min-width:280px}
+  .read .lead{font-weight:800;color:var(--hl)}
+  .read code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  .legend{display:flex;gap:7px 12px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);align-items:center;max-width:340px}
+  .legend span{display:inline-flex;gap:4px;align-items:center}
+  .legend i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
+  @media(max-width:1100px){
+    body{height:auto;overflow:auto}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto auto auto;
+      grid-template-areas:"hier" "shard" "ctas" "contrast"}
+    .pbody{min-height:260px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>第一部分 · <span class="g">CGA</span> 与 <span class="g">Multi-CTA Layout</span>（<code style="font-family:Consolas">cga_layout</code>）</h1>
+    <span class="badge cga">CGA = 谁和谁一组</span>
+    <span class="badge cta">cga_layout = 每个 CTA 拿哪块</span>
+    <div class="sub"><b>CGA</b> 是执行层面的硬件分组：把 ≤16 个 CTA 绑成一个 cluster 让它们协作；
+      <b>cga_layout</b> 是数据层面的分片规则：一个把 <b>CTA-id 的每个 bit</b> 映射到张量坐标的线性映射。
+      在 <b>中间面板</b>切换 <code>cga_layout</code>，把鼠标移到张量分片或右侧 CTA 表上 → 三个视图联动。</div>
+  </div>
+</header>
+
+<main>
+  <div class="panel" id="pHier">
+    <div class="phead"><span class="tag" style="background:var(--cga)">① 布局层级里 CGA 在哪</span>
+      <span class="hint">从下往上：元素 → … → CGA</span></div>
+    <div class="pbody"><div id="svgHier"></div></div>
+  </div>
+
+  <div class="panel" id="pShard">
+    <div class="phead"><span class="tag" style="background:var(--cta)">② cga_layout 把张量切给各 CTA</span>
+      <div class="btns" id="presetBtns"></div></div>
+    <div class="pbody"><div id="svgShard"></div></div>
+  </div>
+
+  <div class="panel" id="pCtas">
+    <div class="phead"><span class="tag" style="background:#475569">③ CTA-id → 坐标（线性映射）</span>
+      <span class="hint">id 的每个 bit 配一个基</span></div>
+    <div class="pbody" style="align-items:stretch;justify-content:flex-start"><div id="ctasTable" style="width:100%"></div></div>
+  </div>
+
+  <div class="panel" id="pContrast">
+    <div class="phead"><span class="tag" style="background:#0f766e">④ 连续 vs 交错 · 两种表示</span>
+      <span class="hint">cga_layout 永远是「连续分块」；交错切分要用 LinearEncoding</span></div>
+    <div class="pbody" style="align-items:flex-start"><div id="svgContrast"></div></div>
+  </div>
+</main>
+
+<footer>
+  <div class="read" id="read"></div>
+  <div class="legend" id="legend"></div>
+</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+function setSvg(id, inner, W, H){ $(id).innerHTML=`<svg class="gridsvg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`; }
+
+/* 8 种 CTA 配色（按 CTA id） */
+const PAL=['#2563eb','#0d9488','#d97706','#7c3aed','#db2777','#16a34a','#0891b2','#dc2626'];
+const cc=id=>PAL[id%PAL.length];
+
+/* ===== presets：cga_layout 例子（基按 bit0..bit_{n-1} 顺序）===== */
+const PRESETS=[
+  {label:'[[1,0]]',          bases:[[1,0]],                 note:'2 CTA：沿 dim0 切成 2 个连续子张量'},
+  {label:'[[1,0],[0,1]]',    bases:[[1,0],[0,1]],           note:'4 CTA：2×2 网格（dim0 切 2 × dim1 切 2）'},
+  {label:'[[1,0],[2,0],[0,1]]', bases:[[1,0],[2,0],[0,1]],  note:'8 CTA：dim0 切 4 × dim1 切 2（教程 docstring 示例）'},
+];
+let curP=0;
+
+/* 由 cga_layout 计算每个 CTA 的 (row,col) 分片坐标 */
+function solve(bases){
+  const nb=bases.length, num=1<<nb;
+  const coords=[]; let s0=1,s1=1;
+  for(let id=0;id<num;id++){
+    let r=0,c=0;
+    for(let b=0;b<nb;b++) if((id>>b)&1){ r+=bases[b][0]; c+=bases[b][1]; }
+    coords.push([r,c]); s0=Math.max(s0,r+1); s1=Math.max(s1,c+1);
+  }
+  const cellOf={}; coords.forEach((rc,id)=>cellOf[rc[0]+','+rc[1]]=id);
+  return {nb,num,coords,s0,s1,cellOf};
+}
+
+/* ===== ① 层级图（静态）===== */
+function buildHier(){
+  const W=300,H=380, ox=24, bw=W-48;
+  const levels=[
+    {t:'元素 element',           s:'一个标量',                  c:'#94a3b8', h:30},
+    {t:'线程 lane（×32）',       s:'一个 warp = 32 lane',       c:'#64748b', h:30},
+    {t:'warp（×num_warps）',     s:'warp 内 bar.sync 同步',      c:'#475569', h:34},
+    {t:'CTA / block',            s:'共享一块 shared memory',     c:'#2563eb', h:40, hot:1},
+    {t:'CGA / cluster（≤16 CTA）', s:'cga_layout 作用的层级',     c:'#7c3aed', h:46, hot:2},
+    {t:'整张逻辑张量',           s:'被 cga_layout 切给各 CTA',    c:'#0f766e', h:34},
+  ];
+  let y=H-16, g='';
+  g+=`<text x="${W/2}" y="14" text-anchor="middle" style="font-size:11px;font-weight:700" fill="#1c2733">布局层级（自下而上嵌套）</text>`;
+  // 自下而上画，越上越"高层"
+  for(let i=0;i<levels.length;i++){
+    const L=levels[i]; y-=L.h+8;
+    const fill = L.hot ? lighten(L.c,.16) : '#f6f8fb';
+    const sw = L.hot ? 2 : 1;
+    g+=`<rect x="${ox}" y="${y}" width="${bw}" height="${L.h}" rx="7" fill="${fill}" stroke="${L.c}" stroke-width="${sw}"/>`;
+    g+=`<text x="${ox+12}" y="${y+L.h/2-1}" style="font-size:11.5px;font-weight:800" fill="${L.c}">${L.t}</text>`;
+    g+=`<text x="${ox+12}" y="${y+L.h/2+13}" style="font-size:9px" fill="#7a8694">${L.s}</text>`;
+    if(L.hot){
+      g+=`<text x="${ox+bw-8}" y="${y+15}" text-anchor="end" style="font-size:9px;font-weight:800" fill="${L.c}">${L.hot===2?'★ Hopper 新增':'│'}</text>`;
+    }
+  }
+  // 连接箭头
+  g+=`<text x="${W/2}" y="${H-2}" text-anchor="middle" style="font-size:9px" fill="#90a0b0">CGA 把 CTA→warp→lane 之上再加一层「CTA 维度」</text>`;
+  setSvg('svgHier', g, W, H);
+}
+
+/* ===== ② 张量分片网格（交互）===== */
+const SH={ox:46, oy:34, W:300, H:300};
+let shardGeom=null;
+function buildShard(){
+  const P=PRESETS[curP], st=solve(P.bases);
+  const {ox,oy,W,H}=SH;
+  const cw=W/st.s1, ch=H/st.s0;
+  shardGeom={st,ox,oy,cw,ch};
+  let g='';
+  g+=`<text x="${ox+W/2}" y="14" text-anchor="middle" style="font-size:11px;font-weight:700" fill="#1c2733">逻辑张量 [M, N] · 被切成 ${st.s0}×${st.s1} = ${st.num} 块</text>`;
+  for(let id=0;id<st.num;id++){
+    const [r,c]=st.coords[id], x=ox+c*cw, y=oy+r*ch, col=cc(id);
+    g+=`<rect x="${x}" y="${y}" width="${cw-1}" height="${ch-1}" fill="${lighten(col,.30)}" stroke="${col}" stroke-width="1.2"/>`;
+    g+=`<text x="${x+cw/2}" y="${y+ch/2-4}" text-anchor="middle" style="font-size:13px;font-weight:800" fill="${col}">CTA ${id}</text>`;
+    g+=`<text x="${x+cw/2}" y="${y+ch/2+11}" text-anchor="middle" style="font-family:Consolas;font-size:9.5px" fill="#5b6b7d">${id.toString(2).padStart(st.nb,'0')}b</text>`;
+  }
+  // 轴
+  g+=`<text x="${ox+W/2}" y="${oy+H+18}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="#1c2733">dim1（N，列）→</text>`;
+  g+=`<text x="16" y="${oy+H/2}" text-anchor="middle" transform="rotate(-90 16 ${oy+H/2})" style="font-size:10px;font-weight:700" fill="#1c2733">dim0（M，行）↓</text>`;
+  g+=`<g id="ovShard"></g>`;
+  setSvg('svgShard', g, ox+W+18, oy+H+28);
+}
+
+/* ===== ③ CTA-id 分解表（交互）===== */
+function buildTable(){
+  const P=PRESETS[curP], st=solve(P.bases);
+  let h=`<table class="ct"><thead><tr><th>CTA</th><th>bits b${st.nb-1}…b0</th><th>= Σ bit·基</th><th>→ (行,列)</th></tr></thead><tbody>`;
+  for(let id=0;id<st.num;id++){
+    const [r,c]=st.coords[id], col=cc(id);
+    const bin=id.toString(2).padStart(st.nb,'0');
+    // 贡献串
+    let terms=[];
+    for(let b=0;b<st.nb;b++) if((id>>b)&1) terms.push(`(${P.bases[b][0]},${P.bases[b][1]})`);
+    const sum = terms.length?terms.join('+'):'(0,0)';
+    const bitsHtml = bin.split('').map((ch)=>ch==='1'?`<b>1</b>`:'0').join('');
+    h+=`<tr class="row" id="row-${id}" data-id="${id}">`+
+       `<td><span class="sw" style="background:${lighten(col,.3)};border:1px solid ${col}"></span>${id}</td>`+
+       `<td class="bits">${bitsHtml}</td>`+
+       `<td>${sum}</td>`+
+       `<td>(${r},${c})</td></tr>`;
+  }
+  h+=`</tbody></table>`;
+  h+=`<div style="font-size:10px;color:#7a8694;margin-top:8px;font-family:Consolas">基个数 = log2(numCTAs) = ${st.nb}　·　numCTAs = ${st.num}（必须是 ≤16 的 2 的幂）</div>`;
+  $('ctasTable').innerHTML=h;
+  // 行 hover
+  st.coords.forEach((_,id)=>{
+    const row=$('row-'+id);
+    row.addEventListener('pointerenter',()=>hot(id));
+    row.addEventListener('pointerleave',clearHot);
+  });
+}
+
+/* ===== ④ 连续 vs 交错（静态，对照 docstring 表格）===== */
+function buildContrast(){
+  const oy=44, rowH=30, lab=180, gap=80;
+  const leftOx=20, rightOx=20+lab+gap, rightW=210;
+  const rowsBottom=oy+4*rowH;             // 色块区底部
+  let g='';
+  g+=`<text x="20" y="20" style="font-size:11.5px;font-weight:800" fill="#1c2733">同一个 4 行的张量，两种把行分给 2 个 CTA 的方式：</text>`;
+
+  // 左：连续 cga_layout=[[1,0]]
+  g+=`<text x="${leftOx}" y="${oy-8}" style="font-size:11px;font-weight:800" fill="#15803d">✓ 连续　cga_layout=[[1,0]]</text>`;
+  const contMap=[0,0,1,1]; // 行 -> CTA
+  for(let r=0;r<4;r++){
+    const id=contMap[r], col=cc(id);
+    g+=`<rect x="${leftOx}" y="${oy+r*rowH}" width="${lab}" height="${rowH-3}" fill="${lighten(col,.3)}" stroke="${col}" stroke-width="1"/>`;
+    g+=`<text x="${leftOx+10}" y="${oy+r*rowH+rowH/2+2}" style="font-size:11px;font-weight:700" fill="${col}">行 ${r}　→　CTA ${id}</text>`;
+  }
+
+  // 右：交错 LinearEncoding(warps=[[2]], block=[[1]])
+  g+=`<text x="${rightOx}" y="${oy-8}" style="font-size:11px;font-weight:800" fill="#b45309">⇆ 交错　LinearEncoding(warps=[[2]], block=[[1]])</text>`;
+  // docstring 表：row0 CTA0w0, row1 CTA1w0, row2 CTA0w1, row3 CTA1w1
+  const inter=[[0,0],[1,0],[0,1],[1,1]]; // [cta, warp]
+  for(let r=0;r<4;r++){
+    const [id,w]=inter[r], col=cc(id);
+    g+=`<rect x="${rightOx}" y="${oy+r*rowH}" width="${rightW}" height="${rowH-3}" fill="${lighten(col,.3)}" stroke="${col}" stroke-width="1"/>`;
+    g+=`<text x="${rightOx+10}" y="${oy+r*rowH+rowH/2+2}" style="font-size:11px;font-weight:700" fill="${col}">行 ${r}　→　CTA ${id} · warp ${w}</text>`;
+  }
+
+  // 中间箭头
+  g+=`<text x="${leftOx+lab+gap/2-6}" y="${oy+2*rowH}" style="font-size:18px" fill="#94a3b8">≠</text>`;
+
+  // 两条说明：整行堆叠在色块下方，避免左右重叠
+  g+=`<text x="${leftOx}" y="${rowsBottom+18}" style="font-size:10px" fill="#15803d"><tspan font-weight="800">连续：</tspan>每个 CTA 拿一块连续的行（0–1 / 2–3）—— 这是 cga_layout 唯一能表达的方式。</text>`;
+  g+=`<text x="${leftOx}" y="${rowsBottom+36}" style="font-size:10px" fill="#b45309"><tspan font-weight="800">交错：</tspan>先按 CTA 再按 warp 交错 → CTA0/CTA1 隔行排列 —— cga_layout 表达不了，要用 LinearEncoding。</text>`;
+
+  const W=rightOx+rightW+24, H=rowsBottom+48;
+  setSvg('svgContrast', g, W, H);
+}
+
+/* ===== 联动高亮 ===== */
+function hot(id){
+  if(!shardGeom){return;}
+  const {st,ox,oy,cw,ch}=shardGeom;
+  const [r,c]=st.coords[id], col=cc(id);
+  const x=ox+c*cw, y=oy+r*ch;
+  $('ovShard').innerHTML=`<rect x="${x+1}" y="${y+1}" width="${cw-3}" height="${ch-3}" fill="none" stroke="${'#ea580c'}" stroke-width="3" rx="3" pointer-events="none"/>`;
+  // 表格行
+  document.querySelectorAll('table.ct tr.row').forEach(tr=>tr.classList.toggle('hot', +tr.dataset.id===id));
+  // 读数
+  const P=PRESETS[curP];
+  let terms=[];
+  for(let b=0;b<st.nb;b++){ const bit=(id>>b)&1; terms.push(`b${b}=${bit}·(${P.bases[b][0]},${P.bases[b][1]})`); }
+  $('read').innerHTML=
+    `<span class="lead">CTA ${id}</span>（二进制 <code>${id.toString(2).padStart(st.nb,'0')}b</code>）`+
+    `：坐标 = ${terms.join(' + ')} = <code>(${r},${c})</code> → `+
+    `占 <b>dim0(M) 第 ${r}/${st.s0} 块</b>、<b>dim1(N) 第 ${c}/${st.s1} 块</b>。`+
+    `　这一整组 ${st.num} 个 CTA 就是一个 <b>CGA</b>，它们协作持有整张 [M,N]。`;
+}
+function clearHot(){
+  if($('ovShard')) $('ovShard').innerHTML='';
+  document.querySelectorAll('table.ct tr.row').forEach(tr=>tr.classList.remove('hot'));
+  $('read').innerHTML=`<span class="lead">把鼠标移到中间的张量分片 / 右侧 CTA 表上 →</span> `+
+    `看某个 CTA 的 id 如何经 <code>cga_layout</code> 的线性映射，落到张量的哪一块连续子张量。`+
+    `当前 <code>cga_layout = ${PRESETS[curP].label}</code>：${PRESETS[curP].note}。`;
+}
+
+/* shard 面板 hover */
+function attachShard(){
+  const svg=$('svgShard').querySelector('svg');
+  svg.addEventListener('pointermove',e=>{
+    const {st,ox,oy,cw,ch}=shardGeom;
+    const r0=svg.getBoundingClientRect();
+    const x=(e.clientX-r0.left)*(svg.viewBox.baseVal.width/r0.width);
+    const y=(e.clientY-r0.top)*(svg.viewBox.baseVal.height/r0.height);
+    const c=Math.floor((x-ox)/cw), r=Math.floor((y-oy)/ch);
+    if(r<0||r>=st.s0||c<0||c>=st.s1){clearHot();return;}
+    const id=st.cellOf[r+','+c];
+    if(id===undefined){clearHot();return;}
+    hot(id);
+  });
+  svg.addEventListener('pointerleave',clearHot);
+}
+
+/* presets 按钮 */
+function buildBtns(){
+  $('presetBtns').innerHTML=PRESETS.map((p,i)=>`<button class="${i===curP?'on':''}" data-i="${i}">${p.label}</button>`).join('');
+  $('presetBtns').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{
+    curP=+b.dataset.i; render();
+  }));
+}
+
+function render(){
+  buildBtns(); buildShard(); buildTable(); attachShard(); clearHot();
+}
+
+/* legend */
+$('legend').innerHTML = PAL.slice(0,8).map((c,i)=>`<span><i style="background:${lighten(c,.3)};border-color:${c}"></i>CTA ${i}</span>`).join('')
+  +`<span><i style="background:#ea580c"></i>当前悬停</span>`;
+
+buildHier(); buildContrast(); render();
+</script>
+</body>
+</html>

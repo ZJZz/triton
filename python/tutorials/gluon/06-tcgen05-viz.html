@@ -1,0 +1,1241 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>tcgen05 — Blackwell MMA 流水线可视化</title>
+<style>
+  :root{
+    --bg:#f4f6f9; --panel:#ffffff; --panel2:#eef2f7; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#5a8a00; /* nvidia green (darkened) */
+    --gmem:#475569; --tma:#0891b2; --smem:#16a34a; --tmem:#7c3aed;
+    --core:#db2777; --acc:#d97706; --store:#ea580c; --reg:#2563eb;
+    --sync:#dc2626;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:14px;line-height:1.55}
+  a{color:var(--accent)}
+  header{padding:18px 24px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#ffffff,#eef2f7)}
+  header h1{margin:0;font-size:20px;letter-spacing:.3px}
+  header h1 .g{color:var(--accent)}
+  header p{margin:6px 0 0;color:var(--muted);font-size:13px}
+  .wrap{max-width:1280px;margin:0 auto;padding:0 16px}
+
+  /* stage tabs */
+  .tabs{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
+  .tab{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+    padding:9px 14px;cursor:pointer;display:flex;gap:9px;align-items:center;transition:.15s}
+  .tab:hover{border-color:#aab8c8}
+  .tab.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+  .tab .num{width:22px;height:22px;border-radius:50%;background:#e2e8f0;color:var(--muted);
+    display:grid;place-items:center;font-size:12px;font-weight:700}
+  .tab.active .num{background:var(--accent);color:#ffffff}
+  .tab .t{font-weight:600}
+  .tab .s{color:var(--muted);font-size:12px}
+
+  .grid{display:grid;grid-template-columns:1.15fr .85fr;gap:16px;align-items:start}
+  @media(max-width:1040px){.grid{grid-template-columns:1fr}}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;overflow:hidden}
+  .card h2{margin:0;padding:12px 16px;font-size:14px;border-bottom:1px solid var(--line);
+    display:flex;justify-content:space-between;align-items:center;background:var(--panel2)}
+  .card .body{padding:14px 16px}
+  .pill{font-size:11px;color:var(--muted);font-weight:500}
+
+  /* code */
+  pre{margin:0;padding:10px 0;background:#f6f8fa;overflow:auto;max-height:392px;position:relative;
+    font-family:"Cascadia Code",Consolas,Menlo,monospace;font-size:12.5px;line-height:1.55;color:#24292f}
+  .codeline{padding:1px 16px;white-space:pre;border-left:3px solid transparent;transition:background .15s}
+  .codeline.active{background:#fff3cd;border-left-color:var(--acc);font-weight:600}
+  .cm{color:#6e7781}.st{color:#0a6e3b}.fn{color:#0550ae}.kw{color:#cf222e}.nm{color:#953800}
+
+  .notes p{margin:0 0 10px}
+  .notes b{color:var(--txt)}
+  .insight{border-left:3px solid var(--accent);background:#eef7e0;padding:10px 12px;
+    border-radius:0 8px 8px 0;margin-top:8px;color:#3d5210}
+  .warn{border-left:3px solid var(--sync);background:#fdedec;color:#8c2018}
+  .body code,.stepbox code,.notes code{font-family:Consolas,monospace;background:#eef2f7;
+    padding:0 4px;border-radius:4px;font-size:12px;color:#0550ae}
+
+  /* step 衔接动态面板 */
+  .stepbox{border:1px solid var(--line);border-radius:10px;overflow:hidden;margin-bottom:14px}
+  .stepbox .cur{background:#eef7e0;padding:8px 12px;font-size:13px;display:flex;
+    align-items:center;gap:8px;flex-wrap:wrap}
+  .stepbox .cur b{color:var(--accent)}
+  .stepbox .idx{margin-left:auto;color:var(--muted);font-size:11px;font-weight:700;
+    background:#ffffff;border:1px solid var(--line);border-radius:20px;padding:1px 9px}
+  .stepbox .ho{padding:9px 12px;font-size:12.5px;background:#fffaf0;
+    border-top:1px solid var(--line);color:var(--txt);line-height:1.6}
+  .stepbox .ho .nx{color:var(--store);font-weight:700}
+  .stepbox .ho.done{background:#eef2f7;color:var(--muted)}
+
+  /* diagram */
+  .diagram-wrap{padding:6px 8px}
+  svg{width:100%;height:auto;display:block}
+  .nodeBox{fill:#f8fafc;stroke:#b5c2d0;stroke-width:1.5;rx:10;transition:.2s}
+  .nodeBox.on{stroke-width:2.5}
+  .nodeLbl{fill:var(--txt);font-size:13px;font-weight:700}
+  .nodeSub{fill:var(--muted);font-size:10.5px}
+  .slot{fill:#eef2f7;stroke:#cdd8e3;stroke-width:1}
+  .slotLbl{fill:var(--muted);font-size:10px}
+  .edge{fill:none;stroke:#c0ccd9;stroke-width:2;opacity:.7}
+  .edge.on{opacity:1;stroke-width:3}
+  .dimmed{opacity:.28}
+  .accfill{fill:var(--acc);opacity:.85}
+  /* 双缓冲 cell */
+  .cell{fill:#eef2f7;stroke:#cdd8e3;stroke-width:1;transition:fill .12s,stroke-width .12s}
+  .cell.on{stroke:#1c2733;stroke-width:2.5}
+  .cellLbl{fill:#33414f;font-size:11px;font-weight:700;pointer-events:none}
+  .bufHdr{fill:var(--txt);font-size:11px;font-weight:800;text-anchor:middle}
+  .rowLbl{fill:var(--muted);font-size:12px;font-weight:800;text-anchor:end}
+  .accfill2{pointer-events:none}
+
+  /* gantt */
+  .gantt-wrap{padding:8px 14px 16px}
+  .lane-row{display:grid;grid-template-columns:128px 1fr;align-items:center;min-height:22px;margin:3px 0}
+  .lane-name{color:var(--muted);font-size:11.5px;text-align:right;padding-right:10px;
+    white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .lane-track{position:relative;background:#e9eef4;border:1px solid #d4dce6;border-radius:5px}
+  .bar{position:absolute;height:14px;border-radius:4px;font-size:10px;color:#ffffff;
+    display:flex;align-items:center;padding:0 5px;white-space:nowrap;overflow:hidden;font-weight:700;
+    opacity:.42;transition:opacity .1s,box-shadow .1s}
+  .bar.live{opacity:1;overflow:visible;z-index:6;color:#0e1b27;
+    box-shadow:0 0 0 1px #fff8,0 0 8px #0003;
+    text-shadow:0 0 3px #fff,0 0 3px #fff,0 1px 2px #fff}
+  .playhead{position:absolute;top:-4px;width:2px;background:#1c2733;height:calc(100% + 8px);
+    z-index:5;pointer-events:none;box-shadow:0 0 6px #1c273366}
+  .timeaxis{display:grid;grid-template-columns:128px 1fr}
+  .axis-track{position:relative;height:16px;border-top:1px solid #d4dce6;margin-top:4px}
+  .tick{position:absolute;top:2px;font-size:9px;color:#8090a0;transform:translateX(-50%)}
+
+  /* controls */
+  .controls{display:flex;gap:10px;align-items:center;padding:10px 14px;border-top:1px solid var(--line);
+    background:var(--panel2);flex-wrap:wrap}
+  button.ctl{background:#ffffff;border:1px solid #c4cfdb;color:var(--txt);border-radius:8px;
+    padding:6px 14px;cursor:pointer;font-weight:600}
+  button.ctl:hover{border-color:var(--accent)}
+  button.ctl.primary{background:var(--accent);color:#ffffff;border-color:var(--accent)}
+  .scrub{flex:1;min-width:160px;accent-color:var(--accent)}
+  .spd{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:12px}
+  .spd select{background:#ffffff;color:var(--txt);border:1px solid #c4cfdb;border-radius:6px;padding:3px 6px}
+
+  /* legend */
+  .legend{display:flex;flex-wrap:wrap;gap:12px;padding:10px 16px;border-top:1px solid var(--line);font-size:11.5px;color:var(--muted)}
+  .legend span{display:inline-flex;align-items:center;gap:6px}
+  .dot{width:11px;height:11px;border-radius:3px;display:inline-block}
+
+  /* 田字格 (2×2) + 侧边栏 */
+  .layout{display:flex;gap:16px;align-items:flex-start;margin-bottom:20px}
+  .quad{flex:1;min-width:0;display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  .sidebar{width:300px;flex-shrink:0;position:sticky;top:12px}
+  .quad .card pre{max-height:300px}
+  .quad .card h2{font-size:13px}
+  @media(max-width:1180px){.layout{flex-direction:column}.sidebar{width:100%;position:static}}
+  @media(max-width:780px){.quad{grid-template-columns:1fr}}
+  /* 数据切分面板 */
+  .tiling-wrap{padding:8px 10px}
+  .tcell{stroke:#cdd8e3;stroke-width:1;fill:#eef2f7;transition:fill .1s,stroke-width .1s}
+  .tcell.on{stroke:#1c2733;stroke-width:2}
+  .tlabel{fill:var(--txt);font-size:11.5px;font-weight:700}
+  .tdim{fill:var(--muted);font-size:10px}
+  .tax{fill:var(--muted);font-size:9.5px;font-weight:700}
+  /* 当前数据在微架构通路中的位置标注 */
+  .tileloc{padding:7px 12px 3px;font-size:11.5px;line-height:1.65;border-top:1px solid var(--line);min-height:46px}
+  .tileloc .lc{display:flex;align-items:center;gap:7px;margin:1px 0}
+  .tileloc .lcdot{width:11px;height:11px;border-radius:3px;flex-shrink:0;box-shadow:0 0 0 1px #0001}
+  .tileloc .mod{font-weight:700}
+  .tileloc .empty{color:var(--muted)}
+
+  /* perf table */
+  table.perf{border-collapse:collapse;width:100%;font-size:12px;margin-top:6px}
+  table.perf th,table.perf td{border:1px solid var(--line);padding:5px 8px;text-align:center}
+  table.perf th{background:var(--panel2);color:var(--muted)}
+  table.perf tr.hl td{color:var(--accent);font-weight:700}
+
+  /* tmem grid (stage0) */
+  .tmemgrid{display:block;margin:0 auto}
+  footer{color:#8090a0;font-size:11.5px;text-align:center;padding:24px}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <h1>第五代 Tensor Core — <span class="g">tcgen05</span> 数据流动与流水线可视化</h1>
+    <p>基于 <code>python/tutorials/gluon/06-tcgen05.py</code> · 逐阶段展示 Blackwell 微架构层的数据驱动方式与 pipeline 时序组织</p>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="tabs" id="tabs"></div>
+
+  <div class="layout">
+    <div class="quad">
+      <!-- ① 数据原料：原始 shape 切分 + 滑动 -->
+      <div class="card">
+        <h2><span>① 数据原料 · 切分与滑动</span><span class="pill" id="tileClock">C = A·B</span></h2>
+        <div class="tiling-wrap" id="tiling"></div>
+      </div>
+
+      <!-- ② 空间：微架构数据通路 -->
+      <div class="card">
+        <h2><span id="diagTitle">② 空间 · 微架构数据通路</span><span class="pill" id="diagClock">t = 0</span></h2>
+        <div class="diagram-wrap" id="diagram"></div>
+        <div class="legend" id="legend"></div>
+      </div>
+
+      <!-- ③ 代码描述 -->
+      <div class="card">
+        <h2><span id="codeTitle">③ 代码描述</span><span class="pill" id="codePerf">高亮行 = 当前执行处</span></h2>
+        <pre id="code"></pre>
+      </div>
+
+      <!-- ④ 时间：流水线时序图（全局控制器） -->
+      <div class="card" id="ganttCard">
+        <h2>④ 时间×空间 · 流水线时序<span class="pill" id="ganttHint">拖动播放头控制全局</span></h2>
+        <div class="gantt-wrap" id="gantt"></div>
+        <div class="controls">
+          <button class="ctl primary" id="play">▶ 播放</button>
+          <button class="ctl" id="reset">⟲ 重置</button>
+          <input type="range" class="scrub" id="scrub" min="0" max="100" value="0">
+          <div class="spd">速度
+            <select id="speed">
+              <option value="0.5">0.5×</option>
+              <option value="1" selected>1×</option>
+              <option value="2">2×</option>
+              <option value="4">4×</option>
+            </select>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 侧边栏：讲解 -->
+    <aside class="sidebar">
+      <div class="card">
+        <h2>讲解 · 这一阶段做了什么<span class="pill" id="stepHint">随播放更新</span></h2>
+        <div class="body">
+          <div id="stepNote"></div>
+          <div class="notes" id="notes"></div>
+        </div>
+      </div>
+    </aside>
+  </div>
+</div>
+
+<footer>数据流为示意性时序（时间单位为相对刻度，非真实周期数），用于直观理解 tcgen05 异步语义与 software pipelining。</footer>
+
+<script>
+/* ============================================================
+   微架构节点布局 (共享 SVG)
+   ============================================================ */
+const NODES = {
+  gmem: {x:30,  y:150, w:100, h:150, label:"GMEM", sub:"全局显存"},
+  tma:  {x:185, y:175, w:95,  h:100, label:"TMA",  sub:"异步拷贝引擎"},
+  smem: {x:335, y:95,  w:150, h:270, label:"SMEM", sub:"共享内存"},
+  tmem: {x:605, y:140, w:135, h:180, label:"TMEM", sub:"张量内存 (新)"},
+  core: {x:825, y:165, w:135, h:120, label:"Tensor Core", sub:"tcgen05 异步 MMA"},
+  mbar: {x:335, y:438, w:625, h:28,  label:"mbarrier", sub:"完成度同步原语"},
+};
+// SMEM/TMEM 内部槽位 (y = 槽位矩形顶部, 高 40, 中心 = y+20)
+const SLOTS = {
+  smem:[{id:"A",y:122},{id:"B",y:202},{id:"C",y:282}],
+  tmem:[{id:"acc",y:167},{id:"lhs",y:247}],
+};
+
+// 边（全部正交折线 / Manhattan 路由, 避免穿过模块）
+//   · 相邻模块之间走短横段
+//   · SMEM→Core 的 MMA 旁路走【顶部通道 y=45】, 绕过 TMEM
+//   · 所有自右向左的回写走【底部通道 y=400/416】, 与正向流分离
+const EDGES = {
+  // GMEM →(TMA)→ SMEM 三路加载
+  load_a:[[130,215],[280,215],[305,215],[305,142],[335,142]],
+  load_b:[[130,225],[280,225],[335,222]],
+  load_c:[[130,235],[280,235],[305,235],[305,302],[335,302]],
+  // SMEM → TMEM 拷贝
+  smem2tmem:[[485,302],[545,302],[545,187],[605,187]],
+  smem2lhs:[[485,142],[585,142],[585,267],[605,267]],
+  // MMA: SMEM(B) 经顶部通道入 Core; TMEM(acc) 与 Core 相邻直连
+  mma_inB:[[485,222],[505,222],[505,45],[892,45],[892,165]],
+  mma_inAcc:[[740,187],[785,187],[785,212],[825,212]],
+  mma_out:[[825,238],[765,238],[765,200],[740,200]],
+  // 收尾: TMEM → SMEM (底部通道)
+  tmem2smem:[[672,320],[672,400],[410,400],[410,365]],
+  // 写回: SMEM → GMEM (底部通道, 更低一层)
+  store:[[400,365],[400,416],[120,416],[120,300]],
+  // stage1 寄存器往返
+  g2r:[[130,225],[280,225],[280,45],[892,45],[892,165]],
+  r2tmem:[[825,210],[785,210],[785,187],[740,187]],
+  tmem2r:[[740,200],[765,200],[765,238],[825,238]],
+  r2g:[[892,285],[892,416],[120,416],[120,300]],
+};
+// kind -> {edges:[], nodes:[], color, special?}
+const KIND = {
+  load_a:{edges:["load_a"],nodes:["gmem","tma","smem"],color:"var(--smem)"},
+  load_b:{edges:["load_b"],nodes:["gmem","tma","smem"],color:"var(--smem)"},
+  load_c:{edges:["load_c"],nodes:["gmem","tma","smem"],color:"var(--smem)"},
+  smem2tmem:{edges:["smem2tmem"],nodes:["smem","tmem"],color:"var(--tmem)"},
+  smem2lhs:{edges:["smem2lhs"],nodes:["smem","tmem"],color:"var(--tmem)"},
+  mma:{edges:["mma_inB","mma_inAcc","mma_out"],nodes:["smem","tmem","core"],color:"var(--core)",special:"mma"},
+  tmem2smem:{edges:["tmem2smem"],nodes:["tmem","smem"],color:"var(--acc)"},
+  store:{edges:["store"],nodes:["smem","tma","gmem"],color:"var(--store)"},
+  g2r:{edges:["g2r"],nodes:["gmem","tma","core"],color:"var(--reg)"},
+  r2tmem:{edges:["r2tmem"],nodes:["core","tmem"],color:"var(--tmem)"},
+  tmem2r:{edges:["tmem2r"],nodes:["tmem","core"],color:"var(--reg)"},
+  r2g:{edges:["r2g"],nodes:["core","gmem"],color:"var(--gmem)"},
+  sync:{edges:[],nodes:["mbar"],color:"var(--sync)"},
+};
+// 每条边连接到哪些 SMEM/TMEM 槽位（用于只渲染本阶段用到的槽位）
+const EDGE_SLOTS = {
+  load_a:["smem-A"], load_b:["smem-B"], load_c:["smem-C"],
+  smem2tmem:["smem-C","tmem-acc"], smem2lhs:["smem-A","tmem-lhs"],
+  mma_inB:["smem-B"], mma_inAcc:["tmem-acc"], mma_out:["tmem-acc"],
+  tmem2smem:["smem-C","tmem-acc"], store:["smem-C"],
+  g2r:[], r2tmem:["tmem-acc"], tmem2r:["tmem-acc"], r2g:[],
+};
+
+/* ============================================================
+   双缓冲布局 (仅 Stage 4 使用 layout:"double")
+   SMEM 拆成 buf0/buf1 两列, 各含 U/B/V; TMEM 两个累加器 ub/vb。
+   cell 中心: U/B/V 行 y=179/239/299, buf0 列 x=378, buf1 列 x=442。
+   顶部留出 节点标签 + buf 表头 的空间, 避免与 cell 重叠。
+   ============================================================ */
+const DBUF = {
+  color:{buf0:"#0891b2", buf1:"#ea580c", ub:"#7c3aed", vb:"#db2777"},
+  cells:{
+    "smem-U0":{x:351,y:160,w:54,h:38,grp:"buf0",lbl:"U"},
+    "smem-U1":{x:415,y:160,w:54,h:38,grp:"buf1",lbl:"U"},
+    "smem-B0":{x:351,y:220,w:54,h:38,grp:"buf0",lbl:"B"},
+    "smem-B1":{x:415,y:220,w:54,h:38,grp:"buf1",lbl:"B"},
+    "smem-V0":{x:351,y:280,w:54,h:38,grp:"buf0",lbl:"V"},
+    "smem-V1":{x:415,y:280,w:54,h:38,grp:"buf1",lbl:"V"},
+    "tmem-ub":{x:619,y:200,w:108,h:40,grp:"ub",lbl:"ub 累加器"},
+    "tmem-vb":{x:619,y:265,w:108,h:40,grp:"vb",lbl:"vb 累加器"},
+  },
+  headers:[{t:"buf0",x:378},{t:"buf1",x:442}],
+  headerY:150,
+  rowLabels:[{t:"U",y:184},{t:"B",y:244},{t:"V",y:304}],
+  guides:{   // 静态浅色导引线
+    load:[[130,222],[300,222],[300,239],[351,239]],
+    mma:[[485,200],[505,200],[505,45],[892,45],[892,165]],
+    acc:[[825,225],[785,225],[785,220],[740,220]],
+    ret:[[740,305],[770,305],[770,400],[410,400],[410,365]],
+    store:[[400,365],[400,416],[120,416],[120,300]],
+  },
+};
+
+/* ============================================================
+   阶段数据
+   ============================================================ */
+const STAGES = [
+  /* ---------- 0. TMEM 原理 ---------- */
+  {
+    name:"TMEM 原理", sub:"张量内存是什么",
+    coreLabel:"Tensor Core", tmaLabel:"TMA",
+    special:"tmem-grid",
+    activeNodes:["tmem"],
+    code:
+`# Tensor Memory: 每个 SM 上 128 行 × 512 列 的 32-bit 单元
+#   128 × 512 = 64K cells —— 恰好等于一个 SM 的寄存器堆大小
+#
+# 关键限制:
+#  - 每个 warp 只能访问 32 行 (按 warp ID)
+#    → 需要一整个 warp group (4 warps) 才能覆盖 128 行
+#  - 按"列数"分配, 必须是 [32,512] 内的 2 的幂
+#  - load/store 需要 4 或 8 个 warp, 只支持 2D tensor
+#
+TensorMemoryLayout(
+    block=(blockM, blockN),   # blockM ∈ {64,128}
+    unpacked=True,            # <32bit dtype 可打包进 32bit cell
+)
+# tcgen05.ld / tcgen05.st 是 warp 级指令, 按特定 pattern 访问 TMEM
+# 本教程仅用 32x32b atom: 每个 lane 读/写 TMEM 的 1 行`,
+    perf:"",
+    notes:`
+<p><b>TMEM (Tensor Memory)</b> 是 Blackwell 引入的全新片上内存空间，专门服务于异步 MMA 指令。它像"第二个寄存器堆"：<b>128 行 × 512 列</b>的 32-bit 单元，正好 64K cells。</p>
+<p>右图按 <b>warp 行寻址</b>着色：4 个 warp 各自只能触及 32 行，必须组成一个 warp group 才能覆盖全部 128 行。这正是寄存器布局受 TMEM 布局约束的根源。</p>
+<div class="insight">为什么要它？访问 TMEM 比 SMEM 快得多，且 MMA 的<b>累加器必须放在 TMEM</b>。LHS 可放 SMEM 或 TMEM，RHS 必须在 SMEM。</div>
+<p class="pill">切到下一阶段看数据如何在 TMEM 中往返流动。</p>`,
+    events:[],
+  },
+
+  /* ---------- 1. TMEM 往返 ---------- */
+  {
+    name:"TMEM 往返", sub:"tmem_example_kernel",
+    coreLabel:"Registers (warps)", tmaLabel:"LSU 访存",
+    activeNodes:["gmem","tma","tmem","core"],
+    code:
+`@gluon.jit
+def tmem_example_kernel(in_ptr, out_ptr, M, N, num_warps):
+    input = gl.load(in_ptr + offs)          #  GMEM → 寄存器
+
+    tmem_layout = TensorMemoryLayout(block=(64,64),
+                    col_stride=32 // bitwidth)
+    tmem = allocate_tensor_memory(           #  在 SM 上分配 TMEM
+                element_ty, [M, N], tmem_layout)
+
+    reg_layout = tmem.get_reg_layout()       #  布局必须匹配
+    input = gl.convert_layout(input, reg_layout)
+    tmem.store(input)                        #  寄存器 → TMEM
+    output = tmem.load()                     #  TMEM → 寄存器
+    output = gl.convert_layout(output, global_layout)
+    gl.store(out_ptr + offs, output)         #  寄存器 → GMEM`,
+    perf:"",
+    notes:`
+<p>最小例子：把数据从 GMEM 读进寄存器，存入 TMEM，再读回寄存器写回 GMEM。<b>不涉及 MMA</b>，纯粹演示 TMEM 可当作通用 scratch 使用。</p>
+<p>核心约束体现在 <code>get_reg_layout()</code>：寄存器布局必须由 TMEM 描述符<b>反推</b>出来，否则 <code>tcgen05.st/ld</code> 的 warp 访问 pattern 对不上。所以每次往返都要 <code>convert_layout</code>。</p>
+<div class="insight">观察时序：四步严格串行 —— load → store(TMEM) → load(TMEM) → store。没有异步、没有重叠，这是后续优化的"基线心智模型"。</div>`,
+    steps:[
+      {t0:0,t1:3, title:"gl.load：GMEM → 寄存器",
+       handoff:"存入 TMEM 前必须用 <code>convert_layout</code> 把数据转成 <code>tmem.get_reg_layout()</code> 反推出的寄存器布局——否则 <code>tcgen05.st</code> 的 warp 访问 pattern 与 TMEM 布局对不上。"},
+      {t0:3.3,t1:5.3, title:"tmem.store：寄存器 → TMEM",
+       handoff:"TMEM 的 store/load 是 warp 级指令，需 4 或 8 个 warp 协同、且只支持 2D tensor；读回时同样要用匹配的寄存器布局。"},
+      {t0:6,t1:8, title:"tmem.load：TMEM → 寄存器",
+       handoff:"读回寄存器后要再 <code>convert_layout</code> 回 global layout，才能用普通 <code>gl.store</code> 写回 GMEM。"},
+      {t0:8.6,t1:11.6, title:"gl.store：寄存器 → GMEM", handoff:""},
+    ],
+    events:[
+      {lane:"Load",kind:"g2r",t0:0,t1:3,label:"gl.load → reg",line:2},
+      {lane:"TMEM",kind:"r2tmem",t0:3.3,t1:5.3,label:"reg → TMEM",line:[10,11]},
+      {lane:"TMEM",kind:"tmem2r",t0:6,t1:8,label:"TMEM → reg",line:[12,13]},
+      {lane:"Store",kind:"r2g",t0:8.6,t1:11.6,label:"gl.store → GMEM",line:14},
+    ],
+  },
+
+  /* ---------- 2. 单次异步 MMA ---------- */
+  {
+    name:"单次 MMA", sub:"small_mma_kernel",
+    tiling:{M:128,N:128,K:128,BM:128,BN:128,BK:128,blocks:1},
+    coreLabel:"Tensor Core", tmaLabel:"TMA",
+    activeNodes:["gmem","tma","smem","tmem","core","mbar"],
+    code:
+`# 用 TMA 把 A,B,C 载入 SMEM, 共用一个 mbarrier
+mbarrier.expect(bar, A.nbytes + B.nbytes + C.nbytes)
+tma.async_load(a_desc, [0,0], bar, a_smem)
+tma.async_load(b_desc, [0,0], bar, b_smem)
+tma.async_load(c_desc, [0,0], bar, c_smem)
+mbarrier.wait(bar, phase=0)                 # 等待三路 TMA 完成
+
+# 累加器必须在 TMEM: 把 C 拷进 TMEM
+acc_tmem = allocate_tensor_memory(...)
+acc_tmem.store(c_smem.load(acc_reg_layout))
+
+# tcgen05_mma 是【异步】的: 完成前不可读写 acc / 写操作数
+tcgen05_mma(a_smem, b_smem, acc_tmem)       # RHS 必须在 SMEM
+tcgen05_commit(bar)                         # 完成后 arrive mbarrier
+mbarrier.wait(bar, phase=0)                 # 等 MMA 完成
+
+acc = acc_tmem.load(); d_smem.store(acc)    # TMEM → SMEM
+fence_async_shared()
+tma.async_copy_shared_to_global(d_desc, [0,0], d_smem)`,
+    perf:"",
+    notes:`
+<p>第一次出现完整的 MMA 数据通路：<b>GMEM →(TMA)→ SMEM →(拷贝)→ TMEM(累加器) →(tcgen05)→ TMEM → SMEM →(TMA)→ GMEM</b>。</p>
+<p><b>异步语义</b>是关键：<code>tcgen05_mma</code> 发射后立即返回。它的完成通过 <span style="color:var(--sync)">mbarrier</span> 跟踪 —— <code>tcgen05_commit(bar)</code> 让"之前发射的所有 MMA 完成后"去 arrive 这个 barrier。</p>
+<p><code>fence_async_shared()</code> 用来给 async proxy 排序 SMEM 写入，保证 MMA 看到正确数据。</p>
+<div class="warn">注意：TMA 与 tcgen05_mma <b>不能复用同一个 mbarrier</b>（否则 UB）。代码里 invalidate + 重新 init 就是为此。</div>`,
+    steps:[
+      {t0:0,t1:4, title:"TMA 异步加载 A / B / C → SMEM",
+       handoff:"三路 TMA 共用一个 mbarrier；先 <code>mbarrier.expect</code> 预告总字节数，发射后必须 <code>mbarrier.wait</code> 才能使用数据。"},
+      {t0:4,t1:4.8, title:"mbarrier.wait：等加载完成",
+       handoff:"这个 bar 接下来要给 MMA 用——<b>必须先 invalidate 再重新 init</b>。TMA 与 tcgen05_mma 复用同一 mbarrier 是未定义行为。"},
+      {t0:5,t1:7, title:"C → 累加器 (TMEM)",
+       handoff:"累加器<b>必须</b>在 TMEM；LHS 可放 SMEM 或 TMEM，但 RHS（B）<b>必须</b>留在 SMEM。"},
+      {t0:7.2,t1:13, title:"tcgen05_mma：A·B + C（异步）",
+       handoff:"MMA 发射后<b>立即返回</b>：完成前不可读写 acc、不可写操作数。若刚写过 SMEM 操作数，MMA 前需 <code>fence_async_shared()</code> 给 async proxy 排序。"},
+      {t0:13,t1:13.6, title:"tcgen05_commit",
+       handoff:"commit 只是“登记”：让之前发射的所有 MMA 完成后去 arrive 该 mbarrier，本身不阻塞。"},
+      {t0:13.6,t1:14.4, title:"mbarrier.wait：等 MMA 真正完成",
+       handoff:"只有 wait 通过后，才能安全读取 TMEM 里的累加结果。"},
+      {t0:14.6,t1:16.6, title:"acc (TMEM) → SMEM",
+       handoff:"写回 GMEM 前要 <code>fence_async_shared()</code>，再用 <code>tma.async_copy_shared_to_global</code>。"},
+      {t0:16.8,t1:21, title:"TMA store：SMEM → GMEM", handoff:""},
+    ],
+    events:[
+      {lane:"TMA",kind:"load_a",t0:0,t1:4,label:"async_load A",line:2,role:'a',dk:0},
+      {lane:"TMA",kind:"load_b",t0:0,t1:4,label:"async_load B",line:3,role:'b',dk:0},
+      {lane:"TMA",kind:"load_c",t0:0,t1:4,label:"async_load C",line:4,role:'c',dk:0},
+      {lane:"Sync",kind:"sync",t0:4,t1:4.8,label:"mbar.wait",line:5},
+      {lane:"SMEM→TMEM",kind:"smem2tmem",t0:5,t1:7,label:"C → acc(TMEM)",line:9,role:'c',dk:0},
+      {lane:"Core",kind:"mma",t0:7.2,t1:13,label:"tcgen05_mma A·B+C",line:12,role:'ab',dk:0},
+      {lane:"Sync",kind:"sync",t0:13,t1:13.6,label:"commit",line:13},
+      {lane:"Sync",kind:"sync",t0:13.6,t1:14.4,label:"wait MMA",line:14},
+      {lane:"Epilogue",kind:"tmem2smem",t0:14.6,t1:16.6,label:"acc → SMEM",line:16,role:'store'},
+      {lane:"Epilogue",kind:"store",t0:16.8,t1:21,label:"TMA store → GMEM",line:[17,18],role:'store'},
+    ],
+  },
+
+  /* ---------- 3. 串行 blocked matmul ---------- */
+  {
+    name:"串行 K 循环", sub:"blocked_matmul_kernel · 1020 TFLOPS",
+    tiling:{M:128,N:128,K:192,BM:128,BN:128,BK:64,blocks:1},
+    coreLabel:"Tensor Core", tmaLabel:"TMA",
+    activeNodes:["gmem","tma","smem","tmem","core","mbar"],
+    code:
+`use_acc = False
+for k in range(0, K, BLOCK_K):
+    mbarrier.expect(tma_bar, A.nbytes + B.nbytes)
+    tma.async_load(a_desc, [off_m, k], tma_bar, a_smem)
+    tma.async_load(b_desc, [k, off_n], tma_bar, b_smem)
+    mbarrier.wait(tma_bar, phase)            # ← 等加载 (Core 空闲!)
+
+    tcgen05_mma(a_smem, b, acc_tmem, use_acc=use_acc)
+    tcgen05_commit(mma_bar)
+    mbarrier.wait(mma_bar, phase)            # ← 等 MMA (TMA 空闲!)
+    use_acc = True                           # 之后累加进同一 acc
+    phase ^= 1
+# 收尾: acc → SMEM → TMA store`,
+    perf:`<table class="perf">
+      <tr><th>BLOCK</th><th>BLOCK_K</th><th>warps</th><th>TFLOPS</th></tr>
+      <tr><td>128²</td><td>64</td><td>4</td><td>898</td></tr>
+      <tr class="hl"><td>128²</td><td>128</td><td>4</td><td>1019</td></tr>
+      <tr><td>128²</td><td>256</td><td>4</td><td>563</td></tr></table>`,
+    notes:`
+<p>真正的 matmul：沿 K 维分块循环，每块 <code>load → MMA</code>，累加进同一个 TMEM 累加器（首次 <code>use_acc=False</code> 顺带清零）。达到 <b>1020 TFLOPS</b>。</p>
+<p>但看时序图的<b>气泡 (bubble)</b>：<code>mbarrier.wait(tma_bar)</code> 时 Tensor Core 完全空闲；<code>mbarrier.wait(mma_bar)</code> 时 TMA 引擎完全空闲。两个引擎<b>交替工作、从不重叠</b>。</p>
+<div class="warn">SM 的算力被"等数据"和"等计算"轮流浪费。tcgen05 本是异步的，这里却被同步 wait 锁成了串行 —— 这正是下一阶段要消除的。</div>`,
+    steps:(()=>{
+      const st=[]; let t=0;
+      for(let i=0;i<3;i++){
+        st.push({t0:t,t1:t+3.5, title:`第 ${i} 块：TMA 加载 A/B → SMEM`,
+          handoff:"必须 <code>mbarrier.wait(tma_bar)</code> 才能开始 MMA——<b>此刻 Tensor Core 完全空闲（气泡）</b>。"});
+        st.push({t0:t+3.5,t1:t+4, title:`第 ${i} 块：wait 加载`,
+          handoff:"等到数据后发射 MMA；首轮用 <code>use_acc=False</code> 顺带把累加器清零。"});
+        st.push({t0:t+4,t1:t+8, title:`第 ${i} 块：tcgen05_mma`,
+          handoff:"<code>tcgen05_commit</code> 后必须 <code>mbarrier.wait(mma_bar)</code>——<b>此刻 TMA 引擎完全空闲（气泡）</b>。两次 wait 之间还要翻转 phase。"});
+        st.push({t0:t+8,t1:t+8.6, title:`第 ${i} 块：wait MMA`,
+          handoff: i<2 ? "下一轮复用同一块 SMEM buffer，<b>必须等 MMA 读完</b>才能覆盖——这正是串行、无法重叠的根因。"
+                       : "K 循环结束，进入收尾。"});
+        t+=8.8;
+      }
+      st.push({t0:t,t1:t+2, title:"收尾：acc → SMEM", handoff:"下转 dtype 写入 c_smem，再 <code>fence_async_shared()</code>。"});
+      st.push({t0:t+2.2,t1:t+6, title:"收尾：TMA store → GMEM", handoff:""});
+      return st;
+    })(),
+    events:(()=>{ // 3 次 K 迭代串行
+      const ev=[]; let t=0;
+      for(let i=0;i<3;i++){
+        ev.push({lane:"TMA",kind:"load_a",t0:t,t1:t+3.5,label:`load A k${i}`,line:3,role:'a',dk:i});
+        ev.push({lane:"TMA",kind:"load_b",t0:t,t1:t+3.5,label:`load B k${i}`,line:4,role:'b',dk:i});
+        ev.push({lane:"Sync",kind:"sync",t0:t+3.5,t1:t+4,label:"wait load",line:5});
+        ev.push({lane:"Core",kind:"mma",t0:t+4,t1:t+8,label:`MMA k${i}`,line:[7,8],role:'ab',dk:i});
+        ev.push({lane:"Sync",kind:"sync",t0:t+8,t1:t+8.6,label:"wait MMA",line:9});
+        t+=8.8;
+      }
+      ev.push({lane:"Epilogue",kind:"tmem2smem",t0:t,t1:t+2,label:"acc → SMEM",line:12,role:'store'});
+      ev.push({lane:"Epilogue",kind:"store",t0:t+2.2,t1:t+6,label:"store → GMEM",line:12,role:'store'});
+      return ev;
+    })(),
+  },
+
+  /* ---------- 4. software pipelined ---------- */
+  {
+    name:"软件流水线", sub:"blocked_matmul_pipelined_kernel · 1113 TFLOPS",
+    tiling:{M:256,N:128,K:256,BM:128,BN:128,BK:64,blocks:2},
+    coreLabel:"Tensor Core", tmaLabel:"TMA",
+    activeNodes:["gmem","tma","smem","tmem","core","mbar"],
+    layout:"double",   // 显式双缓冲布局
+    code:
+`# 同时处理 2 个 M 分块 (U 上 / V 下), 共享 B; 双缓冲 + 两个累加器
+# 调度: U1 B1 V1 | U2 B2 V2 | (UBi U(i+2) VBi B(i+2) V(i+2)) ... | 收尾
+# load:MMA = 3:2, U 和 B 共用一个 load mbarrier
+for _ in range(cdiv(K,BLOCK_K) - 2):
+    # 用第 i 个 buffer 计算, 同时预取第 i+2 个
+    mbarrier.wait(load_ub_bars[i], phase)
+    tcgen05_mma(u_bufs[i], b_bufs[i], ub_tmem, use_acc=ub_acc)   # UBi
+    tcgen05_commit(mma_ub_bars[i])
+
+    mbarrier.wait(load_v_bars[i], phase)
+    tcgen05_mma(v_bufs[i], b_bufs[i], vb_tmem, use_acc=vb_acc)   # VBi
+    tcgen05_commit(mma_vb_bars[i])
+
+    mbarrier.wait(mma_ub_bars[i], phase)     # UBi 算完 → buffer 可复用
+    tma.async_load(a_desc, [off_m, k], ...)              # 预取 U(i+2)
+    mbarrier.wait(mma_vb_bars[i], phase)
+    tma.async_load(b_desc, [k, off_n], ...)              # 预取 B(i+2)
+    tma.async_load(a_desc, [off_m+BLOCK_M, k], ...)      # 预取 V(i+2)`,
+    perf:`<table class="perf">
+      <tr><th>BLOCK</th><th>BLOCK_K</th><th>warps</th><th>TFLOPS</th></tr>
+      <tr class="hl"><td>128²</td><td>64</td><td>8</td><td>1113</td></tr>
+      <tr><td>128²</td><td>64</td><td>4</td><td>1000</td></tr>
+      <tr><td>128²</td><td>128</td><td>4</td><td>1040</td></tr></table>`,
+    notes:`
+<p>软件流水线：一次处理两个 M 分块（<b>U</b>=上、<b>V</b>=下，共享同一块 B），所有输入<b>双缓冲</b>，并使用<b>两个独立累加器</b> ub_tmem / vb_tmem。</p>
+<p>关键在于<b>重叠</b>：当 Tensor Core 在算第 i 块的 UB/VB 时，TMA 已经在<b>预取第 i+2 块</b>。看时序图 —— TMA 轨道和 Core 轨道现在<b>几乎同时满载</b>，气泡被填平。</p>
+<p>tcgen05 指令<b>隐式按序流水</b>（相同 shape+acc dtype 的两条 MMA、或 MMA 后接 commit，执行顺序有保证），所以两个累加器的 MMA 无需显式互相同步，只靠 mbarrier 精确跟踪完成点。3:2 的 load:MMA 比例让访存刚好喂饱计算。</p>
+<div class="insight">相比串行版同参数提升有限，但它打开了 BLOCK_K=64 + num_warps=8 的高占用配置，最终 <b>1113 TFLOPS</b>。更彻底的做法是 warp specialization（下一篇教程）。</div>`,
+    steps:(()=>{
+      const st=[];
+      st.push({t0:0,t1:5.5, title:"Prologue：预取 U1/B1/V1（buf0）",
+        handoff:"双缓冲流水线必须先“灌注”——填满深度为 2 的 buffer，之后计算与预取才能并行。"});
+      st.push({t0:5.5,t1:10, title:"Prologue：预取 U2/B2/V2（buf1）",
+        handoff:"两个 buffer 就绪，进入稳态：TMA 与 Tensor Core 同时满载。"});
+      let tc=8;
+      for(let i=0;i<4;i++){
+        st.push({t0:tc,t1:tc+2.6, title:`稳态：MMA UB${i+1}（累加器 ub）`,
+          handoff:"UB 与 VB 同 shape、同 acc dtype，<b>tcgen05 隐式按序流水</b>，两条 MMA 之间无需显式同步。"});
+        st.push({t0:tc+2.6,t1:tc+5.2, title:`稳态：MMA VB${i+1}（累加器 vb）`,
+          handoff:`<b>ping-pong</b>：Core 正读 buf${i%2}，TMA 同时往<b>另一个 buffer ${1-i%2}</b>预取后续块——两引擎落在不同 buffer 上，故能完全并行；覆盖前必须 <code>wait(mma_*_bars[i])</code> 确认已被消费。`});
+        tc+=5.2;
+      }
+      st.push({t0:tc,t1:tc+1.8, title:"收尾：UB → SMEM",
+        handoff:"<code>mbarrier.wait(ub_bar)</code> 确认最后一次 UB 完成后才能读累加器。"});
+      st.push({t0:tc+1.8,t1:tc+4.6, title:"收尾：store U → GMEM",
+        handoff:"store V 前要 <code>store_wait</code> 等这次 TMA 写完，c_smem 才能复用。"});
+      st.push({t0:tc+4.6,t1:tc+6.4, title:"收尾：VB → SMEM", handoff:"等 vb_bar 完成后读第二个累加器。"});
+      st.push({t0:tc+6.4,t1:tc+9.2, title:"收尾：store V → GMEM", handoff:""});
+      return st;
+    })(),
+    events:(()=>{
+      const ev=[];
+      const SY={U:179,B:239,V:299};            // 各行 cell 中心 y
+      const cx=b=>b?442:378;                   // buf0/buf1 列 x
+      const C=DBUF.color;
+      const loadPath=(row,b)=>{const gy=row==="U"?212:row==="B"?224:236;
+        return [[130,gy],[280,gy],[300,gy],[300,SY[row]],[cx(b),SY[row]]];};
+      const inPath=(row,b)=>[[cx(b),SY[row]],[485,SY[row]],[505,SY[row]],[505,45],[892,45],[892,165]];
+      const accPath=a=>a==="ub"?[[825,212],[785,212],[785,220],[740,220]]
+                               :[[825,255],[765,255],[765,285],[740,285]];
+      const load=(row,b,t0,t1,label,line,dk)=>ev.push({lane:`TMA·buf${b}`,t0,t1,label,line,
+        path:loadPath(row,b),cells:[`smem-${row}${b}`],color:b?C.buf1:C.buf0,
+        role:row==="U"?'u':row==="V"?'v':'b', dk, buf:b});
+      const mma=(acc,lhs,b,t0,t1,label,line,dk)=>ev.push({lane:`Core·${acc}`,t0,t1,label,line,mma:true,
+        inPath:inPath(lhs,b),accPath:accPath(acc),
+        cells:[`smem-${lhs}${b}`,`smem-B${b}`,`tmem-${acc}`],color:C[acc],acc, role:acc, dk, buf:b});
+
+      // Prologue：灌注 tile0→buf0, tile1→buf1
+      load("U",0,0,3,"U1→buf0",14,0);  load("B",0,0,3,"B1→buf0",16,0);  load("V",0,3,5.5,"V1→buf0",17,0);
+      load("U",1,5.5,8,"U2→buf1",14,1);load("B",1,5.5,8,"B2→buf1",16,1);load("V",1,8,10,"V2→buf1",17,1);
+
+      // 稳态 Core：step i 读 buf(i%2)
+      let tc=8;
+      for(let i=0;i<4;i++){
+        const b=i%2;
+        mma("ub","U",b,tc,tc+2.6,`UB${i+1}·读 buf${b}`,[5,6],i);
+        mma("vb","V",b,tc+2.6,tc+5.2,`VB${i+1}·读 buf${b}`,[9,10],i);
+        tc+=5.2;
+      }
+      // 预取流：错开一步, 始终写【对侧】buffer —— 这就是 ping-pong
+      //   tile2→buf0 发生在 step1(Core 读 buf1) 期间; tile3→buf1 发生在 step2(Core 读 buf0) 期间
+      load("U",0,13.2,15.0,"U3→buf0",[13,14],2); load("B",0,15.0,16.8,"B3→buf0",16,2); load("V",0,16.8,18.4,"V3→buf0",17,2);
+      load("U",1,18.4,20.2,"U4→buf1",[13,14],3); load("B",1,20.2,22.0,"B4→buf1",16,3); load("V",1,22.0,23.6,"V4→buf1",17,3);
+
+      // 收尾：两个累加器分别 TMEM→SMEM→store
+      const te=8+4*5.2; // 28.8
+      ev.push({lane:"Epilogue",t0:te,t1:te+1.8,label:"UB→SMEM",role:'store-ub',
+        path:[[740,220],[770,220],[770,400],[410,400],[410,365]],cells:["tmem-ub"],color:C.ub});
+      ev.push({lane:"Epilogue",t0:te+1.8,t1:te+4.6,label:"store U→GMEM",role:'store-ub',
+        path:[[400,365],[400,416],[120,416],[120,300]],cells:[],color:"#ea580c"});
+      ev.push({lane:"Epilogue",t0:te+4.6,t1:te+6.4,label:"VB→SMEM",role:'store-vb',
+        path:[[740,285],[760,285],[760,408],[410,408],[410,365]],cells:["tmem-vb"],color:C.vb});
+      ev.push({lane:"Epilogue",t0:te+6.4,t1:te+9.2,label:"store V→GMEM",role:'store-vb',
+        path:[[400,365],[400,416],[120,416],[120,300]],cells:[],color:"#ea580c"});
+      return ev;
+    })(),
+  },
+];
+
+const LANES = ["TMA·buf0","TMA·buf1","TMA","Load","SMEM→TMEM",
+               "Core·ub","Core·vb","Core","Sync","Epilogue","Store","TMEM"];
+const LANE_COLOR = {
+  "TMA·buf0":"#0891b2","TMA·buf1":"#ea580c","Core·ub":"#7c3aed","Core·vb":"#db2777",
+  "TMA":"var(--smem)","Load":"var(--reg)","SMEM→TMEM":"var(--tmem)",
+  "Core":"var(--core)","Sync":"var(--sync)","Epilogue":"var(--store)",
+  "Store":"var(--gmem)","TMEM":"var(--tmem)"
+};
+
+const LEGEND_DEFAULT=`
+  <span><i class="dot" style="background:var(--gmem)"></i>GMEM 全局显存</span>
+  <span><i class="dot" style="background:var(--tma)"></i>TMA 引擎</span>
+  <span><i class="dot" style="background:var(--smem)"></i>SMEM 共享内存</span>
+  <span><i class="dot" style="background:var(--tmem)"></i>TMEM 张量内存</span>
+  <span><i class="dot" style="background:var(--core)"></i>Tensor Core</span>
+  <span><i class="dot" style="background:var(--sync)"></i>mbarrier 同步</span>`;
+const LEGEND_DOUBLE=`
+  <span><i class="dot" style="background:#0891b2"></i>buf0</span>
+  <span><i class="dot" style="background:#ea580c"></i>buf1</span>
+  <span><i class="dot" style="background:#7c3aed"></i>ub 累加器</span>
+  <span><i class="dot" style="background:#db2777"></i>vb 累加器</span>
+  <span>💡 同一时刻 Core 读一个 buffer、TMA 写<b>另一个</b> → ping-pong</span>`;
+
+/* ============================================================
+   渲染：微架构 SVG
+   ============================================================ */
+const diagram = document.getElementById('diagram');
+
+// 计算本阶段实际用到的 节点 / 边 / 槽位，其它一律不渲染
+function stageUsage(stage){
+  const nodes=new Set(stage.activeNodes||[]), edges=new Set(), slots=new Set();
+  (stage.events||[]).forEach(e=>{
+    const kd=KIND[e.kind]; if(!kd) return;
+    kd.nodes.forEach(n=>nodes.add(n));
+    kd.edges.forEach(ek=>{ edges.add(ek); (EDGE_SLOTS[ek]||[]).forEach(s=>slots.add(s)); });
+  });
+  return {nodes,edges,slots};
+}
+
+// 双缓冲专用图：SMEM 拆 buf0/buf1, TMEM 两个累加器
+function buildDoubleDiagram(stage){
+  let s = `<svg viewBox="0 0 980 480" id="svg">`;
+  // 静态导引线（虚线浅色, 仅作骨架; 真实流线由活跃事件实时绘制）
+  for(const pts of Object.values(DBUF.guides))
+    s += `<polyline points="${pts.map(p=>p.join(',')).join(' ')}" fill="none" `+
+         `stroke="#c4cfdb" stroke-width="1.5" stroke-dasharray="4 4" opacity="0.5"/>`;
+  // 节点框（沿用 NODES 坐标, 但不画普通槽位）
+  for(const id of ["gmem","tma","tmem","smem","core","mbar"]){
+    const n=NODES[id];
+    s += `<g id="n-${id}">
+      <rect class="nodeBox" x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="10"/>
+      <text class="nodeLbl" x="${n.x+12}" y="${n.y+22}">${n.label}</text>
+      <text class="nodeSub" id="sub-${id}" x="${n.x+12}" y="${n.y+38}">${id==="smem"?"双缓冲":id==="tmem"?"双累加器":n.sub}</text>
+    </g>`;
+  }
+  // SMEM 双缓冲表头 + 行标签
+  DBUF.headers.forEach(h=> s+=`<text class="bufHdr" x="${h.x}" y="${DBUF.headerY}">${h.t}</text>`);
+  DBUF.rowLabels.forEach(r=> s+=`<text class="rowLbl" x="345" y="${r.y}">${r.t}</text>`);
+  // cells
+  for(const [cid,c] of Object.entries(DBUF.cells)){
+    s += `<rect class="cell" id="cell-${cid}" x="${c.x}" y="${c.y}" width="${c.w}" height="${c.h}" rx="5"/>`;
+    if(cid.startsWith("tmem-"))   // 累加器进度条
+      s += `<rect class="accfill2" id="fill-${cid}" x="${c.x+2}" y="${c.y+c.h-7}" width="0" height="4" rx="2"/>`;
+    s += `<text class="cellLbl" x="${c.x+c.w/2}" y="${c.y+c.h/2+4}" text-anchor="middle">${c.lbl}</text>`;
+  }
+  s += `<g id="dots"></g></svg>`;
+  diagram.innerHTML = s;
+}
+
+function buildDiagram(stage){
+  if(stage.layout==="double"){ buildDoubleDiagram(stage); return; }
+  const use = stageUsage(stage);
+  let s = `<svg viewBox="0 0 980 480" id="svg">`;
+  // 边（只画本阶段的）
+  for(const [k,pts] of Object.entries(EDGES)){
+    if(!use.edges.has(k)) continue;
+    s += `<polyline class="edge" id="e-${k}" points="${pts.map(p=>p.join(',')).join(' ')}"/>`;
+  }
+  // 节点（只画本阶段的）
+  for(const [id,n] of Object.entries(NODES)){
+    if(!use.nodes.has(id)) continue;
+    s += `<g id="n-${id}">
+      <rect class="nodeBox" x="${n.x}" y="${n.y}" width="${n.w}" height="${n.h}" rx="10"/>
+      <text class="nodeLbl" x="${n.x+12}" y="${n.y+22}">${n.label}</text>
+      <text class="nodeSub" id="sub-${id}" x="${n.x+12}" y="${n.y+38}">${n.sub}</text>`;
+    if(SLOTS[id]){
+      for(const sl of SLOTS[id]){
+        if(!use.slots.has(id+'-'+sl.id)) continue;   // 只画用到的槽位
+        s += `<rect class="slot" x="${n.x+14}" y="${sl.y}" width="${n.w-28}" height="40" rx="6"/>
+              <text class="slotLbl" x="${n.x+20}" y="${sl.y+24}">${sl.id}</text>`;
+        if(id==="tmem" && sl.id==="acc"){
+          s += `<rect class="accfill" id="accbar" x="${n.x+16}" y="${sl.y+2}" width="0" height="36" rx="5" opacity="0"/>`;
+        }
+      }
+    }
+    s += `</g>`;
+  }
+  s += `<g id="dots"></g></svg>`;
+  diagram.innerHTML = s;
+}
+
+/* TMEM 网格（stage0 专用，覆盖在 diagram 上） */
+function buildTmemGrid(){
+  const cols=16, rows=8, cw=44, ch=30, x0=120, y0=40;
+  const warpColors=["#5a8a00","#0891b2","#7c3aed","#ea580c"];
+  let s = `<svg viewBox="0 0 960 360" id="svg">`;
+  s += `<text x="480" y="24" text-anchor="middle" class="nodeLbl">TMEM: 128 行 × 512 列 (此处缩略为 8×16 示意)</text>`;
+  for(let r=0;r<rows;r++){
+    const warp = Math.floor(r/2); // 8 行 → 4 warp 各 2 行
+    for(let c=0;c<cols;c++){
+      s+=`<rect x="${x0+c*cw}" y="${y0+r*ch}" width="${cw-3}" height="${ch-3}" rx="3"
+            fill="${warpColors[warp]}" opacity="${0.30+0.18*((r+c)%2)}" stroke="#ffffff"/>`;
+    }
+  }
+  for(let w=0;w<4;w++){
+    s+=`<text x="${x0-14}" y="${y0+ (w*2+1)*ch}" text-anchor="end" fill="${warpColors[w]}"
+          font-size="12" font-weight="700">warp ${w}</text>`;
+  }
+  s+=`<text x="${x0}" y="${y0+rows*ch+26}" fill="var(--muted)" font-size="12">
+        每个 warp 只能访问 32 行 → 4 warp 组成 warp group 覆盖全部 128 行</text>`;
+  s+=`<text x="${x0}" y="${y0+rows*ch+46}" fill="var(--muted)" font-size="12">
+        每格 = 一个 32-bit cell · 累加器 (accumulator) 必须驻留在这里</text>`;
+  s+=`</svg>`;
+  diagram.innerHTML = s;
+}
+
+/* ============================================================
+   ① 数据原料：C = A·B 的分块切分 + K 维滑动
+   ============================================================ */
+const tilingWrap = document.getElementById('tiling');
+function buildTiling(stage){
+  const t=stage.tiling;
+  if(!t){
+    tilingWrap.innerHTML=`<div style="padding:40px 14px;color:var(--muted);font-size:12.5px;`+
+      `text-align:center;line-height:1.8">本阶段为最小示例，<br>不涉及 C = A·B 的分块滑动。<br>`+
+      `<span style="font-size:11px">（TMEM 原理 / TMEM 往返）</span></div>`;
+    return;
+  }
+  const nK=Math.round(t.K/t.BK), nM=t.blocks, nN=Math.round(t.N/t.BN);
+  const WK=Math.min(34,132/nK), HK=Math.min(30,120/nK), HM=42, WN=64;
+  const cy=176, cx=196;   // 顶部留出 B 标签空间
+  const Aw=nK*WK, Ah=nM*HM, Bh=nK*HK, Bw=nN*WN, Cw=nN*WN, Ch=nM*HM;
+  const Ax=cx-Aw-26, Ay=cy, Bx=cx, By=cy-Bh-30, Cx=cx, Cy=cy;
+  let s=`<svg viewBox="0 0 ${cx+Cw+40} ${cy+Ch+58}" id="tilesvg">`;
+  // A
+  for(let m=0;m<nM;m++) for(let k=0;k<nK;k++)
+    s+=`<rect class="tcell" id="tA-${m}-${k}" x="${Ax+k*WK}" y="${Ay+m*HM}" width="${WK}" height="${HM}"/>`;
+  // B
+  for(let k=0;k<nK;k++) for(let n=0;n<nN;n++)
+    s+=`<rect class="tcell" id="tB-${k}-${n}" x="${Bx+n*WN}" y="${By+k*HK}" width="${WN}" height="${HK}"/>`;
+  // C + 每个 M 块的累加进度条
+  for(let m=0;m<nM;m++){
+    for(let n=0;n<nN;n++)
+      s+=`<rect class="tcell" id="tC-${m}-${n}" x="${Cx+n*WN}" y="${Cy+m*HM}" width="${WN}" height="${HM}"/>`;
+    s+=`<rect id="tCfill-${m}" x="${Cx+2}" y="${Cy+m*HM+HM-6}" width="0" height="3.5" rx="1.5" fill="#5a8a00" opacity="0"/>`;
+  }
+  // 标签（含原始 shape 与 block shape）
+  s+=`<text class="tax" x="${Ax}" y="${Ay-7}">K 维滑动 →</text>`;
+  s+=`<text class="tlabel" x="${Ax+Aw/2}" y="${Ay+Ah+17}" text-anchor="middle">A · LHS</text>`;
+  s+=`<text class="tdim"   x="${Ax+Aw/2}" y="${Ay+Ah+30}" text-anchor="middle">[M×K]=${t.M}×${t.K} 块${t.BM}×${t.BK}</text>`;
+  s+=`<text class="tlabel" x="${Bx+Bw/2}" y="${By-16}" text-anchor="middle">B · RHS</text>`;
+  s+=`<text class="tdim"   x="${Bx+Bw/2}" y="${By-4}" text-anchor="middle">[K×N]=${t.K}×${t.N}</text>`;
+  s+=`<text class="tlabel" x="${Cx+Cw/2}" y="${Cy+Ch+17}" text-anchor="middle">C = A·B</text>`;
+  s+=`<text class="tdim"   x="${Cx+Cw/2}" y="${Cy+Ch+30}" text-anchor="middle">[M×N]=${t.M}×${t.N} 块${t.BM}×${t.BN}</text>`;
+  // C 块名 (u/v → ub/vb)
+  if(nM===2){
+    s+=`<text class="tax" x="${Cx+Cw/2}" y="${Cy+HM/2+4}" text-anchor="middle" fill="#7c3aed">ub</text>`;
+    s+=`<text class="tax" x="${Cx+Cw/2}" y="${Cy+HM+HM/2+4}" text-anchor="middle" fill="#db2777">vb</text>`;
+  }
+  s+=`</svg>`;
+  tilingWrap.innerHTML = s + `<div id="tileLoc" class="tileloc"></div>`;
+}
+
+function renderTiling(){
+  const t=curStage.tiling; if(!t) return;
+  document.querySelectorAll('.tcell').forEach(c=>{c.classList.remove('on'); c.style.fill='';});
+  const nK=Math.round(t.K/t.BK);
+  // 累加进度：已完成的 K 步数
+  let ubK=0, vbK=0, curK=-1;
+  curStage.events.forEach(e=>{
+    if(clock>e.t1){
+      if(e.role==='ub'||e.role==='ab') ubK++;
+      if(e.role==='vb') vbK++;
+    }
+  });
+  const setFill=(m,k)=>{
+    const el=document.getElementById('tCfill-'+m), c=document.getElementById('tC-'+m+'-0');
+    if(el&&c){const w=(+c.getAttribute('width'))-4;
+      el.setAttribute('width', Math.max(0,w*Math.min(1,k/nK))); el.setAttribute('opacity', k>0?0.95:0);}
+  };
+  setFill(0,ubK); if(t.blocks>1) setFill(1,vbK);
+  const COL={A:'#2563eb',B:'#0891b2',C:'#db2777',pre:'#d97706',done:'#5a8a00'};
+  const dbl = curStage.layout==="double";            // 双缓冲阶段 → 用微架构同款配色
+  const bufC = b => DBUF.color['buf'+b];             // buf0=青 / buf1=橙
+  const on=(id,col)=>{const el=document.getElementById(id); if(el){el.classList.add('on'); el.style.fill=col;}};
+  const locs=[];   // 当前活跃数据在微架构通路中的位置
+  curStage.events.forEach(e=>{
+    if(!(clock>=e.t0&&clock<=e.t1)||!e.role) return;
+    const dk=e.dk;
+    // 操作数取所在 buffer 的颜色, 结果/累加器取事件色 —— 与微架构图一致
+    const oc = dbl ? bufC(e.buf) : COL.A;
+    const cc = dbl ? e.color : COL.C;
+    switch(e.role){
+      case 'u': case 'a': on(`tA-0-${dk}`, dbl?e.color:COL.A); break;
+      case 'v':           on(`tA-1-${dk}`, dbl?e.color:COL.A); break;
+      case 'b':           on(`tB-${dk}-0`, dbl?e.color:COL.B); break;
+      case 'c':           on('tC-0-0',COL.pre); break;
+      case 'ab': case 'ub': on(`tA-0-${dk}`,oc); on(`tB-${dk}-0`,oc); on('tC-0-0',cc); curK=Math.max(curK,dk); break;
+      case 'vb':            on(`tA-1-${dk}`,oc); on(`tB-${dk}-0`,oc); on('tC-1-0',cc); curK=Math.max(curK,dk); break;
+      case 'store': case 'store-ub': on('tC-0-0', dbl?e.color:COL.done); break;
+      case 'store-vb':               on('tC-1-0', dbl?e.color:COL.done); break;
+    }
+    const L=tileLoc(e); if(L) locs.push(L);
+  });
+  // 位置标注：当前这份数据正处在通路的哪一段
+  const locEl=document.getElementById('tileLoc');
+  if(locEl){
+    locEl.innerHTML = locs.length
+      ? locs.map(l=>`<div class="lc"><span class="lcdot" style="background:${l.c}"></span><span>${l.t}</span></div>`).join('')
+      : `<div class="empty">— 拖动/播放时序图，这里标明当前数据走到通路的哪一段 —</div>`;
+  }
+  const pill=document.getElementById('tileClock');
+  if(pill) pill.textContent = curK>=0 ? `K 块 ${curK+1}/${nK}` : "C = A·B";
+}
+
+// 当前事件的数据位于微架构通路的哪一部分（文字 + 颜色, 与右上图同源）
+function tileLoc(e){
+  const M=s=>`<span class="mod">${s}</span>`;
+  const FB={u:'#2563eb',v:'#2563eb',a:'#2563eb',b:'#0891b2',ab:'#db2777',ub:'#7c3aed',
+            vb:'#db2777',c:'#d97706',store:'#5a8a00','store-ub':'#7c3aed','store-vb':'#db2777'};
+  const col = e.color || FB[e.role] || '#888';
+  const buf = e.buf!=null ? ('SMEM·buf'+e.buf) : 'SMEM';
+  switch(e.role){
+    case 'u': case 'v': case 'a': case 'b':
+      return {c:col, t:`${e.label||'加载'}：GMEM →${M('TMA')}→ ${M(buf)}`};
+    case 'c':  return {c:col, t:`C 预载入累加器：${M('SMEM')} → ${M('TMEM 累加器')}`};
+    case 'ub': return {c:col, t:`UB：${M(buf)} 的 U·B 经 ${M('Tensor Core')} → ${M('TMEM·ub')}`};
+    case 'vb': return {c:col, t:`VB：${M(buf)} 的 V·B 经 ${M('Tensor Core')} → ${M('TMEM·vb')}`};
+    case 'ab': return {c:col, t:`MMA：${M('SMEM')} → ${M('Tensor Core')} → ${M('TMEM 累加器')}`};
+    case 'store': return {c:col, t:`回写：${M('TMEM')} → ${M('SMEM')} →${M('TMA')}→ GMEM`};
+    case 'store-ub': return {c:col, t:`回写：${M('TMEM·ub')} → ${M('SMEM')} →${M('TMA')}→ GMEM`};
+    case 'store-vb': return {c:col, t:`回写：${M('TMEM·vb')} → ${M('SMEM')} →${M('TMA')}→ GMEM`};
+  }
+  return null;
+}
+
+/* ============================================================
+   渲染：Gantt
+   ============================================================ */
+const gantt = document.getElementById('gantt');
+let curStage, T_MAX, usedLanes;
+function buildGantt(stage){
+  usedLanes = LANES.filter(L => stage.events.some(e=>e.lane===L));
+  T_MAX = Math.max(1,...stage.events.map(e=>e.t1)) * 1.04;
+  const SUB=16; // 子行高度
+  let s = "";
+  for(const L of usedLanes){
+    const evs = stage.events.filter(e=>e.lane===L);
+    // 贪心区间分配：同一 lane 内时间重叠的事件分到不同子行, 避免互相遮挡
+    const order = evs.map((e,i)=>({e,i})).sort((a,b)=>a.e.t0-b.e.t0);
+    const rowEnds=[], rowOf=new Array(evs.length);
+    for(const {e,i} of order){
+      let r=0; for(; r<rowEnds.length; r++){ if(rowEnds[r] <= e.t0+1e-6) break; }
+      rowEnds[r]=e.t1; rowOf[i]=r;
+    }
+    const nRows=Math.max(1,rowEnds.length), trackH=nRows*SUB+2;
+    s += `<div class="lane-row" style="min-height:${trackH}px">`+
+         `<div class="lane-name" title="${L}">${L}</div>`+
+         `<div class="lane-track" data-lane="${L}" style="height:${trackH}px">`;
+    evs.forEach((e,i)=>{
+      const left = e.t0/T_MAX*100, w = (e.t1-e.t0)/T_MAX*100, top = 1+rowOf[i]*SUB;
+      s += `<div class="bar" data-ev="${L}-${i}" title="${e.label}"`+
+           ` style="left:${left}%;width:${w}%;top:${top}px;background:${LANE_COLOR[L]}">${e.label}</div>`;
+    });
+    s += `</div></div>`;
+  }
+  // playhead 容器（放在第一个 track 之上，用绝对全局线更简单：用单独覆盖层）
+  s += `<div class="timeaxis"><div></div><div class="axis-track" id="axis"></div></div>`;
+  gantt.innerHTML = s;
+
+  // 轴刻度
+  const axis = document.getElementById('axis');
+  const nT = 6;
+  for(let i=0;i<=nT;i++){
+    const tk=document.createElement('div');
+    tk.className='tick'; tk.style.left=(i/nT*100)+'%';
+    tk.textContent=(T_MAX*i/nT).toFixed(0);
+    axis.appendChild(tk);
+  }
+  // 全局 playhead：附到每条 track
+  document.querySelectorAll('.lane-track').forEach(tr=>{
+    const ph=document.createElement('div'); ph.className='playhead'; ph.style.left='0%';
+    tr.appendChild(ph);
+  });
+  // 点击/拖动 track 设置时间
+  document.querySelectorAll('.lane-track').forEach(tr=>{
+    const seek=(ev)=>{
+      const r=tr.getBoundingClientRect();
+      const f=Math.min(1,Math.max(0,(ev.clientX-r.left)/r.width));
+      setClock(f*T_MAX); playing=false; updatePlayBtn();
+    };
+    tr.addEventListener('mousedown',e=>{seek(e);
+      const mv=ev=>seek(ev); const up=()=>{document.removeEventListener('mousemove',mv);document.removeEventListener('mouseup',up);};
+      document.addEventListener('mousemove',mv); document.addEventListener('mouseup',up);});
+  });
+}
+
+/* ============================================================
+   时钟驱动
+   ============================================================ */
+let clock=0, playing=false, lastTs=0, speed=1;
+const scrub=document.getElementById('scrub');
+
+function pointAt(pts, f){
+  // 沿折线按比例取点
+  let total=0; const seg=[];
+  for(let i=1;i<pts.length;i++){
+    const dx=pts[i][0]-pts[i-1][0], dy=pts[i][1]-pts[i-1][1];
+    const len=Math.hypot(dx,dy); seg.push(len); total+=len;
+  }
+  let d=f*total;
+  for(let i=1;i<pts.length;i++){
+    if(d<=seg[i-1]||i===pts.length-1){
+      const t=seg[i-1]?d/seg[i-1]:0;
+      return [pts[i-1][0]+(pts[i][0]-pts[i-1][0])*t, pts[i-1][1]+(pts[i][1]-pts[i-1][1])*t];
+    }
+    d-=seg[i-1];
+  }
+  return pts[pts.length-1];
+}
+
+function setClock(t){
+  clock=Math.min(T_MAX,Math.max(0,t));
+  scrub.value=(clock/T_MAX*100);
+  render();
+}
+
+// 根据当前时钟, 在“讲解”面板里展示 当前 step → 下一步 的衔接注意事项
+function renderStepNote(){
+  const el=document.getElementById('stepNote'); if(!el) return;
+  const steps=curStage.steps;
+  if(!steps||!steps.length){ el.innerHTML=''; return; }
+  let idx=0;
+  for(let i=0;i<steps.length;i++){ if(clock>=steps[i].t0) idx=i; }
+  const cur=steps[idx], nx=steps[idx+1];
+  const ho = nx
+    ? `<div class="ho">⚠ 衔接下一步「<span class="nx">${nx.title}</span>」：${cur.handoff||"—"}</div>`
+    : `<div class="ho done">✓ 本阶段最后一步${cur.handoff?("："+cur.handoff):"，可切到下一优化阶段对比。"}</div>`;
+  el.innerHTML=`<div class="stepbox">
+    <div class="cur">▶ 当前 step&nbsp; <b>${cur.title}</b> <span class="idx">${idx+1} / ${steps.length}</span></div>
+    ${ho}</div>`;
+}
+
+// 高亮当前执行的代码行并滚动到可视区（render / renderDouble 共用）
+function applyCodeLines(activeLines){
+  const pre=document.getElementById('code');
+  document.querySelectorAll('.codeline').forEach(el=>{
+    el.classList.toggle('active', activeLines.has(+el.dataset.ln));
+  });
+  if(activeLines.size && pre){
+    const first=Math.min(...activeLines);
+    const el=pre.querySelector(`.codeline[data-ln="${first}"]`);
+    if(el){
+      const top=el.offsetTop, bot=top+el.offsetHeight;
+      if(top<pre.scrollTop || bot>pre.scrollTop+pre.clientHeight){
+        pre.scrollTop = top - pre.clientHeight/2 + el.offsetHeight;
+      }
+    }
+  }
+}
+
+// 累加器进度条（双缓冲图）
+function setAccFill(acc, frac){
+  const c=DBUF.cells['tmem-'+acc], el=document.getElementById('fill-tmem-'+acc);
+  if(!el||!c) return;
+  el.setAttribute('width', (c.w-4)*Math.min(1,Math.max(0,frac)));
+  el.setAttribute('fill', DBUF.color[acc]);
+  el.setAttribute('opacity', frac>0?0.9:0);
+}
+
+// Stage 4 双缓冲专用渲染：cell 按 buffer 着色, 两引擎在不同 buffer 上 ping-pong
+function renderDouble(){
+  document.querySelectorAll('.cell').forEach(c=>{c.classList.remove('on'); c.style.fill='';});
+  const dots=document.getElementById('dots'); if(dots) dots.innerHTML="";
+  document.querySelectorAll('.nodeBox').forEach(e=>e.classList.remove('on'));
+  document.querySelectorAll('.bar').forEach(b=>b.classList.remove('live'));
+  document.querySelectorAll('.playhead').forEach(p=>p.style.left=(clock/T_MAX*100)+'%');
+
+  const activeNodes=new Set(), activeLines=new Set();
+  let ubDone=0,vbDone=0,ubProg=0,vbProg=0;
+
+  curStage.events.forEach(e=>{
+    const live=clock>=e.t0 && clock<=e.t1;
+    const bar=document.querySelector(`[data-ev="${e.lane}-${curStage.events.filter(x=>x.lane===e.lane).indexOf(e)}"]`);
+    if(live&&bar) bar.classList.add('live');
+    if(e.acc==="ub"){ if(clock>e.t1) ubDone++; else if(live) ubProg=(clock-e.t0)/(e.t1-e.t0); }
+    if(e.acc==="vb"){ if(clock>e.t1) vbDone++; else if(live) vbProg=(clock-e.t0)/(e.t1-e.t0); }
+    if(!live) return;
+
+    (Array.isArray(e.line)?e.line:(e.line!=null?[e.line]:[])).forEach(l=>activeLines.add(l));
+    activeNodes.add('gmem'); activeNodes.add('tma');
+    if(e.cells&&e.cells.some(c=>c.startsWith('smem'))) activeNodes.add('smem');
+    if(e.cells&&e.cells.some(c=>c.startsWith('tmem'))) activeNodes.add('tmem');
+    if(e.mma){ activeNodes.add('smem'); activeNodes.add('tmem'); activeNodes.add('core'); }
+
+    (e.cells||[]).forEach(cid=>{
+      const c=document.getElementById('cell-'+cid);
+      if(c){ c.classList.add('on'); c.style.fill=DBUF.color[DBUF.cells[cid].grp]; }
+    });
+
+    const f=(clock-e.t0)/Math.max(0.001,(e.t1-e.t0));
+    const dots2=document.getElementById('dots');
+    // 为活跃事件画出它【实际走的】流线 + 圆点, 二者完全重合
+    const poly=pts=>`<polyline points="${pts.map(p=>p.join(',')).join(' ')}" fill="none" `+
+      `stroke="${e.color}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" opacity="0.6"/>`;
+    if(dots2){
+      if(e.mma){
+        dots2.innerHTML += poly(e.inPath) + poly(e.accPath);   // 操作数→Core, Core→累加器
+        const p = f<0.5 ? pointAt(e.inPath, f/0.5) : pointAt(e.accPath,(f-0.5)/0.5);
+        dots2.innerHTML += `<circle cx="${p[0]}" cy="${p[1]}" r="5.5" fill="${e.color}"/>`;
+      } else if(e.path){
+        dots2.innerHTML += poly(e.path);
+        const p=pointAt(e.path,f);
+        dots2.innerHTML += `<circle cx="${p[0]}" cy="${p[1]}" r="5.5" fill="${e.color}"/>`;
+      }
+    }
+  });
+
+  activeNodes.forEach(n=>document.getElementById('n-'+n)?.querySelector('.nodeBox').classList.add('on'));
+  setAccFill('ub',(ubDone+ubProg)/4);
+  setAccFill('vb',(vbDone+vbProg)/4);
+  applyCodeLines(activeLines);
+  renderStepNote();
+  renderTiling();
+}
+
+function render(){
+  document.getElementById('diagClock').textContent="t = "+clock.toFixed(1);
+  if(curStage.special==="tmem-grid"){
+    const sn=document.getElementById('stepNote'); if(sn) sn.innerHTML=''; // 原理页无 step
+    return;
+  }
+  if(curStage.layout==="double"){ renderDouble(); return; }
+
+  // reset
+  document.querySelectorAll('.edge').forEach(e=>e.classList.remove('on'));
+  document.querySelectorAll('.nodeBox').forEach(e=>e.classList.remove('on'));
+  const dots=document.getElementById('dots'); if(dots) dots.innerHTML="";
+  document.querySelectorAll('.bar').forEach(b=>b.classList.remove('live'));
+  document.querySelectorAll('.playhead').forEach(p=>p.style.left=(clock/T_MAX*100)+'%');
+
+  const activeNodes=new Set();
+  const activeLines=new Set();
+  let mmaProgress=0, mmaCount=0;
+
+  curStage.events.forEach((e,idx)=>{
+    const live = clock>=e.t0 && clock<=e.t1;
+    const bar=document.querySelector(`[data-ev="${e.lane}-${curStage.events.filter(x=>x.lane===e.lane).indexOf(e)}"]`);
+    if(live && bar) bar.classList.add('live');
+    if(!live) {
+      // 累加器进度：统计已完成的 MMA
+      if(e.kind==="mma" && clock>e.t1){ mmaCount++; }
+      return;
+    }
+    // 联动：收集当前执行到的代码行
+    (Array.isArray(e.line)?e.line:(e.line!=null?[e.line]:[])).forEach(l=>activeLines.add(l));
+    const kd=KIND[e.kind]; if(!kd) return;
+    kd.nodes.forEach(n=>activeNodes.add(n));
+    const f=(clock-e.t0)/Math.max(0.001,(e.t1-e.t0));
+
+    if(kd.special==="mma"){
+      // 前 45% 走输入，后 55% 走输出；core 常亮
+      const dots2=document.getElementById('dots');
+      if(f<0.5){
+        ["mma_inB","mma_inAcc"].forEach(ek=>{
+          document.getElementById('e-'+ek)?.classList.add('on');
+          const p=pointAt(EDGES[ek], f/0.5);
+          dots2.innerHTML+=`<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="${kd.color}"/>`;
+        });
+      }else{
+        document.getElementById('e-mma_out')?.classList.add('on');
+        const p=pointAt(EDGES.mma_out,(f-0.5)/0.5);
+        dots2.innerHTML+=`<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="${kd.color}"/>`;
+      }
+      mmaProgress=f;
+    }else{
+      kd.edges.forEach(ek=>{
+        document.getElementById('e-'+ek)?.classList.add('on');
+        const p=pointAt(EDGES[ek], f);
+        const dots2=document.getElementById('dots');
+        if(dots2) dots2.innerHTML+=`<circle cx="${p[0]}" cy="${p[1]}" r="5" fill="${kd.color}"/>`;
+      });
+    }
+  });
+
+  activeNodes.forEach(n=>document.getElementById('n-'+n)?.querySelector('.nodeBox').classList.add('on'));
+
+  // 联动：代码行 + step 衔接 + 数据切分滑动
+  applyCodeLines(activeLines);
+  renderStepNote();
+  renderTiling();
+
+  // 累加器填充条（matmul 阶段）
+  const accbar=document.getElementById('accbar');
+  if(accbar){
+    const totalMMA=curStage.events.filter(e=>e.kind==="mma").length;
+    if(totalMMA>0){
+      const frac=Math.min(1,(mmaCount+mmaProgress)/totalMMA);
+      accbar.setAttribute('opacity', frac>0?0.85:0);
+      accbar.setAttribute('width', (NODES.tmem.w-32)*frac);
+    }
+  }
+}
+
+/* 动画循环 */
+function loop(ts){
+  if(playing){
+    if(!lastTs) lastTs=ts;
+    const dt=(ts-lastTs)/1000; lastTs=ts;
+    clock += dt*2.2*speed;
+    if(clock>=T_MAX){ clock=T_MAX; playing=false; updatePlayBtn(); }
+    setClock(clock);
+  } else lastTs=0;
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+
+/* ============================================================
+   阶段切换 & 控件
+   ============================================================ */
+function esc(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function highlightLine(ln){
+  const hash = ln.indexOf('#');
+  const codePart = hash>=0 ? ln.slice(0,hash) : ln;
+  const comPart  = hash>=0 ? ln.slice(hash)  : '';
+  let s = esc(codePart)
+    .replace(/\b(for|in|range|if|else|def|return|import|False|True)\b/g,'<span class="kw">$1</span>')
+    .replace(/\b(tcgen05_mma|tcgen05_commit|tcgen05_cp|async_load|async_copy_shared_to_global|allocate_tensor_memory|mbarrier|tma|fence_async_shared|get_reg_layout|convert_layout|gl|TensorMemoryLayout)\b/g,'<span class="fn">$1</span>');
+  if(comPart) s += '<span class="cm">'+esc(comPart)+'</span>';
+  return s===''?'&nbsp;':s;
+}
+// 渲染为逐行元素, 便于按 data-ln 高亮“当前执行行”
+function renderCode(src){
+  return src.split('\n')
+    .map((ln,i)=>`<div class="codeline" data-ln="${i}">${highlightLine(ln)}</div>`)
+    .join('');
+}
+
+function loadStage(i){
+  curStage=STAGES[i];
+  // tabs
+  document.querySelectorAll('.tab').forEach((t,j)=>t.classList.toggle('active',j===i));
+  // ① 数据原料切分 + ② 微架构通路（只渲染本阶段用到的节点/边/槽位）
+  buildTiling(curStage);
+  buildDiagram(curStage);
+  document.querySelector('#sub-core')&&(document.querySelector('#sub-core').textContent=curStage.coreLabel.includes('Register')?"warp 寄存器":"tcgen05 异步 MMA");
+  document.querySelector('#n-core .nodeLbl')&&(document.querySelector('#n-core .nodeLbl').textContent=curStage.coreLabel);
+  document.querySelector('#n-tma .nodeLbl')&&(document.querySelector('#n-tma .nodeLbl').textContent=curStage.tmaLabel);
+
+  document.getElementById('diagTitle').textContent =
+    curStage.special==="tmem-grid" ? "TMEM 结构（warp 行寻址）"
+    : curStage.layout==="double" ? "微架构数据通路（双缓冲 ping-pong）" : "微架构数据通路";
+  document.getElementById('legend').innerHTML =
+    curStage.layout==="double" ? LEGEND_DOUBLE : LEGEND_DEFAULT;
+  document.getElementById('codeTitle').textContent=curStage.sub;
+  document.getElementById('code').innerHTML=renderCode(curStage.code);
+  document.getElementById('codePerf').textContent =
+    curStage.special==="tmem-grid" ? "" : "高亮行 = 当前执行处";
+  document.getElementById('notes').innerHTML=curStage.notes + (curStage.perf||"");
+
+  const ganttCard=document.getElementById('ganttCard');
+  if(curStage.special==="tmem-grid"){
+    buildTmemGrid();
+    ganttCard.style.display="none";
+  }else{
+    ganttCard.style.display="";
+    buildGantt(curStage);
+  }
+  playing=false; updatePlayBtn(); setClock(0);
+}
+
+function updatePlayBtn(){
+  document.getElementById('play').textContent = playing?"⏸ 暂停":"▶ 播放";
+}
+
+// build tabs
+const tabsEl=document.getElementById('tabs');
+STAGES.forEach((s,i)=>{
+  const d=document.createElement('div');
+  d.className='tab';
+  d.innerHTML=`<span class="num">${i}</span><span><div class="t">${s.name}</div><div class="s">${s.sub}</div></span>`;
+  d.onclick=()=>loadStage(i);
+  tabsEl.appendChild(d);
+});
+
+document.getElementById('play').onclick=()=>{playing=!playing; if(clock>=T_MAX) clock=0; lastTs=0; updatePlayBtn();};
+document.getElementById('reset').onclick=()=>{playing=false;updatePlayBtn();setClock(0);};
+document.getElementById('scrub').oninput=e=>{playing=false;updatePlayBtn();setClock(e.target.value/100*T_MAX);};
+document.getElementById('speed').onchange=e=>{speed=parseFloat(e.target.value);};
+
+loadStage(0);
+</script>
+</body>
+</html>

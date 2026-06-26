@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>two_ctas 汇聚 vs mma_bar 完成信号自动多播</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#fff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#0891b2; --hl:#ea580c;
+    --c0:#2563eb; --c1:#0d9488; --two:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#fff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px}
+  header h1 .g{color:var(--accent)}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:300px}
+  .sub b{color:#11305c}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  .ctrl{display:flex;gap:8px;align-items:center}
+  .ctrl button{font-size:11.5px;font-weight:700;cursor:pointer;border:1px solid #c3cedb;background:#fff;color:#33485e;border-radius:8px;padding:4px 12px}
+  .ctrl button:hover{background:#f1f5fa}
+
+  main{flex:1;display:grid;gap:10px;padding:10px;min-height:0;grid-template-columns:1fr 1fr}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .phead{padding:8px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none}
+  .phead .tag{font-size:10.5px;font-weight:700;color:#fff;padding:1px 9px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:10.5px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:10px;display:flex;justify-content:center;align-items:center}
+  .gridsvg{display:block}
+
+  footer{flex:none;border-top:1px solid var(--line);background:#fff;padding:9px 16px}
+  .read{font-size:12px;line-height:1.6}
+  .read b.a{color:var(--two)} .read b.b{color:var(--c0)}
+  .read code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  /* 流动虚线（marching ants） */
+  .flow{stroke-dasharray:6 7;animation:march .65s linear infinite}
+  @keyframes march{to{stroke-dashoffset:-13}}
+  svg.paused *{animation-play-state:paused!important}
+
+  @media(max-width:900px){body{height:auto;overflow:auto}main{grid-template-columns:1fr}.pbody{min-height:300px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>“完成信号<span class="g">自动多播</span>” 是什么 · 对照 <code style="font-family:Consolas">two_ctas</code> 的汇聚</h1>
+    <div class="sub">两个 barrier 等的事件不同 → 信号方向相反。<b>tma_bar</b> 等「两个 CTA 各自独立的 load」→ 把两边 arrival <b>汇聚</b>到 lead（many→1，要 two_ctas）；
+      <b>mma_bar</b> 等「一条 collective MMA 的单次完成」→ 硬件把这一个完成信号 <b>多播</b>到每个 CTA 自己的本地 barrier（1→many，不用 two_ctas）。</div>
+    <div class="ctrl"><button id="toggle">⏸ 暂停动画</button></div>
+  </div>
+</header>
+
+<main>
+  <div class="panel">
+    <div class="phead"><span class="tag" style="background:var(--two)">汇聚　many → 1</span>tma_bar（two_ctas=True）
+      <span class="hint">两个独立事件聚到 lead</span></div>
+    <div class="pbody"><div id="svgGather"></div></div>
+  </div>
+  <div class="panel">
+    <div class="phead"><span class="tag" style="background:var(--c0)">多播　1 → many</span>mma_bar（普通 per-CTA）
+      <span class="hint">一个完成事件扇出到两 CTA</span></div>
+    <div class="pbody"><div id="svgCast"></div></div>
+  </div>
+</main>
+
+<footer>
+  <div class="read">
+    <b class="a">左 · 汇聚：</b>CTA0、CTA1 的 TMA load <b>各自独立完成</b>（两个事件）。非 lead 的 CTA1 把它的 arrival <b>跨 CTA 送到 lead(CTA0)</b> 的那一个 barrier；lead 等够 2 个 arrival 才 <code>wait</code> 放行 → 必须 <code>two_ctas=True</code>，否则 barrier 不知道要等另一个 CTA。
+    　　<b class="b">右 · 多播：</b><code>tcgen05_mma</code> 是一对 CTA <b>一条</b> collective 指令；它完成时，<b>硬件自动把这一次「完成」arrival 复制到一对里每个 CTA 各自的 mma_bar 本地副本</b>上。每个 CTA 只 <code>wait</code> 自己的本地副本即可 → 这就是「完成信号自动多播」，所以 mma_bar 用普通 <code>allocate_mbarrier()</code> 就够，不需要 <code>two_ctas</code>。
+  </div>
+</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+const C0='#2563eb', C1='#0d9488', TWO='#7c3aed';
+
+function box(x,y,w,h,col,fillA,title,lines,bold){
+  let s=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="9" fill="${lighten(col,fillA)}" stroke="${col}" stroke-width="${bold?2:1.3}"/>`;
+  s+=`<text x="${x+w/2}" y="${y+18}" text-anchor="middle" style="font-size:11px;font-weight:800" fill="${col}">${title}</text>`;
+  (lines||[]).forEach((ln,i)=>{ s+=`<text x="${x+w/2}" y="${y+34+i*13}" text-anchor="middle" style="font-size:8.8px" fill="#445">${ln}</text>`; });
+  return s;
+}
+// 沿 path 流动的信号点
+function flow(d,col,delay){
+  return `<path d="${d}" fill="none" stroke="${col}" stroke-width="2" class="flow" opacity="0.85" marker-end="url(#mk)"/>`+
+    `<circle r="5" fill="${col}"><animateMotion dur="1.3s" repeatCount="indefinite" begin="${delay}s" path="${d}"/>`+
+    `<animate attributeName="opacity" dur="1.3s" repeatCount="indefinite" begin="${delay}s" values="0;1;1;0" keyTimes="0;0.15;0.85;1"/></circle>`;
+}
+
+/* ===== 左：汇聚（tma_bar two_ctas）===== */
+function buildGather(){
+  const W=440,H=300;
+  let g=`<defs><marker id="mk" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${TWO}"/></marker></defs>`;
+  g+=`<text x="20" y="22" style="font-size:10.5px;font-weight:700" fill="${TWO}">两个 CTA 各自完成 load → arrival 汇聚到 lead 的一个 barrier</text>`;
+  // 两个来源
+  g+=box(20,60,150,64,C0,.16,'CTA0 · load 完成',['本地 arrive']);
+  g+=box(20,184,150,64,C1,.16,'CTA1 · load 完成',['跨 CTA 送往 lead']);
+  // lead barrier
+  g+=box(300,118,120,72,TWO,.18,'tma_bar ★',['lead = CTA0','two_ctas · 等 2 个']);
+  // 流动箭头：源 → lead
+  g+=flow('M170,92 C235,92 245,150 298,150', C0, 0);
+  g+=flow('M170,216 C235,216 245,158 298,158', C1, 0.55);
+  // 说明 arrival 计数
+  g+=`<text x="${300+60}" y="206" text-anchor="middle" style="font-size:9px" fill="#7a8694">凑满 2 → wait 放行</text>`;
+  g+=`<text x="232" y="120" text-anchor="middle" style="font-size:9px;font-weight:700" fill="${TWO}">arrive →</text>`;
+  g+=`<text x="20" y="282" style="font-size:9.5px" fill="#7a8694">many → 1：必须 two_ctas，barrier 才会等另一个 CTA 的 arrival。</text>`;
+  $('svgGather').innerHTML=`<svg class="gridsvg" id="svA" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+
+/* ===== 右：多播（mma_bar 普通，硬件多播）===== */
+function buildCast(){
+  const W=440,H=300;
+  let g=`<defs><marker id="mk" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${C0}"/></marker></defs>`;
+  g+=`<text x="20" y="22" style="font-size:10.5px;font-weight:700" fill="${C0}">一条 collective MMA 完成 → 信号自动复制到每个 CTA 的本地 mma_bar</text>`;
+  // 单一来源：collective MMA
+  g+=box(20,118,160,72,TWO,.12,'tcgen05_mma',['一对 CTA · 一条指令','完成 = 一个事件']);
+  g+=`<rect x="20" y="118" width="160" height="72" rx="9" fill="none" stroke="${TWO}" stroke-width="1.8" stroke-dasharray="6 3"/>`;
+  // 两个目的地：每个 CTA 自己的 mma_bar
+  g+=box(310,56,118,66,C0,.16,'CTA0 的 mma_bar',['本地副本']);
+  g+=box(310,180,118,66,C1,.16,'CTA1 的 mma_bar',['本地副本']);
+  // 流动箭头：MMA → 两个本地 barrier（同时）
+  g+=flow('M180,148 C245,148 250,89 308,89', C0, 0);
+  g+=flow('M180,160 C245,160 250,213 308,213', C1, 0);
+  g+=`<text x="248" y="120" text-anchor="middle" style="font-size:9px;font-weight:700" fill="${C0}">完成多播 →</text>`;
+  g+=`<text x="20" y="282" style="font-size:9.5px" fill="#7a8694">1 → many：每个 CTA wait 自己的本地副本，无需 two_ctas。</text>`;
+  $('svgCast').innerHTML=`<svg class="gridsvg" id="svB" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+
+/* 暂停/继续：同时控制两个 SVG 的 SMIL 与 CSS 动画 */
+let paused=false;
+$('toggle').addEventListener('click',()=>{
+  paused=!paused;
+  ['svA','svB'].forEach(id=>{
+    const sv=$(id);
+    sv.classList.toggle('paused', paused);
+    if(paused) sv.pauseAnimations(); else sv.unpauseAnimations();
+  });
+  $('toggle').textContent = paused ? '▶ 继续动画' : '⏸ 暂停动画';
+});
+
+buildGather(); buildCast();
+</script>
+</body>
+</html>

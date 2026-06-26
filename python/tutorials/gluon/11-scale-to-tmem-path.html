@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scale 进 Tensor Memory · simple kernel 搬运路径</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --panel:#ffffff; --ink:#1f2430; --muted:#5b6472; --line:#e4e7ec;
+    --accent:#7c3aed;
+    --g:#2563eb; --gbg:#eef4ff;      /* global  */
+    --s:#7c3aed; --sbg:#f3eeff;      /* shared  */
+    --t:#059669; --tbg:#e9f8f1;      /* tmem    */
+    --r:#64748b; --rbg:#f1f3f6;      /* register*/
+    --aclr:#2563eb; --bclr:#0d9488; --sclr:#059669; --accclr:#ea580c;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:"Segoe UI",system-ui,"Microsoft YaHei",sans-serif;line-height:1.6}
+  header{padding:28px 32px 8px}
+  h1{margin:0 0 6px;font-size:24px}
+  .sub{color:var(--muted);font-size:14px}
+  main{padding:8px 32px 64px;max-width:1180px}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+         padding:20px 24px;margin:18px 0;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .panel h2{margin:0 0 4px;font-size:17px}
+  .desc{color:var(--muted);font-size:14px;margin:6px 0 16px}
+  code{background:#f3f4f7;padding:1px 6px;border-radius:5px;color:#6d28d9;font-size:12.5px;
+       font-family:"Consolas",monospace}
+  b{color:var(--ink)}
+
+  /* memory legend / space tags */
+  .spaces{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:6px}
+  .stag{font-size:12px;padding:4px 10px;border-radius:8px;border:1px solid var(--line);font-weight:600}
+  .stag.g{background:var(--gbg);color:var(--g);border-color:#cfe0ff}
+  .stag.s{background:var(--sbg);color:var(--s);border-color:#e0d4ff}
+  .stag.t{background:var(--tbg);color:var(--t);border-color:#c4ecdb}
+  .stag.r{background:var(--rbg);color:var(--r);border-color:#d8dde5}
+
+  /* flow rows */
+  .flow{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding:10px 0;border-bottom:1px dashed var(--line)}
+  .flow:last-child{border-bottom:none}
+  .track{min-width:62px;font-weight:700;font-size:13px}
+  .chip{padding:7px 12px;border-radius:9px;font-size:13px;border:1px solid var(--line);white-space:nowrap}
+  .chip .mem{display:block;font-size:9.5px;letter-spacing:.6px;opacity:.7;font-weight:700}
+  .chip.g{background:var(--gbg);border-color:#cfe0ff}
+  .chip.s{background:var(--sbg);border-color:#e0d4ff}
+  .chip.t{background:var(--tbg);border-color:#c4ecdb}
+  .chip.r{background:var(--rbg);border-color:#d8dde5}
+  .chip.core{background:#1f2430;color:#fff;border-color:#1f2430;font-weight:700}
+  .arrow{font-size:11px;color:var(--muted);display:flex;flex-direction:column;align-items:center;line-height:1.1}
+  .arrow b{font-size:11px;color:var(--accent)}
+  .arrow span{font-size:18px;color:#aab2c0}
+
+  /* legend buttons */
+  .legend{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+  .lbtn{cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:999px;
+        padding:5px 14px;font-size:13px;display:flex;align-items:center;gap:7px;user-select:none}
+  .lbtn .dot{width:11px;height:11px;border-radius:50%}
+  .lbtn.off{opacity:.35}
+  /* highlight dimming */
+  body.filtering .flow[data-on="0"]{opacity:.18;filter:grayscale(.6)}
+
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:6px}
+  th,td{border:1px solid var(--line);padding:8px 12px;text-align:left;vertical-align:top}
+  th{background:#fafbfc;color:var(--muted);font-weight:600}
+
+  .codecard{background:#0f1320;border-radius:12px;padding:14px 16px;overflow-x:auto;margin:10px 0}
+  .codecard pre{margin:0;font-family:"Consolas",monospace;font-size:12.5px;line-height:1.7;color:#d7dcea}
+  .codecard .c{color:#6b7280}            /* comment */
+  .codecard .k{color:#c084fc}            /* keyword */
+  .codecard .f{color:#7dd3fc}            /* func    */
+  .codecard .hl{background:rgba(124,58,237,.22);border-radius:4px;padding:0 2px}
+
+  .hops{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-top:8px}
+  @media(max-width:820px){.hops{grid-template-columns:1fr 1fr}}
+  .hop{background:#fafbfc;border:1px solid var(--line);border-radius:12px;padding:14px}
+  .hop .n{width:24px;height:24px;border-radius:50%;background:var(--accent);color:#fff;
+          display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;margin-bottom:8px}
+  .hop h4{margin:0 0 4px;font-size:14px}
+  .hop p{margin:0;font-size:12.5px;color:var(--muted)}
+  .cost{display:inline-block;margin-top:8px;font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px}
+  .cost.bad{background:#fef2f2;color:#dc2626;border:1px solid #fecaca}
+  .cost.ok{background:#ecfdf5;color:#059669;border:1px solid #a7f3d0}
+
+  .fore td:first-child{font-weight:700}
+  .fore .opt{color:var(--accent);font-weight:700}
+  .note{font-size:12.5px;color:var(--muted);margin-top:10px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Scale 怎么进 Tensor Memory —— simple kernel 的搬运路径</h1>
+  <div class="sub">承接上一张图：数据表示搞定后，真正的问题是「这些 operand 和 scale 在 SM 上分别<strong>住在哪块内存</strong>，又怎么被搬过去喂给 tensor core」。</div>
+</header>
+
+<main>
+
+  <!-- Panel 1: memory hierarchy + operand placement -->
+  <div class="panel">
+    <h2>① Blackwell 上 MMA 的「住址」—— 三块内存 + 寄存器</h2>
+    <div class="desc">
+      <code>tcgen05_mma_scaled</code> 是个硬件指令，它对每个输入<strong>固定要求来自哪块内存</strong>：
+      operand A/B 必须在 <b>共享内存 (SMEM)</b>；scale 和累加器必须在 <b>张量内存 (TMEM)</b>。
+      点下面的标签可以只高亮某一条数据通路。
+    </div>
+
+    <div class="spaces">
+      <span class="stag g">GMEM 全局内存</span>
+      <span class="stag s">SMEM 共享内存</span>
+      <span class="stag t">TMEM 张量内存（Blackwell 新增）</span>
+      <span class="stag r">REG 寄存器</span>
+    </div>
+
+    <div class="legend" id="legend">
+      <span class="lbtn" data-k="a"><span class="dot" style="background:var(--aclr)"></span>A operand</span>
+      <span class="lbtn" data-k="b"><span class="dot" style="background:var(--bclr)"></span>B operand</span>
+      <span class="lbtn" data-k="scale"><span class="dot" style="background:var(--sclr)"></span>A/B scale</span>
+      <span class="lbtn" data-k="acc"><span class="dot" style="background:var(--accclr)"></span>累加器 / 输出</span>
+    </div>
+
+    <!-- A -->
+    <div class="flow" data-track="a">
+      <div class="track" style="color:var(--aclr)">A</div>
+      <div class="chip g"><span class="mem">GMEM</span>A (M, K//2)</div>
+      <div class="arrow"><b>TMA</b><span>→</span></div>
+      <div class="chip s"><span class="mem">SMEM</span>a_smem</div>
+      <div class="arrow"><span>→</span></div>
+      <div class="chip core">tensor core 输入</div>
+    </div>
+
+    <!-- B -->
+    <div class="flow" data-track="b">
+      <div class="track" style="color:var(--bclr)">B</div>
+      <div class="chip g"><span class="mem">GMEM</span>B (N, K//2)</div>
+      <div class="arrow"><b>TMA</b><span>→</span></div>
+      <div class="chip s"><span class="mem">SMEM</span>b_smem.permute((1,0))<br><small style="color:var(--muted)">转置后的 descriptor</small></div>
+      <div class="arrow"><span>→</span></div>
+      <div class="chip core">tensor core 输入</div>
+    </div>
+
+    <!-- A/B scale -->
+    <div class="flow" data-track="scale">
+      <div class="track" style="color:var(--sclr)">scale</div>
+      <div class="chip g"><span class="mem">GMEM</span>A_scale / B_scale<br><small style="color:var(--muted)">(M, K//VEC_SIZE)</small></div>
+      <div class="arrow"><b>gl.load</b><span>→</span></div>
+      <div class="chip r"><span class="mem">REG</span>寄存器<br><small style="color:var(--muted)">BlockedLayout</small></div>
+      <div class="arrow"><b>convert_layout</b><span>→</span></div>
+      <div class="chip r"><span class="mem">REG</span>重排到<br>tmem 期望布局</div>
+      <div class="arrow"><b>.store</b><span>→</span></div>
+      <div class="chip t"><span class="mem">TMEM</span>scale_tmem<br><small style="color:var(--muted)">TensorMemoryScalesLayout</small></div>
+      <div class="arrow"><span>→</span></div>
+      <div class="chip core">tensor core 输入</div>
+    </div>
+
+    <!-- accumulator -->
+    <div class="flow" data-track="acc">
+      <div class="track" style="color:var(--accclr)">acc</div>
+      <div class="chip core">tensor core 写出</div>
+      <div class="arrow"><span>→</span></div>
+      <div class="chip t"><span class="mem">TMEM</span>acc_tmem (fp32)<br><small style="color:var(--muted)">逐 k 累加 use_acc</small></div>
+      <div class="arrow"><b>.load</b><span>→</span></div>
+      <div class="chip r"><span class="mem">REG</span>寄存器<br>→ to(out_dtype)</div>
+      <div class="arrow"><b>.store</b><span>→</span></div>
+      <div class="chip s"><span class="mem">SMEM</span>acc_smem</div>
+      <div class="arrow"><b>TMA</b><span>→</span></div>
+      <div class="chip g"><span class="mem">GMEM</span>C (M, N)</div>
+    </div>
+
+    <div class="note">关键对比：A/B operand 走 TMA 一步直达 SMEM；<strong>而 scale 这一行最长、最绕</strong> —— GMEM → 寄存器 → convert_layout → 再写进 TMEM。这正是 simple kernel 慢的根源，也是后面三步优化要逐段砍掉的对象。</div>
+  </div>
+
+  <!-- Panel 2: scale 4 hops with code -->
+  <div class="panel">
+    <h2>② scale 这条路的四跳，对应源码（<code>simple_mma_scaled_kernel</code>）</h2>
+    <div class="hops">
+      <div class="hop">
+        <div class="n">1</div>
+        <h4>GMEM → 寄存器</h4>
+        <p><code>gl.load</code> 用一个 2D BlockedLayout 把 scale 读进寄存器。沿 K 的连续维只有 <code>BLOCK_K//VEC_SIZE</code> 个字节，远小于 128B 缓存行。</p>
+        <span class="cost bad">不合并 · 抖 L2</span>
+      </div>
+      <div class="hop">
+        <div class="n">2</div>
+        <h4>convert_layout</h4>
+        <p>load 用的寄存器布局 ≠ TMEM 要求的布局，必须 <code>convert_layout</code> 在线程间重排数据。</p>
+        <span class="cost bad">寄存器 shuffle</span>
+      </div>
+      <div class="hop">
+        <div class="n">3</div>
+        <h4>寄存器 → TMEM</h4>
+        <p><code>scale_tmem.store(...)</code> 写进张量内存，布局必须是 <code>TensorMemoryScalesLayout</code>。</p>
+        <span class="cost bad">local store 不优</span>
+      </div>
+      <div class="hop">
+        <div class="n">4</div>
+        <h4>TMEM → tensor core</h4>
+        <p>硬件 <code>tcgen05_mma_scaled</code> 直接从 TMEM 读 scale，和 SMEM 里的 operand 一起算。</p>
+        <span class="cost ok">硬件完成</span>
+      </div>
+    </div>
+
+    <div class="codecard"><pre><span class="c"># 1) TMEM 里给 scale 开空间，布局固定为 TensorMemoryScalesLayout</span>
+scale_layout = <span class="f">TensorMemoryScalesLayout</span>()
+a_scale_tmem = <span class="f">allocate_tensor_memory</span>(dtype, [<span class="hl">BLOCK_M</span>, <span class="hl">BLOCK_K // VEC_SIZE</span>], scale_layout)
+b_scale_tmem = <span class="f">allocate_tensor_memory</span>(dtype, [<span class="hl">BLOCK_N</span>, <span class="hl">BLOCK_K // VEC_SIZE</span>], scale_layout)
+
+<span class="c"># --- 内层 k 循环里 ---</span>
+<span class="c"># hop1: GMEM -> 寄存器（BlockedLayout，连续维太短 → 不合并）</span>
+a_scale = <span class="f">gl.load</span>(a_scale_ptr + offs_m[:,None]*stride_m + offs_k[None,:]*stride_k)
+
+<span class="c"># hop2: 转成 TMEM 期望的寄存器布局</span>
+a_scale = <span class="f">gl.convert_layout</span>(a_scale, a_scale_tmem.<span class="f">get_reg_layout</span>())
+
+<span class="c"># hop3: 寄存器 -> TMEM</span>
+a_scale_tmem.<span class="f">store</span>(a_scale)
+
+<span class="c"># hop4: 硬件从 SMEM(operand) + TMEM(scale) 读入，写累加器到 TMEM</span>
+<span class="f">tcgen05_mma_scaled</span>(a_smem, b_smem.<span class="f">permute</span>((1,0)), acc_tmem,
+                   a_scale_tmem, b_scale_tmem, a_format, b_format, use_acc=use_acc)</pre></div>
+  </div>
+
+  <!-- Panel 3: why TMEM / TensorMemoryScalesLayout constraints -->
+  <div class="panel">
+    <h2>③ 为什么 scale 必须进 TMEM、必须用 TensorMemoryScalesLayout</h2>
+    <table>
+      <tr><th>事实</th><th>原因 / 约束来源</th></tr>
+      <tr><td>scale 住在 <b>TMEM</b>（不是 SMEM）</td><td>硬件 <code>tcgen05_mma_scaled</code> 规定 scale operand 从张量内存读取；operand 才从 SMEM 读。</td></tr>
+      <tr><td>布局必须 <code>TensorMemoryScalesLayout</code></td><td>这是硬件能识别的 scale 排布；用别的布局 store 进 TMEM 后 MMA 读不对。</td></tr>
+      <tr><td>B scale 永远按 <code>[BLOCK_N, BLOCK_K//VEC_SIZE]</code> 传入</td><td>指令对 B scale 的形状约定（即使 B operand 是转置喂入）。</td></tr>
+      <tr><td><b>BLOCK_N ≥ 32</b></td><td><code>TensorMemoryScalesLayout</code> 写入 TMEM 时<strong>至少需要 32 行</strong>；A scale 有 128 行（因 BLOCK_M=128）不受限，但 B scale 的行数 = BLOCK_N，故 BLOCK_N 不能小于 32。</td></tr>
+      <tr><td><b>BLOCK_M = 128</b></td><td>使用 <code>tcgen05_mma_scaled</code> 的硬性要求。</td></tr>
+      <tr><td>累加器也在 TMEM（<code>TensorMemoryLayout</code>, fp32）</td><td>Blackwell 累加器常驻 TMEM —— 这点后面让它比 Hopper 能多 overlap 一截。</td></tr>
+    </table>
+    <div class="note">所以上一张图里 <code>BLOCK_M=128 / BLOCK_N≥32</code> 这些「shape 约束」，根子其实在<strong>这块 TMEM + scale 布局</strong>上，而不在数学 shape 上。</div>
+  </div>
+
+  <!-- Panel 4: foreshadow optimizations -->
+  <div class="panel">
+    <h2>④ 后面三步优化，各砍掉这条路的哪一跳</h2>
+    <div class="desc">simple kernel 之所以「abysmal」(33–70 TFLOPS)，就是 scale 那条四跳的路太贵。三步优化逐段攻击它：</div>
+    <table class="fore">
+      <tr><th>优化</th><th>攻击的跳</th><th>做法</th><th>效果</th></tr>
+      <tr><td><span class="opt">优化 1</span> contiguous</td><td>hop1</td><td>改 GMEM 布局，让 <code>[BLOCK_M, BLOCK_K//VEC]</code> 块连续 → load 合并、不抖 L2</td><td>~20×</td></tr>
+      <tr><td><span class="opt">优化 2</span> packed-block TMA</td><td>hop1 + 部分 hop2</td><td>5D packed-block 布局 + 用 <b>TMA</b> 把 scale 直接搬进 <b>SMEM</b>，省掉大部分 convert_layout</td><td>+~35%</td></tr>
+      <tr><td><span class="opt">优化 3</span> tcgen05_copy</td><td>hop2 + hop3</td><td>在 SMEM 里反 swizzle 后，用 <code>tcgen05_copy</code> 异步 <b>SMEM → TMEM</b>，<strong>完全绕开寄存器</strong></td><td>小幅</td></tr>
+      <tr><td><span class="opt">优化 4</span> pipeline / WS</td><td>整条路并行化</td><td>把「copy + mma」抽象成一条 async MMA，做软件流水线 / warp 专门化</td><td>~2–2.4× 再翻倍</td></tr>
+    </table>
+    <div class="note">一句话串起来：<strong>operand 的搬运一开始就接近最优（TMA 直达 SMEM），全部 novelty 都在 scale 这条又长又绕的路上。</strong></div>
+  </div>
+
+</main>
+
+<script>
+const legend = document.getElementById('legend');
+const active = new Set();   // 空集 = 不过滤，全显示
+
+function apply(){
+  const filtering = active.size > 0;
+  document.body.classList.toggle('filtering', filtering);
+  document.querySelectorAll('.flow').forEach(f=>{
+    const t = f.dataset.track;
+    f.dataset.on = (!filtering || active.has(t)) ? "1" : "0";
+  });
+  legend.querySelectorAll('.lbtn').forEach(b=>{
+    b.classList.toggle('off', filtering && !active.has(b.dataset.k));
+  });
+}
+legend.querySelectorAll('.lbtn').forEach(b=>{
+  b.addEventListener('click', ()=>{
+    const k = b.dataset.k;
+    active.has(k) ? active.delete(k) : active.add(k);
+    apply();
+  });
+});
+apply();
+</script>
+</body>
+</html>

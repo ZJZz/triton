@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cluster Launch Control 可视化 — 持久 Matmul · 静态 vs 动态调度</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#ffffff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#5a8a00;
+    --gmem:#475569; --tma:#0891b2; --smem:#16a34a; --tmem:#7c3aed;
+    --core:#db2777; --clc:#9333ea;
+    --A:#2563eb; --B:#0d9488; --C:#ea580c; --ACC:#7c3aed;
+    --fence:#ca8a04; --ready:#16a34a; --empty:#64748b;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:10px 18px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#ffffff,#e9eef5);flex:none}
+  header h1{margin:0;font-size:17px;letter-spacing:.3px}
+  header h1 .g{color:var(--accent)}
+  .htop{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+  .tabs{display:flex;gap:8px}
+  .tab{background:var(--panel);border:1px solid var(--line);border-radius:9px;
+    padding:6px 12px;cursor:pointer;display:flex;gap:8px;align-items:center;transition:.15s}
+  .tab:hover{border-color:#aab8c8}
+  .tab.active{border-color:var(--accent);box-shadow:0 0 0 1px var(--accent) inset}
+  .tab .num{width:20px;height:20px;border-radius:50%;background:#e2e8f0;color:var(--muted);
+    display:grid;place-items:center;font-size:11px;font-weight:700}
+  .tab.active .num{background:var(--accent);color:#fff}
+  .tab .t{font-weight:600;font-size:13px}
+  .tab .s{color:var(--muted);font-size:11px}
+  .stagedesc{color:var(--muted);font-size:12px;flex:1;min-width:240px}
+  .stagedesc b{color:var(--txt)}
+
+  main{flex:1;display:flex;min-height:0;gap:8px;padding:8px}
+  .leftRegion{flex:1;display:flex;flex-direction:column;gap:8px;min-width:0;min-height:0}
+  .topRow{flex:1;display:flex;gap:8px;min-height:0}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .colCode{flex:0 0 31%;min-width:344px}
+  .panel.combo{flex:1;min-width:0}
+  .comboBody{flex:1;display:flex;min-height:0;min-width:0}
+  .subData{flex:0 0 33%;min-width:0;overflow:hidden;border-right:1px dashed var(--line)}
+  .subMicro{flex:1;min-width:0;overflow:hidden}
+  .subData svg,.subMicro svg{width:100%;height:100%;display:block}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);
+    background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none}
+  .phead .tag{font-size:10.5px;font-weight:600;color:#fff;background:var(--accent);
+    padding:1px 7px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:11px}
+  .pbody{flex:1;min-height:0;overflow:auto;position:relative}
+
+  .explain{padding:8px 12px;background:#eef6ff;border-bottom:1px solid var(--line);
+    font-size:12.5px;line-height:1.55;flex:none;min-height:74px;max-height:150px;overflow:auto}
+  .explain b{color:#11305c}
+  .explain code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;
+    padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  .explain .ekey{display:inline-block;font-weight:700;color:#fff;border-radius:5px;padding:0 7px;margin-right:6px;font-size:11px}
+  .codewrap{padding:8px 8px}
+  .cblock{margin-bottom:9px;border:1px solid #e3ebf3;border-radius:8px;overflow:hidden;background:#fff}
+  .cbhead{font-size:12px;font-weight:700;padding:5px 10px;display:flex;gap:7px;align-items:center;
+    flex-wrap:wrap;background:#f4f8fc;border-bottom:1px solid #e3ebf3}
+  .cbhead .sw{width:11px;height:11px;border-radius:3px;flex:none}
+  .cbname{font-weight:700;color:#1c2733}
+  .cbpart{color:#90a0b0;font-weight:400;font-size:10.5px;font-family:Consolas,monospace}
+  .cbnow{margin-left:auto;font-size:10.5px;font-weight:600;border:1px solid #cbd5e1;border-radius:20px;
+    padding:1px 9px;background:#fff;font-family:Consolas,monospace;max-width:100%;min-width:0;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  pre{margin:0;font-family:"Cascadia Code",Consolas,Menlo,monospace;font-size:12.5px;line-height:1.6;padding:4px 0}
+  .cl{padding:1px 12px 1px 14px;white-space:pre;border-left:3px solid transparent;color:#33414f}
+  .cl.on{background:#fff3cd;font-weight:600;color:#1c2733}
+  .cm{color:#8a98a8}.kw{color:#cf222e}.fn{color:#0550ae}.st{color:#0a6e3b}.nm{color:#953800}
+
+  .timeline{flex:none;height:330px;border:1px solid var(--line);border-radius:11px;
+    background:var(--panel);display:flex;flex-direction:column;overflow:hidden;min-width:0}
+  .tlhead{padding:6px 14px;display:flex;align-items:center;gap:10px;flex:none;
+    border-bottom:1px solid var(--line);background:var(--panel2)}
+  .tlhead .title{font-weight:700;font-size:12.5px}
+  .tlhead .persist{font-size:11px;color:#7a3ca8;font-weight:600;background:#f4e9fc;
+    border:1px solid #e3cdf5;border-radius:20px;padding:1px 9px}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 12px;
+    cursor:pointer;font-size:12px;font-weight:600;color:var(--txt)}
+  .btn:hover{border-color:var(--accent)}
+  .btn.play{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .tlhead .tk{margin-left:auto;color:var(--muted);font-size:11.5px}
+  .tlhead .tk b{color:var(--txt);font-variant-numeric:tabular-nums}
+  .tlbody{flex:1;min-height:0;overflow:hidden;cursor:ew-resize}
+  #tlsvg{width:100%;height:100%}
+  .legend{display:flex;gap:7px 9px;flex-wrap:wrap;font-size:10px;color:var(--muted);
+    padding:3px 12px;border-top:1px solid var(--line);flex:none;align-items:center;line-height:1.35}
+  .legend span{display:inline-flex;gap:4px;align-items:center}
+  .legend i{width:10px;height:10px;border-radius:2px;display:inline-block}
+  .barLbl{font-size:10px;fill:#fff;font-weight:600;pointer-events:none}
+  .nodeLbl{font-size:12px;font-weight:700}
+  .nodeSub{font-size:9.5px;fill:var(--muted)}
+  .flowArrow{fill:none;stroke:#c4cedb;stroke-width:2}
+  .small{font-size:9.5px;fill:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>Cluster Launch Control <span class="g">·</span> 持久 Matmul 可视化</h1>
+    <div class="tabs">
+      <div class="tab active" data-stage="1"><span class="num">1</span>
+        <div><div class="t">Static 调度</div><div class="s">grid = #SM · 静态网格步进</div></div></div>
+      <div class="tab" data-stage="2"><span class="num">2</span>
+        <div><div class="t">CLC 动态调度</div><div class="s">Blackwell · try_cancel 偷取</div></div></div>
+    </div>
+    <div class="stagedesc" id="stagedesc"></div>
+  </div>
+</header>
+
+<main>
+  <div class="leftRegion">
+    <div class="topRow">
+      <div class="panel combo">
+        <div class="phead"><span class="tag">视角 1·2</span>tile 网格/SM 分配 ➜ 微架构数据流
+          <span class="hint">左: tile→SM 分配/负载均衡 ｜ 右: 持久 block 内的硬件数据流(紫=CLC) · 🔍滚轮缩放·拖动平移·双击复位</span></div>
+        <div class="comboBody">
+          <div class="pbody subData" id="dataPanel"></div>
+          <div class="pbody subMicro" id="microPanel"></div>
+        </div>
+      </div>
+    </div>
+    <div class="timeline">
+      <div class="tlhead">
+        <span class="title">视角 3 · 持久循环时间线</span>
+        <span class="persist">SM1 的持久循环 while has_work — 处理完一个 tile 立即抓下一个，不退出</span>
+        <button class="btn play" id="playBtn">▶ 播放</button>
+        <button class="btn" id="stepB">◀</button>
+        <button class="btn" id="stepF">▶</button>
+        <button class="btn" id="resetB">⟲</button>
+        <span class="tk">tick <b id="tkval">0.0</b> / <span id="tkmax"></span> · 🔍滚轮缩放·拖动平移(缩放后)·双击复位</span>
+      </div>
+      <div class="tlbody" id="tlbody"></div>
+      <div class="legend" id="legend"></div>
+    </div>
+  </div>
+  <div class="panel code colCode">
+    <div class="phead"><span class="tag">视角 4</span>persistent_matmul_kernel &amp; 讲解
+      <span class="hint">按流水阶段分框 · 右侧胶囊=此刻在做什么 · 高亮行=正在执行</span></div>
+    <div class="explain" id="explain"></div>
+    <div class="pbody"><div class="codewrap" id="codePanel"></div></div>
+  </div>
+</main>
+
+<script>
+/* ============================================================================
+   颜色
+   ========================================================================== */
+const COL={
+  A:'#2563eb', B:'#0d9488', C:'#ea580c', ACC:'#7c3aed', clc:'#9333ea',
+  ready:'#16a34a', empty:'#64748b', fence:'#ca8a04',
+  gmem:'#475569', tma:'#0891b2', smem:'#16a34a', tmem:'#7c3aed', core:'#db2777',
+};
+const SMCOL=['#2563eb','#db2777','#16a34a','#ea580c'];   // SM0..3
+const lighten=(hex,a)=>{ if(typeof hex!=='string'||hex[0]!=='#')return '#f1f5fa';
+  const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`; };
+
+/* ============================================================================
+   共享微架构模块定义 (两个 stage 复用; 坐标精心排布 → 模块与内部文字均不重叠)
+   ========================================================================== */
+function microDef(){
+  return {
+    vb:[0,0,980,640],
+    modules:[
+      // —— 矩阵乘流水线 ——
+      {id:'GMEM_IN',  x:40, y:78, w:140,h:74, c:COL.gmem, t:['Global Mem','A · B (HBM)']},
+      {id:'TMA_LOAD', x:236,y:86, w:120,h:58, c:COL.tma,  t:['TMA Load','async copy']},
+      {id:'SMEM_A',   x:412,y:44, w:184,h:74, c:COL.smem, t:['SMEM a_bufs'], nbuf:3},
+      {id:'SMEM_B',   x:412,y:130,w:184,h:74, c:COL.smem, t:['SMEM b_bufs'], nbuf:3},
+      {id:'TENSOR_CORE',x:660,y:96,w:200,h:96, c:COL.core, t:['Tensor Core','tcgen05 MMA']},
+      {id:'TMEM',     x:660,y:256,w:200,h:96, c:COL.tmem, t:['TMEM','acc ×2 (双缓冲)'], nbuf:2, bufpre:'acc'},
+      {id:'EPI_COMPUTE',x:412,y:256,w:184,h:96,c:COL.core, t:['Epilogue warps','TMEM→cast→SMEM'], showAct:1},
+      {id:'SMEM_C',   x:412,y:388,w:184,h:58, c:COL.smem, t:['SMEM','c_smem']},
+      {id:'TMA_STORE',x:214,y:390,w:150,h:56, c:COL.tma,  t:['TMA Store','async']},
+      {id:'GMEM_OUT', x:40, y:262,w:150,h:84, c:COL.gmem, t:['Global Mem','C (HBM)']},
+      // —— CLC 动态调度子系统 (底部一带, 远离上方流水线, 不重叠) ——
+      {id:'SCHED',    x:40, y:506,w:190,h:96, c:COL.clc,  t:['Scheduler (warp)','while has_work'], showSched:1},
+      {id:'CLC_HW',   x:330,y:512,w:200,h:84, c:COL.clc,  t:['CLC engine','cancel 待启动 cluster'], showAct:1},
+      {id:'CLC_BUF',  x:606,y:512,w:190,h:84, c:COL.smem, t:['SMEM','clc_result_buf']},
+      // —— barriers (虚线框) ——
+      {id:'B_load_ready', x:610,y:206,w:158,h:28, bar:1, type:'ready', t:['load_ready']},
+      {id:'B_load_empty', x:236,y:152,w:130,h:26, bar:1, type:'empty', t:['load_empty']},
+      {id:'B_clc',        x:330,y:610,w:200,h:24, bar:1, type:'clc', t:['clc_barrier']},
+    ],
+    edges:[
+      ['GMEM_IN','TMA_LOAD'],['TMA_LOAD','SMEM_A'],['TMA_LOAD','SMEM_B'],
+      ['SMEM_A','TENSOR_CORE'],['SMEM_B','TENSOR_CORE'],
+      ['TENSOR_CORE','TMEM'],['TMEM','EPI_COMPUTE'],['EPI_COMPUTE','SMEM_C'],
+      ['SMEM_C','TMA_STORE'],['TMA_STORE','GMEM_OUT'],
+      ['SCHED','CLC_HW'],['CLC_HW','CLC_BUF'],['CLC_BUF','SCHED'],
+    ],
+    // 两块"领地": 矩阵乘流水线 + CLC 子系统
+    regions:[
+      {name:'SM1 的矩阵乘流水线（单一持久 block）', c:COL.core,
+       mods:['GMEM_IN','TMA_LOAD','SMEM_A','SMEM_B','TENSOR_CORE','TMEM','EPI_COMPUTE','SMEM_C','TMA_STORE','GMEM_OUT']},
+      {name:'CLC 动态调度子系统', c:COL.clc, mods:['SCHED','CLC_HW','CLC_BUF']},
+    ],
+    barMap:{
+      ready:{mod:'B_load_ready', watch:'TENSOR_CORE', col:COL.ready, txt:'A/B 分片已载入 SMEM'},
+      empty:{mod:'B_load_empty', watch:'TMA_LOAD',    col:COL.empty, txt:'buffer 被 MMA 读走、腾空'},
+      clc:  {mod:'B_clc',        watch:'SCHED',       col:COL.clc,   txt:'CLC 结果已写回 SMEM'},
+    },
+    barPrefix:{ready:'ready', empty:'empty', clc:'clc'},
+  };
+}
+
+/* ============================================================================
+   按 stage 生成 ops / 数据 / 代码
+   每个 tile 跨 6 tick; 演示一个 block 持久处理 3 个 tile.
+   ========================================================================== */
+function buildStage(useClc){
+  const ops=[]; const push=o=>ops.push(o);
+  // 该演示 block 持久处理的 tile 序列 (tile_id)
+  const tiles = useClc
+    ? [{id:1,steal:false},{id:7,steal:true},{id:12,steal:true}]   // 动态偷取待启动 cluster
+    : [{id:1,slow:true},{id:5,slow:true},{id:9,slow:false}];      // 静态网格步进 1→5→9
+  const SPAN=6;
+  tiles.forEach((tile,t)=>{
+    const b=t*SPAN;
+    const grabId = tiles[t+1] ? tiles[t+1].id : null;   // 本轮 try_cancel 要抢到的下一块 tile
+    // ---- sched: prologue 阶段计算 pid + (CLC) 发 try_cancel ----
+    push({part:'sched',start:b+0.05,dur:0.01,c:COL.empty,mark:1,lines:['S2'],
+          kind:'pid',tile:tile.id,label:`compute pid_m,pid_n  (tile ${tile.id})`});
+    if(useClc){
+      // ① 发起: 异步, 不阻塞 (瞬时 marker)
+      push({part:'sched',start:b+0.35,dur:0.01,c:COL.clc,mark:1,lines:['S3'],
+            kind:'try_cancel',tile:tile.id,grab:grabId,signal:`clc#${t}`,
+            flow:['SCHED','CLC_HW'],
+            label:`try_cancel：异步发起 CLC 请求，抢一个待启动 cluster（不阻塞）`});
+      // ② 后台并行处理: CLC 引擎与本 tile 的 load/MMA/epilogue 同时跑 → 进度条
+      push({part:'sched',start:b+0.5,dur:3.3,c:COL.clc,kind:'clc_work',tile:tile.id,grab:grabId,
+            flow:['CLC_HW','CLC_BUF'],
+            label: grabId!=null?`CLC 引擎抢单 → tile ${grabId}（与本 tile 计算并行）`:`CLC 引擎查询（已无可抢的 cluster）`});
+    }
+    // ---- load: 3 个 k-block, 软件流水 (A、B 合一条) ----
+    const ls=[b+0.0,b+1.3,b+2.6];
+    for(let k=0;k<3;k++){
+      push({part:'load',start:ls[k],dur:1.2,c:COL.A,kind:'load',stream:'A,B',
+            tile:tile.id,k,buf:k,signal:`ready#${t}_${k}`,
+            flow:['GMEM_IN','TMA_LOAD','SMEM_A'],flow2:['GMEM_IN','TMA_LOAD','SMEM_B'],
+            lines:k===0?['L2','L3']:['L4','L5'],
+            label:`TMA load A,B[k${k}] → buf${k}`});
+    }
+    // ---- mma: 3 个 k-block, 比 load 落后一拍 ----
+    const ms=[b+1.3,b+2.6,b+3.9];
+    for(let k=0;k<3;k++){
+      push({part:'mma',start:ms[k],dur:0.01,c:COL.ready,mark:1,lines:['M2'],
+            waitsOn:`ready#${t}_${k}`,label:`wait load_ready[buf${k}]`});
+      push({part:'mma',start:ms[k],dur:1.0,c:COL.ACC,kind:'mma',tile:tile.id,k,acc:t%2,
+            signal:`empty#${t}_${k}`,
+            flow:['SMEM_A','TENSOR_CORE','TMEM'],flow2:['SMEM_B','TENSOR_CORE'],
+            lines:k<2?['M1','M2']:['M3','M4'],
+            label:`tcgen05 mma k${k} → acc${t%2}`});
+    }
+    // ---- epilogue: 取累加器 → cast → SMEM → TMA store ----
+    const es=b+4.9;
+    push({part:'epi',start:es,dur:0.5,c:COL.ACC,kind:'tmem_load',tile:tile.id,acc:t%2,
+          flow:['TMEM','EPI_COMPUTE'],lines:['E1','E2'],label:`take_result: 读累加器 acc${t%2}`});
+    push({part:'epi',start:es+0.5,dur:0.4,c:COL.C,kind:'smem_store',tile:tile.id,
+          flow:['EPI_COMPUTE','SMEM_C'],lines:['E3'],label:`c_smem.store(c.to(dtype))`});
+    push({part:'epi',start:es+0.9,dur:0.01,c:COL.fence,mark:1,fence:1,lines:['E4'],label:`fence_async_shared`});
+    push({part:'epi',start:es+0.9,dur:0.6,c:COL.C,kind:'store',tile:tile.id,
+          flow:['SMEM_C','TMA_STORE','GMEM_OUT'],lines:['E5','E6'],label:`TMA store c → C[off_m,off_n]`});
+    // ---- sched: tile 末尾 advance() ----
+    if(useClc){
+      // ③ 取结果: tile 算完才 wait; 此刻结果早已就绪 → 0 等待
+      push({part:'sched',start:b+5.4,dur:0.01,c:COL.clc,mark:1,lines:['S6'],
+            waitsOn:`clc#${t}`,flow:['CLC_BUF','SCHED'],kind:'advance',tile:tile.id,grab:grabId,
+            label: grabId!=null?`advance：wait 立即返回，抢到 tile ${grabId}（0 等待）`:`advance：无可抢，has_work=False`});
+      push({part:'sched',start:b+5.55,dur:0.01,c:COL.clc,mark:1,lines:['S7','S8','S9'],
+            kind:'advance2',tile:tile.id,nextId:grabId,
+            label: grabId!=null?`is_canceled()=True → tile_id = ${grabId}（SM1 接管该 cluster）`:`is_canceled()=False → 退出循环`});
+      // 掩盖窗口: from=发起, ready=结果就绪, to=取结果; 驱动“就绪待取”尾段
+      push({part:'sched',span:1,from:b+0.5,ready:b+3.8,to:b+5.4,tile:tile.id,grab:grabId});
+    }else{
+      push({part:'sched',start:b+5.4,dur:0.01,c:COL.empty,mark:1,lines:['S5','S6'],
+            kind:'advance',tile:tile.id,nextId:tiles[t+1]?tiles[t+1].id:null,
+            label:`advance(): tile_id += num_programs → ${tiles[t+1]?tiles[t+1].id:'结束'}`});
+    }
+  });
+  const maxTick = tiles.length*SPAN + 1;
+  return {
+    useClc, ops, maxTick, tiles, nTile:tiles.length, SPAN,
+    lanes:[
+      {id:'sched',name:'调度 Scheduler', sub:useClc?'CLC · try_cancel/advance':'静态 · tile_id += #SM'},
+      {id:'load', name:'TMA Load',       sub:'producer · 软件流水'},
+      {id:'mma',  name:'Tensor Core',    sub:'tcgen05 MMA · consumer'},
+      {id:'epi',  name:'Epilogue 写回',  sub:'TMEM→cast→SMEM→TMA'},
+    ],
+    micro:microDef(),
+    code:codeFor(useClc),
+    desc: useClc
+      ? `<b>动态：</b><code>ClcTileScheduler</code> 启动 grid=<b>tile 总数</b>，每个 tile 是一个 cluster。`+
+        `block 在 <b>prologue 发 <code>try_cancel</code></b> 异步请求取消一个尚未启动的 cluster，`+
+        `等本 tile 的 load/MMA/epilogue 算完后才在 <code>advance()</code> 里 <code>wait</code> 结果 —— `+
+        `<b>CLC 延迟被整段计算完全掩盖</b>。提前完成的 SM 偷走别人的活，负载更均衡。`
+      : `<b>基线：</b><code>StaticTileScheduler</code> 启动 grid=<b>#SM</b>，每个 block 用 `+
+        `<b>网格步进</b> <code>tile_id += num_programs</code> 静态领走 <code>num_tiles/#SM</code> 个 tile。`+
+        `<code>try_cancel</code> 是空操作。简单，但<b>哪个 SM 摊到慢 tile，整个 kernel 就被它拖住</b>。`,
+  };
+}
+
+function codeFor(useClc){
+  const sched = useClc ? [
+    ['S1','while scheduler.has_work:','kw'],
+    ['S2','    pid_m,pid_n = _compute_pid(tile_id, ...)','st'],
+    ['S3','    scheduler.try_cancel()   # clc.try_cancel(buf,bar)','fn'],
+    ['S4','    # ... 处理本 tile (load / mma / epilogue) ...','cm'],
+    ['S5','    scheduler = scheduler.advance()','st'],
+    ['S6','      mbarrier.wait(barrier, phase)   # 等 CLC 结果','fn'],
+    ['S7','      clc_res  = clc.load_result(buf)','st'],
+    ['S8','      has_work = clc_res.is_canceled()','st'],
+    ['S9','      tile_id  = clc_res.program_id(0)','st'],
+  ] : [
+    ['S1','while scheduler.has_work:','kw'],
+    ['S2','    pid_m,pid_n = _compute_pid(tile_id, ...)','st'],
+    ['S3','    scheduler.try_cancel()       # pass — 空操作','cm'],
+    ['S4','    # ... 处理本 tile (load / mma / epilogue) ...','cm'],
+    ['S5','    scheduler = scheduler.advance()','st'],
+    ['S6','      next = tile_id + num_programs(0)  # 网格步进','st'],
+    ['S7','      has_work = next < num_tiles','st'],
+  ];
+  return {
+    sched,
+    load:[
+      ['L1','a_bufs = alloc_smem([nbuf]+blk); b_bufs = ...','st'],
+      ['L2','for k in prologue:        # 预取 nbuf-2 块','kw'],
+      ['L3','    producer = issue_loads(producer, a/b_desc,...)','fn'],
+      ['L4','for k in range(.., K, BLOCK_K):  # 主循环','kw'],
+      ['L5','    producer = issue_loads(producer, ...)  # 领先','fn'],
+    ],
+    mma:[
+      ['M1','for k in range(.., K, BLOCK_K):','kw'],
+      ['M2','    consumer,mma = issue_mma(consumer,mma,bars,..)','fn'],
+      ['M3','for _ in range(num_buffers-2):   # 排空流水','kw'],
+      ['M4','    consumer,mma = issue_mma(consumer,mma,...)','fn'],
+    ],
+    epi:[
+      ['E1','mma = mma.wait_num_outstanding(0)','fn'],
+      ['E2','c, mma = mma.take_result()    # 从 TMEM 取累加器','st'],
+      ['E3','c_smem.store(c.to(dtype))','st'],
+      ['E4','fence_async_shared()','nm'],
+      ['E5','tma.async_copy_shared_to_global(c_desc, off, c_smem)','fn'],
+      ['E6','tma.store_wait(pendings=0)','fn'],
+    ],
+  };
+}
+
+/* ============================================================================
+   状态
+   ========================================================================== */
+const STAGES={1:buildStage(false),2:buildStage(true)};
+let stage=1, tick=0, playing=false, raf=null, hoverOp=null;
+const S=()=>STAGES[stage];
+const isActive=(o,t)=> o.mark? Math.abs(t-o.start)<0.28 : (o.dur>0 && t>=o.start-1e-6 && t<o.start+o.dur);
+const isDone=(o,t)=> o.dur!==undefined && t>=o.start+o.dur-1e-6;
+const activeOps=t=>S().ops.filter(o=>!o.span && isActive(o,t));
+const opProg=(o,t)=> (!o||!(o.dur>0))?0:Math.max(0,Math.min(1,(t-o.start)/o.dur));
+function progBar(x,y,w,h,p,color){
+  const pc=Math.max(0,Math.min(1,p));
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h/2}" fill="#d7e0ea"/>`+
+    (pc>0?`<rect x="${x}" y="${y}" width="${(w*pc).toFixed(1)}" height="${h}" rx="${h/2}" fill="${color}"/>`:'');
+}
+function findProducer(op){
+  if(!op.waitsOn) return null; let best=null,bend=-1;
+  for(const o of S().ops){ if(o.signal===op.waitsOn){ const e=o.start+(o.dur||0);
+    if(e<=op.start+0.05 && e>bend){best=o;bend=e;} } }
+  return best;
+}
+function pLane(id){const l=S().lanes.find(x=>x.id===id);return l?l.name.replace(/ .*/,''):id;}
+function pColor(id){return {sched:COL.clc,load:COL.A,mma:COL.ACC,epi:COL.C}[id]||'#94a3b8';}
+function dataTag(op){
+  if(!op) return null;
+  if(op.kind==='load')      return {p:op.stream,block:`k${op.k}`,loc:`buf${op.buf}`};
+  if(op.kind==='mma')       return {p:'A,B',    block:`k${op.k}`,loc:`acc${op.acc}`};
+  if(op.kind==='tmem_load') return {p:'acc',    block:`t${op.tile}`,loc:`acc${op.acc}`};
+  if(op.kind==='smem_store')return {p:'C',      block:`t${op.tile}`,loc:''};
+  if(op.kind==='store')     return {p:'C',      block:`t${op.tile}`,loc:''};
+  if(op.kind==='try_cancel')return {p:'CLC',    block:op.grab!=null?`抢t${op.grab}`:'req',loc:''};
+  if(op.kind==='clc_work')  return {p:'CLC',    block:op.grab!=null?`tile ${op.grab}`:'—',loc:'clc_buf'};
+  if(op.kind==='advance')   return {p:'CLC',    block:op.grab!=null?`tile ${op.grab}`:'—',loc:''};
+  return null;
+}
+
+/* ============================================================================
+   视角 2 — 微架构数据流
+   ========================================================================== */
+function borderPoint(b,tx,ty){
+  const cx=b.x+b.w/2,cy=b.y+b.h/2,dx=tx-cx,dy=ty-cy;
+  if(!dx&&!dy)return{x:cx,y:cy};
+  const s=Math.min(dx?(b.w/2)/Math.abs(dx):1e9, dy?(b.h/2)/Math.abs(dy):1e9);
+  return{x:cx+dx*s,y:cy+dy*s};
+}
+function renderMicro(t,extra){
+  const mi=S().micro; const M={}; mi.modules.forEach(m=>M[m.id]=m);
+  const acts=activeOps(t).concat(extra||[]);
+  const onMods=new Set(), onEdges=new Map(), litBars=new Map(), syncLinks=[];
+  const edgeTags=new Map();
+  acts.forEach(o=>{
+    [o.flow,o.flow2].forEach((fl,fi)=>{ if(!fl)return;
+      fl.forEach(m=>onMods.add(m));
+      for(let i=0;i<fl.length-1;i++) onEdges.set(fl[i]+'|'+fl[i+1], o.c);
+      if(fi===0 && fl.length>=2){
+        const key=fl[fl.length-2]+'|'+fl[fl.length-1], tg=dataTag(o);
+        if(tg){ if(!edgeTags.has(key))edgeTags.set(key,new Set()); edgeTags.get(key).add(tg.p); }
+      }
+    });
+    const tag=(o.signal||o.waitsOn||'');
+    const pre=tag.split('#')[0];
+    const info=mi.barMap[pre];
+    if(info){ litBars.set(info.mod,info.col);
+      if(o.mark){
+        if(o.signal){ if(o.flow&&o.flow.length>=2) syncLinks.push({from:o.flow[0],to:info.mod,col:info.col}); }
+        else if(o.waitsOn){ syncLinks.push({from:info.mod,to:info.watch,col:info.col}); }
+      }
+    }
+  });
+  // 模块进度 / 数据归属
+  const modProg=new Map(), modData=new Map(), modBuf=new Map();
+  acts.forEach(o=>{ if(!o.flow)return; const tg=dataTag(o); const p=opProg(o,t);
+    o.flow.forEach((mid,fi)=>{
+      if(o.dur>0.05){ const c=modProg.get(mid); if(!c||p>c.p)modProg.set(mid,{p,c:o.c}); }
+      if(tg){ if(!modData.has(mid))modData.set(mid,new Set()); modData.get(mid).add(tg.block);
+        const mod=M[mid];
+        if(mod&&mod.nbuf){ const pre=mod.bufpre||'buf', idx=(pre==='acc'?o.acc:o.buf);
+          if(idx!==undefined){ const loc=pre+idx, dir=(fi===o.flow.length-1)?'in':'out';
+            if(!modBuf.has(mid))modBuf.set(mid,new Map());
+            const bm=modBuf.get(mid),cur=bm.get(loc);
+            if(!cur||p>cur.p)bm.set(loc,{p,c:o.c,dir,block:tg.block}); } }
+      }
+    });
+  });
+
+  let svg=`<svg viewBox="${mi.vb.join(' ')}">`;
+  let labelSvg='';
+  svg+=`<defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#9fb0c0"/></marker>
+    <marker id="ahx" markerWidth="10" markerHeight="10" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#1c2733"/></marker>
+    <marker id="syn" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#64748b"/></marker></defs>`;
+  // 领地框
+  mi.regions.forEach(rg=>{
+    const ms=rg.mods.map(id=>M[id]).filter(Boolean); if(!ms.length)return; const pad=14;
+    const x1=Math.min(...ms.map(m=>m.x))-pad, y1=Math.min(...ms.map(m=>m.y))-pad;
+    const x2=Math.max(...ms.map(m=>m.x+m.w))+pad, y2=Math.max(...ms.map(m=>m.y+m.h))+pad;
+    const dim = (rg.c===COL.clc && !S().useClc);   // 静态 stage: CLC 子系统淡出
+    svg+=`<rect x="${x1}" y="${y1}" width="${x2-x1}" height="${y2-y1}" rx="14"
+          fill="${lighten(rg.c,dim?0.02:0.05)}" stroke="${dim?'#cbd5e1':rg.c}" stroke-width="1.4"
+          stroke-dasharray="8 5" opacity="${dim?0.6:1}"/>`;
+    const lw=[...rg.name].reduce((s,c)=>s+(c.charCodeAt(0)>255?12:7),0)+16;
+    svg+=`<rect x="${x1+8}" y="${y1-15}" width="${lw}" height="15" rx="7" fill="${dim?'#94a3b8':rg.c}"/>`;
+    svg+=`<text x="${x1+8+lw/2}" y="${y1-4}" text-anchor="middle" style="font-size:9.5px;font-weight:700" fill="#fff">${rg.name}</text>`;
+    if(dim) svg+=`<text x="${(x1+x2)/2}" y="${(y1+y2)/2}" text-anchor="middle" style="font-size:13px;font-weight:700" fill="#94a3b8">CLC 未使用（静态调度）</text>`;
+  });
+  // edges
+  const clcSet=new Set(['SCHED','CLC_HW','CLC_BUF']);
+  mi.edges.forEach(([a,b])=>{
+    if(!S().useClc && (clcSet.has(a)||clcSet.has(b))) return;   // 静态: CLC 子系统不连线
+    const A=M[a],B=M[b]; if(!A||!B)return;
+    const p1=borderPoint(A,B.x+B.w/2,B.y+B.h/2), p2=borderPoint(B,A.x+A.w/2,A.y+A.h/2);
+    const mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2-16, on=onEdges.get(a+'|'+b);
+    if(on){
+      svg+=`<path d="M${p1.x},${p1.y} Q${mx},${my} ${p2.x},${p2.y}" fill="none" stroke="${on}" stroke-width="4"
+            marker-end="url(#ahx)" stroke-dasharray="7 5"><animate attributeName="stroke-dashoffset" from="24" to="0" dur="0.6s" repeatCount="indefinite"/></path>`;
+      const tags=edgeTags.get(a+'|'+b);
+      if(tags){ const lbl=[...tags].join(','); const lx=mx,ly=(p1.y+p2.y)/2-18, w=lbl.length*6.8+14;
+        labelSvg+=`<rect x="${lx-w/2}" y="${ly-12}" width="${w}" height="17" rx="8" fill="#fff" stroke="${on}" stroke-width="1.3"/>`+
+                  `<text x="${lx}" y="${ly}" text-anchor="middle" style="font-size:10.5px;font-weight:700" fill="${on}">${lbl}</text>`; }
+    }else{
+      svg+=`<path class="flowArrow" d="M${p1.x},${p1.y} Q${mx},${my} ${p2.x},${p2.y}" marker-end="url(#ah)"/>`;
+    }
+  });
+  // sync links
+  syncLinks.forEach(s=>{ const A=M[s.from],B=M[s.to]; if(!A||!B)return;
+    const p1=borderPoint(A,B.x+B.w/2,B.y+B.h/2), p2=borderPoint(B,A.x+A.w/2,A.y+A.h/2);
+    const mx=(p1.x+p2.x)/2,my=(p1.y+p2.y)/2-12;
+    svg+=`<path d="M${p1.x},${p1.y} Q${mx},${my} ${p2.x},${p2.y}" fill="none" stroke="${s.col}" stroke-width="2.2"
+          stroke-dasharray="5 4" opacity="0.9" marker-end="url(#syn)"><animate attributeName="stroke-dashoffset" from="18" to="0" dur="0.55s" repeatCount="indefinite"/></path>`;
+  });
+  // modules
+  mi.modules.forEach(m=>{
+    if(m.bar){
+      if(m.id==='B_clc' && !S().useClc) return;   // 静态: 不显示 CLC barrier
+      const lit=litBars.has(m.mod||m.id) || litBars.has(m.id);
+      const col=lit?(mi.barMap[m.type]?mi.barMap[m.type].col:COL.ready):'#94a3b8';
+      svg+=`<rect x="${m.x}" y="${m.y}" width="${m.w}" height="${m.h}" rx="7"
+            fill="${lit?lighten(col,0.16):'#eef2f7'}" stroke="${col}" stroke-width="${lit?2.4:1.3}" stroke-dasharray="4 3"/>`;
+      svg+=`<circle cx="${m.x+12}" cy="${m.y+m.h/2}" r="4.5" fill="${col}"/>`;
+      svg+=`<text x="${m.x+22}" y="${m.y+m.h/2+4}" style="font-size:10.5px;font-weight:700;font-family:Consolas,monospace" fill="${lit?col:'#64748b'}">${m.t[0]}</text>`;
+      return;
+    }
+    const dimMod=(['SCHED','CLC_HW','CLC_BUF'].includes(m.id) && !S().useClc);
+    if(dimMod) return;   // 静态: 隐藏 CLC 模块, 仅留领地框 + “未使用”说明, 避免文字压住模块
+    const on=onMods.has(m.id), mc=m.c;
+    svg+=`<rect x="${m.x}" y="${m.y}" width="${m.w}" height="${m.h}" rx="9"
+          fill="${on?lighten(mc,0.16):'#f8fafc'}" stroke="${on?mc:(dimMod?'#d3dce6':'#b5c2d0')}"
+          stroke-width="${on?3:1.6}" opacity="${dimMod?0.55:1}"/>`;
+    const cx=m.x+m.w/2;
+    if(m.nbuf){
+      svg+=`<text class="nodeLbl" x="${cx}" y="${m.y+16}" text-anchor="middle" fill="${on?mc:'#1c2733'}">${m.t[0]}</text>`;
+      const pre=m.bufpre||'buf', bm=modBuf.get(m.id)||new Map();
+      const pad=10,gap=7,sY=m.y+24,sH=m.h-30,sW=(m.w-2*pad-(m.nbuf-1)*gap)/m.nbuf;
+      for(let bI=0;bI<m.nbuf;bI++){ const loc=pre+bI, info=bm.get(loc), sx=m.x+pad+bI*(sW+gap), act=!!info;
+        svg+=`<rect x="${sx}" y="${sY}" width="${sW}" height="${sH}" rx="5"
+              fill="${act?lighten(info.c,0.18):'#eef2f7'}" stroke="${act?info.c:'#cbd5e1'}" stroke-width="${act?2:1}"/>`;
+        svg+=`<text x="${sx+sW/2}" y="${sY+13}" text-anchor="middle" style="font-size:8.5px;font-weight:700" fill="${act?info.c:'#94a3b8'}">${loc}</text>`;
+        if(act){ svg+=`<text x="${sx+sW/2}" y="${sY+27}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="#1c2733">${info.block}</text>`;
+          if(sH>=44) svg+=`<text x="${sx+sW/2}" y="${sY+sH-10}" text-anchor="middle" style="font-size:8px;font-weight:600" fill="${info.c}">${info.dir==='in'?'↘载入':'↗读出'} ${Math.round(info.p*100)}%</text>`;
+          svg+=progBar(sx+5,sY+sH-7,sW-10,4,info.dir==='in'?info.p:1-info.p,info.c); }
+      }
+    }else{
+      const isEngine=(m.c===COL.tma);
+      const actOp=(m.showAct&&on)?acts.filter(o=>!o.mark&&o.flow&&o.flow.includes(m.id)).sort((a,b)=>b.start-a.start)[0]:null;
+      const schedNow=(m.showSched)?schedState(t):null;
+      let ty=m.y+(m.t.length>1?20:m.h/2+4);
+      m.t.forEach((line,i)=>{ if((isEngine||actOp||schedNow)&&i>0)return;
+        const cls=i===0?'nodeLbl':'nodeSub', fc=i===0?(on?mc:'#1c2733'):'#5b6b7d';
+        svg+=`<text class="${cls}" x="${cx}" y="${ty}" text-anchor="middle" fill="${fc}">${line}</text>`; ty+=i===0?16:13;
+      });
+      if(schedNow){ const bw=Math.min(m.w-14,schedNow.length*7.6+16),by=ty-2;
+        svg+=`<rect x="${cx-bw/2}" y="${by}" width="${bw}" height="16" rx="8" fill="#fff" stroke="${COL.clc}" stroke-width="1.4"/>`+
+             `<text x="${cx}" y="${by+11.5}" text-anchor="middle" style="font-size:9.5px;font-weight:700" fill="${COL.clc}">${schedNow}</text>`;
+      }else if(actOp){ const txt=opAction(actOp),bw=Math.min(m.w-12,txt.length*8+18),by=ty-2;
+        svg+=`<rect x="${cx-bw/2}" y="${by}" width="${bw}" height="16" rx="8" fill="#fff" stroke="${actOp.c}" stroke-width="1.4"/>`+
+             `<text x="${cx}" y="${by+11.5}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="${actOp.c}">${txt}</text>`;
+      }else if(!isEngine && on && modData.has(m.id) && m.h>=60){
+        const label=[...modData.get(m.id)].join(' · '),bw=Math.min(m.w-12,label.length*6.4+14),by=ty-2;
+        svg+=`<rect x="${cx-bw/2}" y="${by}" width="${bw}" height="15" rx="7.5" fill="#fff" stroke="${mc}" stroke-width="1.2"/>`+
+             `<text x="${cx}" y="${by+11}" text-anchor="middle" style="font-size:9.5px;font-weight:700" fill="${mc}">${label}</text>`;
+      }
+      if(isEngine) svg+=`<text x="${cx}" y="${ty+2}" text-anchor="middle" style="font-size:11px;font-weight:700;font-family:Consolas,monospace" fill="${on?mc:'#94a3b8'}">${on?'working':'Idle'}</text>`;
+      else if(on && modProg.has(m.id)){ const pr=modProg.get(m.id); svg+=progBar(m.x+12,m.y+m.h-11,m.w-24,5,pr.p,pr.c); }
+    }
+  });
+  svg+=labelSvg+`</svg>`;
+  document.getElementById('microPanel').innerHTML=svg; pzApply('microPanel');
+}
+function opAction(op){ if(!op)return'';
+  if(op.kind==='clc_work') return op.grab!=null?`抢 tile ${op.grab}`:'无可抢';
+  const v={tmem_load:'读累加器',smem_store:'写SMEM',store:'写回 C',mma:'MMA'}[op.kind]||'计算';
+  const tg=dataTag(op); return v+(tg&&tg.block?` ${tg.block}`:''); }
+// SCHED 模块此刻状态词
+function schedState(t){
+  const a=activeOps(t);
+  const tc=a.find(o=>o.kind==='try_cancel'); if(tc)return'try_cancel ▶';
+  const ad=a.find(o=>o.kind==='advance'||o.kind==='advance2'); if(ad)return S().useClc?'wait CLC 结果':'tile_id += #SM';
+  const pid=a.find(o=>o.kind==='pid'); if(pid)return'compute pid';
+  return S().useClc?'计算重叠中…':'静态步进';
+}
+
+/* ============================================================================
+   视角 1 — tile 网格 + SM 分配 + 负载均衡
+   ========================================================================== */
+const NSM=4, GRID=4;   // 4×4=16 tiles, 4 SM
+function curTileId(t){ const i=Math.floor(t/S().SPAN); return S().tiles[Math.min(i,S().tiles.length-1)].id; }
+function renderData(t){
+  const useClc=S().useClc;
+  // tile -> 拥有它的 SM, 以及工作量(慢 tile=2)
+  const slowSet=new Set([5,9]);
+  const ownerStatic=id=>id%NSM;
+  // CLC 平衡分配(示意): 把慢 tile 分散, 每 SM ~均衡
+  const clcOwner={0:0,1:1,2:2,3:3,4:0,5:1,6:2,7:1,8:3,9:0,10:2,11:3,12:1,13:0,14:2,15:3};
+  const owner=id=>useClc?clcOwner[id]:ownerStatic(id);
+  const cur=curTileId(t);
+  const demo=new Set(S().tiles.map(x=>x.id));
+  // 本演示 block = SM1; CLC 模式下它此刻正在抢的下一块 tile
+  const it=Math.floor(t/S().SPAN);
+  const grabId=(useClc && S().tiles[it] && S().tiles[it+1]) ? S().tiles[it+1].id : null;
+
+  const gx=18,gy=42,cw=58,ch=40,gap=4;
+  const cell=id=>({x:gx+(id%GRID)*(cw+gap), y:gy+Math.floor(id/GRID)*(ch+gap)});
+  let svg=`<svg viewBox="0 0 300 430">`;
+  svg+=`<defs><marker id="steal" markerWidth="8" markerHeight="8" refX="6.5" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="${COL.clc}"/></marker></defs>`;
+  svg+=`<text x="14" y="17" style="font-size:11px;font-weight:700" fill="#1c2733">输出 C · 16 个 tile（4×4）<tspan fill="${SMCOL[1]}"> · 演示 block=SM1</tspan></text>`;
+  svg+=`<text x="14" y="31" style="font-size:9px" fill="#5b6b7d">${useClc?'grid = tile 总数(16) · SM1 算完一块就 try_cancel 抢一块':'grid = #SM(4) · SM1 固定走 tile 1→5→9'}</text>`;
+  for(let r=0;r<GRID;r++)for(let cI=0;cI<GRID;cI++){
+    const id=r*GRID+cI, sm=owner(id), x=gx+cI*(cw+gap), y=gy+r*(ch+gap);
+    const isCur=(id===cur), isDemo=demo.has(id), slow=slowSet.has(id), isGrab=(id===grabId);
+    svg+=`<rect x="${x}" y="${y}" width="${cw}" height="${ch}" rx="5"
+          fill="${lighten(SMCOL[sm],isCur?0.55:0.22)}" stroke="${isCur?'#1c2733':SMCOL[sm]}"
+          stroke-width="${isCur?3:(isDemo?2:1)}" ${isDemo&&!isCur?'stroke-dasharray="4 2"':''}/>`;
+    svg+=`<text x="${x+cw/2}" y="${y+16}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="${SMCOL[sm]}">t${id}</text>`;
+    svg+=`<text x="${x+cw/2}" y="${y+29}" text-anchor="middle" style="font-size:8px;font-weight:600" fill="#5b6b7d">SM${sm}${slow?' ⚠':''}</text>`;
+    if(isCur) svg+=`<text x="${x+cw-4}" y="${y+11}" text-anchor="end" style="font-size:8px;font-weight:700" fill="#1c2733">▶now</text>`;
+    if(isGrab){   // SM1 此刻正抢的目标: CLC 紫色脉冲环 + 角标
+      svg+=`<rect x="${x+1.5}" y="${y+1.5}" width="${cw-3}" height="${ch-3}" rx="4" fill="none" stroke="${COL.clc}" stroke-width="2.4" stroke-dasharray="5 3">
+            <animate attributeName="stroke-dashoffset" from="16" to="0" dur="0.6s" repeatCount="indefinite"/></rect>`;
+      svg+=`<rect x="${x+2}" y="${y+2}" width="30" height="13" rx="6" fill="${COL.clc}"/>`;
+      svg+=`<text x="${x+17}" y="${y+11.5}" text-anchor="middle" style="font-size:8px;font-weight:700" fill="#fff">抢→</text>`;
+    }
+  }
+  // SM1 当前 tile ──抢──▶ 目标 tile 的箭头
+  if(grabId!=null && cur!=null){
+    const A=cell(cur), B=cell(grabId);
+    const x1=A.x+cw/2, y1=A.y+ch/2, x2=B.x+cw/2, y2=B.y+ch/2;
+    const mx=(x1+x2)/2, my=(y1+y2)/2;
+    svg+=`<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${COL.clc}" stroke-width="2" stroke-dasharray="5 3" opacity="0.92" marker-end="url(#steal)">
+          <animate attributeName="stroke-dashoffset" from="16" to="0" dur="0.6s" repeatCount="indefinite"/></line>`;
+    const lbl=`SM1 抢 t${grabId}`, w=lbl.length*6+10;
+    svg+=`<rect x="${mx-w/2}" y="${my-8}" width="${w}" height="15" rx="7" fill="#fff" stroke="${COL.clc}" stroke-width="1.2"/>`;
+    svg+=`<text x="${mx}" y="${my+3}" text-anchor="middle" style="font-size:8.5px;font-weight:700" fill="${COL.clc}">${lbl}</text>`;
+  }
+  // 图例: SM 配色
+  let ly=gy+GRID*(ch+gap)+12;
+  svg+=`<text x="14" y="${ly}" style="font-size:9px;font-weight:700" fill="#5b6b7d">SM:</text>`;
+  for(let s=0;s<NSM;s++){ const x=40+s*52;
+    svg+=`<rect x="${x}" y="${ly-8}" width="11" height="11" rx="2" fill="${SMCOL[s]}"/>`;
+    svg+=`<text x="${x+15}" y="${ly+1}" style="font-size:9px" fill="#5b6b7d">SM${s}</text>`; }
+  svg+=`<text x="14" y="${ly+16}" style="font-size:8.5px" fill="#5b6b7d">⚠=慢 tile(L2 miss) · 虚线=SM1(右侧时间线的那个 block) 处理的 tile</text>`;
+  if(useClc) svg+=`<text x="14" y="${ly+28}" style="font-size:8.5px;font-weight:700" fill="${COL.clc}">紫色环/箭头 = SM1 此刻正用 try_cancel 抢的下一块 tile</text>`;
+
+  // 负载均衡条
+  ly+=40;
+  svg+=`<text x="14" y="${ly}" style="font-size:10.5px;font-weight:700" fill="#1c2733">每 SM 工作量（慢 tile 计 2×）</text>`;
+  const load=[0,0,0,0];
+  for(let id=0;id<16;id++) load[owner(id)] += slowSet.has(id)?2:1;
+  const maxL=Math.max(...load), by0=ly+20, bh=76, bx=30, bw=44, bgap=18, scale=bh/6;
+  const finish=maxL; // 整 kernel 完成时间 = 最慢 SM
+  // 完成线 (标签放最左, 不与右侧条/标题相撞)
+  const finishY=by0+bh-finish*scale;
+  svg+=`<line x1="18" y1="${finishY}" x2="282" y2="${finishY}" stroke="#dc2626" stroke-width="1.2" stroke-dasharray="4 3"/>`;
+  svg+=`<text x="282" y="${finishY-3}" text-anchor="end" style="font-size:8px;font-weight:700" fill="#dc2626">完成线 = 最慢 SM (${finish})</text>`;
+  for(let s=0;s<NSM;s++){ const x=bx+s*(bw+bgap), h=load[s]*scale, y=by0+bh-h;
+    svg+=`<rect x="${x}" y="${y}" width="${bw}" height="${h}" rx="3" fill="${lighten(SMCOL[s],0.5)}" stroke="${SMCOL[s]}" stroke-width="1.5"/>`;
+    // 数值放条内顶部, 避开上方的 idle 框
+    svg+=`<text x="${x+bw/2}" y="${y+14}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="${SMCOL[s]}">${load[s]}</text>`;
+    // idle (静态: 比最慢少的部分 = 空转)
+    const idle=finish-load[s];
+    if(idle>0){ const iy=by0+bh-finish*scale, ih=idle*scale;
+      svg+=`<rect x="${x}" y="${iy}" width="${bw}" height="${ih}" rx="3" fill="none" stroke="#dc2626" stroke-width="1" stroke-dasharray="3 2"/>`;
+      if(ih>=12) svg+=`<text x="${x+bw/2}" y="${iy+ih/2+3}" text-anchor="middle" style="font-size:7.5px;font-weight:700" fill="#dc2626">idle</text>`; }
+    svg+=`<text x="${x+bw/2}" y="${by0+bh+13}" text-anchor="middle" style="font-size:8.5px;font-weight:600" fill="#5b6b7d">SM${s}</text>`;
+  }
+  const ny=by0+bh+26;
+  if(useClc){
+    svg+=`<text x="14" y="${ny}" class="small">动态偷取后各 SM 近乎齐平 → idle 极少，</text>`;
+    svg+=`<text x="14" y="${ny+13}" class="small">kernel 时间贴近理想均值（基准里 ~104% 静态）。</text>`;
+  }else{
+    svg+=`<text x="14" y="${ny}" class="small">SM1 摊到两个慢 tile → 拖长整体；</text>`;
+    svg+=`<text x="14" y="${ny+13}" class="small">其余 SM 早早算完只能空转(红框=idle)。</text>`;
+  }
+  svg+=`</svg>`;
+  document.getElementById('dataPanel').innerHTML=svg; pzApply('dataPanel');
+}
+
+/* ============================================================================
+   视角 4 — 代码 + 讲解
+   ========================================================================== */
+function renderCode(t,extra){
+  const d=S(); const acts=activeOps(t).concat(extra||[]);
+  const onLines={},lineColor={};
+  acts.forEach(o=>(o.lines||[]).forEach(ln=>{onLines[ln]=true; if(!lineColor[ln])lineColor[ln]=o.c;}));
+  const byLane={}; d.lanes.forEach(l=>byLane[l.id]=[]);
+  activeOps(t).forEach(o=>byLane[o.part]&&byLane[o.part].push(o));
+  let html='';
+  d.lanes.forEach(lane=>{
+    const sw=pColor(lane.id), os=byLane[lane.id];
+    const now=os.length? os.map(o=>(o.mark?'• ':'')+o.label).join(' ｜ '):'空闲 / 等待';
+    const nowC=os.length?os[0].c:'#9aa7b4';
+    html+=`<div class="cblock"><div class="cbhead"><span class="sw" style="background:${sw}"></span>`+
+          `<span class="cbname">${lane.name}</span><span class="cbpart">${lane.id}</span>`+
+          `<span class="cbnow" style="color:${nowC};border-color:${nowC}" title="${now.replace(/"/g,'')}">${now}</span></div><pre>`;
+    d.code[lane.id].forEach(([id,txt,cls])=>{ const on=onLines[id];
+      const style=on?`background:${lighten(lineColor[id],.18)};border-left-color:${lineColor[id]}`:'';
+      html+=`<div class="cl ${on?'on':''}" id="cl-${id}" style="${style}"><span class="${cls}">${txt.replace(/</g,'&lt;')}</span></div>`; });
+    html+=`</pre></div>`;
+  });
+  document.getElementById('codePanel').innerHTML=html;
+  const firstOn=(extra&&extra[0]&&extra[0].lines?extra[0]:null)||acts.find(o=>!o.mark&&o.lines)||acts.find(o=>o.lines);
+  if(firstOn){const el=document.getElementById('cl-'+firstOn.lines[0]); if(el)el.scrollIntoView({block:'nearest'});}
+  document.getElementById('explain').innerHTML=explainTick(t);
+}
+function key(c,txt){return `<span class="ekey" style="background:${c}">${txt}</span>`;}
+function explainTick(t){
+  const a=activeOps(t), useClc=S().useClc;
+  const tc=a.find(o=>o.kind==='try_cancel');
+  const cw=a.find(o=>o.kind==='clc_work');
+  const ad=a.find(o=>o.kind==='advance'), ad2=a.find(o=>o.kind==='advance2');
+  const pid=a.find(o=>o.kind==='pid');
+  if(tc) return key(COL.clc,'① 发起')+`<code>try_cancel</code> 把“取消一个待启动 cluster”的请求<b>异步</b>交给 CLC 硬件后<b>立刻返回</b>，`+
+    `SM <b>不等待</b> —— 紧接着就去做本 tile 的 load / MMA / epilogue。<b>掩盖的前提：发起和等待被拆开了。</b>`;
+  if(cw) return key(COL.clc,'② 后台并行')+`<b>SM1 正在抢 ${cw.grab!=null?'tile '+cw.grab:'下一块'}</b>（左侧网格里紫环/箭头标出的那块）。`+
+    `<b>这就是“怎么掩盖”：</b>CLC 引擎在<b>专用硬件通路</b>上处理这次抢单（见进度条），`+
+    `而<b>同一时刻</b>下方的 Tensor Core 正忙着算当前 tile 的 MMA。两者<b>物理同时进行</b>，抢单延迟正好落在 SM1 本就要花的计算时间里 —— `+
+    `<b>用计算时间“盖住”抢单等待</b>，结果稍后写入 <code>clc_result_buf</code>。`;
+  if(ad) return useClc
+    ? key(COL.clc,'③ 取结果')+`tile 算完才 <code>advance → wait</code>。因为 CLC 在第②步就<b>早已算完</b>（进度条 100%、尾段“就绪闲等”），`+
+      `<code>wait</code> <b>立即返回，0 空转</b>。<b>对比</b>：若发起后立刻 wait，每个 tile 都要干等整段 CLC 延迟——那才是没被掩盖。`+
+      `随后 <code>program_id(0)</code> 成为新 <code>tile_id</code>，<b>同一 block 立刻进入下一轮（持久）</b>。`
+    : key(COL.empty,'STATIC')+`<b><code>advance()</code></b>：纯算术 <code>tile_id += num_programs</code> 拿下一格，无需任何硬件等待。`+
+      `<b>同一 block 继续循环处理下一个 tile（持久）</b>，直到 <code>tile_id ≥ num_tiles</code>。`;
+  if(ad2) return key(COL.clc,'CLC')+`偷到下一个 tile_id，<code>has_work=True</code> → 回到循环顶端，<b>block 不退出</b>。`;
+  if(pid) return `进入新一轮持久循环：先用 <code>_compute_pid</code> 把 <code>tile_id</code> 解成 `+
+    `<code>(pid_m,pid_n)</code>（按 <code>GROUP_SIZE_M</code> 重排以提升 L2 命中），再开始这一格的流水。`;
+  // 数据流动
+  const datas=a.filter(o=>!o.mark&&o.flow);
+  if(datas.length){
+    const parts=datas.map(o=>{const tg=dataTag(o);const v={load:'TMA 载入',mma:'tcgen05 累加',tmem_load:'取累加器',smem_store:'写 SMEM',store:'TMA 写回'}[o.kind]||'推进';
+      return `<b>${pLane(o.part)}</b> ${v}${tg?` ${tg.p}→${tg.block}${tg.loc?`(${tg.loc})`:''}`:''}`;});
+    return `各流水阶段并行（async TMA + tcgen05 + 软件流水重叠读/算/写）：${parts.join('；')}。`+
+      (useClc?` 与此同时 CLC 在后台默默处理上一次 <code>try_cancel</code>。`:'');
+  }
+  return `流水空隙：等待下一个数据/同步事件。`;
+}
+
+/* ============================================================================
+   视角 3 — 时间线 (持久循环 · tile 边界 · CLC 引擎进度条与计算并行)
+   ========================================================================== */
+const TL={padL:150,padR:30,top:50,laneH:70};
+let _tlg=null,_tlgKey='';
+function tlGeom(){ const d=S(); const key=stage+'@'+d.maxTick+'@'+d.lanes.length;
+  if(_tlgKey===key && _tlg) return _tlg;                       // 缓存: xOf/laneY 每帧被调上百次, 避免重复计算
+  const W=1120,usable=W-TL.padL-TL.padR,px=usable/d.maxTick,H=TL.top+d.lanes.length*TL.laneH+34;
+  _tlg={W,H,px,d}; _tlgKey=key; return _tlg; }
+function xOf(t){return TL.padL+t*tlGeom().px;}
+function laneY(p){const d=S();return TL.top+d.lanes.findIndex(l=>l.id===p)*TL.laneH;}
+function barY(p){return laneY(p)+32;}     // 工作带
+function syncY(p){return laneY(p)+60;}     // 同步带 (与工作带分离, 不重叠)
+function renderTimeline(){
+  const {W,H,px,d}=tlGeom(); const yTop=TL.top,yBot=TL.top+d.lanes.length*TL.laneH;
+  const phx=xOf(tick),ti=Math.round(tick);
+  let svg=`<svg id="tlsvg" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  svg+=`<defs>
+    <marker id="depR" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="${COL.ready}"/></marker>
+    <marker id="depC" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="${COL.clc}"/></marker></defs>`;
+  // 泳道
+  d.lanes.forEach((l,i)=>{ const y=laneY(l.id),lc=pColor(l.id);
+    svg+=`<rect x="0" y="${y}" width="${W}" height="${TL.laneH}" fill="${i%2?'#f7fafc':'#fff'}"/>`;
+    svg+=`<line x1="0" y1="${y+TL.laneH}" x2="${W}" y2="${y+TL.laneH}" stroke="#e4eaf1"/>`;
+    svg+=`<rect x="0" y="${y}" width="${TL.padL-10}" height="${TL.laneH}" fill="${lighten(lc,0.06)}"/>`;
+    svg+=`<rect x="0" y="${y}" width="5" height="${TL.laneH}" fill="${lc}"/>`;
+    svg+=`<text x="14" y="${y+18}" style="font-size:12px;font-weight:700" fill="#1c2733">${l.name}</text>`;
+    svg+=`<text x="14" y="${y+31}" style="font-size:9px" fill="#5b6b7d">${l.sub}</text>`;
+    svg+=`<text x="14" y="${y+47}" style="font-size:8px;font-weight:600" fill="${lc}">▮ 工作带</text>`;
+    svg+=`<text x="14" y="${y+64}" style="font-size:8px;font-weight:600" fill="#9aa7b5">↳ 同步带 (mbarrier)</text>`;
+    // 工作 / 同步 两带分隔虚线
+    svg+=`<line x1="${TL.padL-10}" y1="${y+54}" x2="${W-8}" y2="${y+54}" stroke="#eef2f7" stroke-width="1" stroke-dasharray="2 3"/>`;
+  });
+  svg+=`<line x1="${TL.padL-10}" y1="${yTop}" x2="${TL.padL-10}" y2="${yBot}" stroke="#d7dfe9"/>`;
+  // tile 边界 + 持久轮次标注
+  for(let i=0;i<=d.nTile;i++){ const x=xOf(i*d.SPAN);
+    svg+=`<line x1="${x}" y1="${yTop-18}" x2="${x}" y2="${yBot}" stroke="#c9b3e6" stroke-width="1.4" stroke-dasharray="3 3"/>`;
+    if(i<d.nTile){ const cx=xOf(i*d.SPAN+d.SPAN/2);
+      svg+=`<rect x="${cx-44}" y="${yTop-19}" width="88" height="15" rx="7" fill="#f4e9fc" stroke="#d8bff0"/>`;
+      svg+=`<text x="${cx}" y="${yTop-8}" text-anchor="middle" style="font-size:9.5px;font-weight:700" fill="#7a3ca8">第${i+1}轮 · tile ${d.tiles[i].id}</text>`;
+    }
+  }
+  // 刻度
+  for(let i=0;i<=d.maxTick;i++){ const x=xOf(i),major=i%3===0;
+    svg+=`<line x1="${x}" y1="${yTop}" x2="${x}" y2="${yBot}" stroke="${major?'#e7edf3':'#f3f6f9'}"/>`; }
+  // 当前列高亮
+  svg+=`<rect x="${phx-px*0.4}" y="${yTop}" width="${px*0.8}" height="${yBot-yTop}" fill="${lighten(COL.accent||COL.clc,0.10)}"/>`;
+  // CLC「就绪待取」尾段: CLC 引擎进度条结束(ready) 之后到 advance 取走(to) 之间, 结果已在 buf 里闲等
+  d.ops.filter(o=>o.span).forEach(o=>{ const xr=xOf(o.ready),xc=xOf(o.to),y=barY('sched'),h=20;
+    const near=tick>=o.from-0.3&&tick<=o.to+0.3;
+    svg+=`<rect x="${xr}" y="${y}" width="${Math.max(xc-xr,2)}" height="${h}" rx="5" fill="${lighten(COL.clc,0.10)}"
+          stroke="${COL.clc}" stroke-width="1" stroke-dasharray="3 3" opacity="${near?0.95:0.6}"/>`;
+    if(xc-xr>40) svg+=`<text x="${(xr+xc)/2}" y="${y+h/2+4}" text-anchor="middle" style="font-size:8.5px;font-weight:700;pointer-events:none" fill="${COL.clc}">✓ ${o.grab!=null?'tile '+o.grab+' ':''}就绪·待取</text>`;
+  });
+  // 依赖箭头 (load_ready 放行 mma)
+  d.ops.forEach(op=>{ if(!op.waitsOn)return; const prod=findProducer(op); if(!prod)return;
+    const x1=xOf(prod.start+(prod.dur||0)),y1=syncY(prod.part),x2=xOf(op.start),y2=syncY(op.part);
+    const isClc=op.waitsOn.startsWith('clc'); const col=isClc?COL.clc:COL.ready;
+    const near=Math.abs(tick-op.start)<0.6||op===hoverOp;
+    const mx=(x1+x2)/2,my=Math.min(y1,y2)-10;
+    svg+=`<path d="M${x1},${y1} Q${mx},${my} ${x2},${y2}" fill="none" stroke="${col}" stroke-width="${near?2.4:1}"
+          opacity="${near?0.95:0.3}" stroke-dasharray="5 4" marker-end="url(#${isClc?'depC':'depR'})"/>`;
+  });
+  // 工作条
+  d.ops.forEach((op,oi)=>{ if(op.mark||op.span||!(op.dur>0))return;
+    const x=xOf(op.start),w=Math.max(op.dur*px,4),y=barY(op.part),h=20;
+    const on=isActive(op,tick),hov=(op===hoverOp);
+    if(op.kind==='clc_work'){   // CLC 引擎: 进度条(轨道+按播放头填充), 直观显示“后台处理中/已完成”
+      const p=opProg(op,tick), done=tick>=op.start+op.dur-1e-6;
+      svg+=`<rect data-oi="${oi}" x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="${lighten(op.c,0.16)}"
+            stroke="${hov?'#0b3d91':op.c}" stroke-width="${hov?2.4:1.4}" style="cursor:pointer"><title>${op.label}</title></rect>`;
+      if(p>0) svg+=`<rect x="${x+1.5}" y="${y+1.5}" width="${Math.max((w-3)*p,2).toFixed(1)}" height="${h-3}" rx="5" fill="${op.c}" opacity="0.9" style="pointer-events:none"/>`;
+      const tgt = op.grab!=null?`tile ${op.grab}`:'无可抢';
+      const lbl = done?`CLC ✓ 抢到 ${tgt}`:`CLC 抢 ${tgt} ${Math.round(p*100)}%`;
+      if(w>40) svg+=`<text x="${x+w/2}" y="${y+h/2+4}" text-anchor="middle" style="font-size:9px;font-weight:700;fill:${p>0.55?'#fff':op.c};pointer-events:none">${lbl}</text>`;
+      return;
+    }
+    svg+=`<rect data-oi="${oi}" x="${x}" y="${y}" width="${w}" height="${h}" rx="6" fill="${op.c}" opacity="${on||hov?1:0.82}"
+          stroke="${hov?'#0b3d91':(on?'#1c2733':'rgba(20,39,51,.16)')}" stroke-width="${hov?2.4:(on?2:1)}" style="cursor:pointer">
+          <title>${op.label} · ${pLane(op.part)}</title></rect>`;
+    if(w>26) svg+=`<text class="barLbl" x="${x+6}" y="${y+h/2+4}">${barText(op)}</text>`;
+  });
+  // fence
+  d.ops.forEach(op=>{ if(!op.fence)return; const x=xOf(op.start),on=isActive(op,tick);
+    const y0=barY(op.part)-3,y1=barY(op.part)+23;
+    svg+=`<line x1="${x-1.8}" y1="${y0}" x2="${x-1.8}" y2="${y1}" stroke="${COL.fence}" stroke-width="${on?2.4:1.6}"/>`+
+         `<line x1="${x+1.8}" y1="${y0}" x2="${x+1.8}" y2="${y1}" stroke="${COL.fence}" stroke-width="${on?2.4:1.6}"/>`;
+  });
+  // 同步标记 (▲ signal / ▽ wait)
+  d.ops.forEach((op,oi)=>{ if(!op.mark||op.fence||op.kind==='pid')return;
+    const x=xOf(op.start),sy=syncY(op.part),on=isActive(op,tick),hov=(op===hoverOp),r=(on||hov)?7:5.2,st=(on||hov)?'#1c2733':'#fff';
+    let shape;
+    if(op.signal||op.kind==='advance2'||op.kind==='try_cancel')
+      shape=`<polygon points="${x},${sy-r} ${x-r},${sy+r} ${x+r},${sy+r}" fill="${op.c}" stroke="${st}" stroke-width="1.2"/>`;
+    else
+      shape=`<polygon points="${x-r},${sy-r} ${x+r},${sy-r} ${x},${sy+r}" fill="#fff" stroke="${op.c}" stroke-width="${(on||hov)?2.4:1.8}"/>`;
+    svg+=`<g data-oi="${oi}" style="cursor:pointer"><title>${op.label} · ${pLane(op.part)}</title>${shape}</g>`;
+  });
+  // 播放头
+  svg+=`<line x1="${phx}" y1="${yTop-18}" x2="${phx}" y2="${yBot+4}" stroke="${COL.clc}" stroke-width="2"/>`;
+  svg+=`<polygon points="${phx-6},${yTop-18} ${phx+6},${yTop-18} ${phx},${yTop-10}" fill="${COL.clc}"/>`;
+  const card=`t ${tick.toFixed(1)} · tile ${curTileId(tick)}`;
+  const cw=card.length*6.6+16,cxx=Math.min(Math.max(phx-cw/2,TL.padL-10),W-cw-6);
+  svg+=`<rect x="${cxx}" y="${yBot+7}" width="${cw}" height="18" rx="9" fill="${COL.clc}"/>`;
+  svg+=`<text x="${cxx+cw/2}" y="${yBot+20}" text-anchor="middle" style="font-size:10.5px;font-weight:700" fill="#fff">${card}</text>`;
+  svg+=`</svg>`;
+  document.getElementById('tlbody').innerHTML=svg; pzApply('tlbody');
+}
+function barText(op){
+  if(op.kind==='load')      return `ld ${op.stream}·k${op.k}`;
+  if(op.kind==='mma')       return `mma k${op.k}→a${op.acc}`;
+  if(op.kind==='tmem_load') return `acc t${op.tile}`;
+  if(op.kind==='smem_store')return 'c→smem';
+  if(op.kind==='store')     return 'TMA store C';
+  return op.kind||'';
+}
+/* ---- 通用缩放/平移 (滚轮缩放到光标 · 拖动平移 · 双击复位) ----
+   变换以 CSS transform 施加在每次重渲染后的 <svg> 上, 故每次 render 末尾调用 pzApply 重新贴上. */
+const PZ={};
+function pzState(id){ return PZ[id]||(PZ[id]={scale:1,tx:0,ty:0}); }
+function pzApply(id){ const h=document.getElementById(id), svg=h&&h.querySelector('svg'); if(!svg)return;
+  const s=pzState(id); svg.style.transformOrigin='0 0';
+  svg.style.transform=`translate(${s.tx}px,${s.ty}px) scale(${s.scale})`; }
+function clampPZ(id,host){ const s=pzState(id), w=host.clientWidth, h=host.clientHeight;
+  if(s.scale<=1){ s.scale=1; s.tx=0; s.ty=0; return; }
+  s.tx=Math.min(0,Math.max(w*(1-s.scale),s.tx)); s.ty=Math.min(0,Math.max(h*(1-s.scale),s.ty)); }
+function pzReset(id){ const s=pzState(id); s.scale=1; s.tx=0; s.ty=0; pzApply(id); }
+function bindWheelZoom(id){ const host=document.getElementById(id); if(!host)return;
+  host.addEventListener('wheel',e=>{ e.preventDefault(); const s=pzState(id), r=host.getBoundingClientRect();
+    const mx=e.clientX-r.left, my=e.clientY-r.top;
+    const ns=Math.max(1,Math.min(8, s.scale*(e.deltaY<0?1.15:1/1.15))), k=ns/s.scale;
+    s.tx=mx-k*(mx-s.tx); s.ty=my-k*(my-s.ty); s.scale=ns; clampPZ(id,host); pzApply(id); },{passive:false}); }
+// 纯平移面板 (视角1·2): 拖动=平移, 滚轮=缩放, 双击=复位
+function bindDragPan(id){ const host=document.getElementById(id); if(!host||host.dataset.dp)return; host.dataset.dp='1';
+  host.style.cursor='grab'; bindWheelZoom(id);
+  let down=false,lx=0,ly=0;
+  host.addEventListener('pointerdown',e=>{down=true;lx=e.clientX;ly=e.clientY;host.setPointerCapture(e.pointerId);host.style.cursor='grabbing';e.preventDefault();});
+  host.addEventListener('pointermove',e=>{ if(!down)return; const s=pzState(id);
+    s.tx+=e.clientX-lx; s.ty+=e.clientY-ly; lx=e.clientX; ly=e.clientY; clampPZ(id,host); pzApply(id); });
+  const up=e=>{down=false;host.style.cursor='grab';try{host.releasePointerCapture(e.pointerId);}catch(_){}};
+  host.addEventListener('pointerup',up); host.addEventListener('pointercancel',up);
+  host.addEventListener('dblclick',()=>pzReset(id));
+}
+
+function bindTimeline(){
+  const host=document.getElementById('tlbody'); if(!host||host.dataset.bound)return; host.dataset.bound='1';
+  bindWheelZoom('tlbody');
+  const set=e=>{ const svg=document.getElementById('tlsvg'); if(!svg)return; const {px}=tlGeom();
+    const ctm=svg.getScreenCTM(); if(!ctm)return; const pt=svg.createSVGPoint(); pt.x=e.clientX;pt.y=e.clientY;
+    let tt=(pt.matrixTransform(ctm.inverse()).x-TL.padL)/px; setTick(Math.max(0,Math.min(S().maxTick,tt))); };
+  const setHover=e=>{ const el=e.target.closest&&e.target.closest('[data-oi]'); const nop=el?S().ops[+el.dataset.oi]:null;
+    if(nop!==hoverOp){hoverOp=nop||null; renderTimeline(); renderAll();} };
+  // 未缩放(scale=1): 拖动=拖动时间轴(原行为); 缩放后(scale>1): 拖动=平移, 单击=跳转播放头
+  let down=false,moved=false,sx=0,sy=0,lx=0,ly=0;
+  host.addEventListener('pointerdown',e=>{ down=true; moved=false; sx=lx=e.clientX; sy=ly=e.clientY;
+    host.setPointerCapture(e.pointerId); stopPlay();
+    if(pzState('tlbody').scale<=1) set(e); e.preventDefault(); });
+  host.addEventListener('pointermove',e=>{
+    if(down){ if(Math.abs(e.clientX-sx)+Math.abs(e.clientY-sy)>4) moved=true;
+      if(pzState('tlbody').scale>1){ const s=pzState('tlbody');
+        s.tx+=e.clientX-lx; s.ty+=e.clientY-ly; lx=e.clientX; ly=e.clientY; clampPZ('tlbody',host); pzApply('tlbody'); }
+      else set(e);
+    } else setHover(e);
+  });
+  host.addEventListener('pointerleave',()=>{ if(hoverOp){hoverOp=null;renderTimeline();renderAll();} });
+  const up=e=>{ if(down && pzState('tlbody').scale>1 && !moved) set(e); down=false;
+    try{host.releasePointerCapture(e.pointerId);}catch(_){}};
+  host.addEventListener('pointerup',up); host.addEventListener('pointercancel',up);
+  host.addEventListener('dblclick',()=>pzReset('tlbody'));
+}
+
+/* ============================================================================
+   渲染调度 + 控制
+   ========================================================================== */
+// 场景签名: 活跃 op 集合(含进度分档) + hover + stage. 仅当它变化时才重建 微架构/网格/代码 三面板,
+// 否则跳过 (播放时大多数帧此三者不变) —— 显著降低每帧的 innerHTML 解析 + SMIL 重建开销.
+function sceneSig(t){
+  let s=stage+'|'+(hoverOp?('h'+S().ops.indexOf(hoverOp)):'')+'|';
+  for(const o of S().ops){ if(o.span)continue;
+    const act = o.mark ? Math.abs(t-o.start)<0.28 : (o.dur>0 && t>=o.start-1e-6 && t<o.start+o.dur);
+    if(act){ s+=o.start.toFixed(2)+(o.kind||o.label||''); if(o.dur>0.05) s+=':'+Math.floor(opProg(o,t)*5); s+=','; }
+  }
+  return s;
+}
+let _lastSig=null;
+function renderAll(force){ const extra=hoverOp&&!hoverOp.span?[hoverOp]:null;
+  const sig=sceneSig(tick);
+  if(force||sig!==_lastSig){ _lastSig=sig; renderMicro(tick,extra); renderData(tick); renderCode(tick,extra); }
+  document.getElementById('tkval').textContent=tick.toFixed(1); }
+let _rq=false,_lastPaint=0;
+function setTick(t){ tick=Math.max(0,Math.min(S().maxTick,t)); if(_rq)return; _rq=true;
+  const go=ts=>{ if(ts-_lastPaint<30){ requestAnimationFrame(go); return; }   // 限到 ~30fps: 播放头足够顺滑, 每帧开销减半
+    _lastPaint=ts; _rq=false; renderTimeline(); renderAll(); };
+  requestAnimationFrame(go); }
+function renderStageStatic(){
+  document.getElementById('stagedesc').innerHTML=S().desc;
+  document.getElementById('tkmax').textContent=S().maxTick.toFixed(0);
+  const sep=`<span style="color:#cdd8e3">｜</span>`;
+  document.getElementById('legend').innerHTML=
+    `<b style="color:#5b6b7d">阶段</b>`+
+    [['ld TMA',COL.A],['MMA→acc',COL.ACC],['epi 写回 C',COL.C],['CLC 调度',COL.clc]].map(x=>`<span><i style="background:${x[1]}"></i>${x[0]}</span>`).join('')+
+    sep+`<span>▲ signal/arrive</span><span>▽ wait</span><span style="color:${COL.fence}">‖ fence</span>`+
+    sep+`<span style="color:${COL.ready}">⇢ load_ready 放行 MMA</span>`+
+    (S().useClc?sep+`<span style="color:${COL.clc}">▰ CLC 引擎进度条(与计算并行) · ┄就绪闲等</span>`:'')+
+    sep+`<span style="color:#7a3ca8">紫色虚线=tile 边界(持久轮次)</span>`+
+    sep+`<span style="color:#0b6b3a">拖动/悬停↔联动 视角1·2·4</span>`;
+}
+function play(){ if(playing)return; playing=true; document.getElementById('playBtn').textContent='⏸ 暂停';
+  let last=null; const loop=ts=>{ if(!playing)return; if(last==null)last=ts; const dt=(ts-last)/1000;last=ts;
+    let nt=tick+dt*2.0; if(nt>=S().maxTick){nt=S().maxTick;setTick(nt);stopPlay();return;} setTick(nt);raf=requestAnimationFrame(loop); };
+  raf=requestAnimationFrame(loop); }
+function stopPlay(){ playing=false; if(raf)cancelAnimationFrame(raf); raf=null; document.getElementById('playBtn').textContent='▶ 播放'; }
+document.getElementById('playBtn').onclick=()=>{ playing?stopPlay():(tick>=S().maxTick&&setTick(0),play()); };
+document.getElementById('stepF').onclick=()=>{stopPlay();setTick(Math.min(S().maxTick,Math.floor(tick+1)));};
+document.getElementById('stepB').onclick=()=>{stopPlay();setTick(Math.max(0,Math.ceil(tick-1)));};
+document.getElementById('resetB').onclick=()=>{stopPlay();setTick(0);};
+document.querySelectorAll('.tab').forEach(tb=>tb.onclick=()=>{ stopPlay();
+  document.querySelectorAll('.tab').forEach(x=>x.classList.remove('active')); tb.classList.add('active');
+  stage=+tb.dataset.stage; tick=0;
+  pzReset('microPanel'); pzReset('dataPanel'); pzReset('tlbody');   // 切换 stage 复位缩放
+  renderStageStatic(); renderTimeline(); renderAll(true); });
+/* init */
+renderStageStatic(); renderTimeline(); bindTimeline(); renderAll(true);
+bindDragPan('microPanel'); bindDragPan('dataPanel');   // 视角1·2 缩放/平移
+window.addEventListener('resize',()=>renderTimeline());
+</script>
+</body>
+</html>

@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第六部分 · Speed-Of-Light 矩阵乘（warp 专精 + CLC 持久调度）</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#fff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#5a8a00; --hl:#ea580c;
+    --clc:#9333ea; --load:#0891b2; --mma:#db2777; --epi:#ea580c;
+    --acc:#7c3aed; --gmem:#475569; --ready:#16a34a; --empty:#dc2626;
+    --A:#2563eb; --B:#d97706;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#fff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px}
+  header h1 .g{color:var(--accent)}
+  .badge{font-size:11px;font-weight:700;color:#fff;padding:3px 10px;border-radius:20px}
+  .badge.c{background:var(--clc)} .badge.l{background:var(--load)} .badge.m{background:var(--mma)} .badge.e{background:var(--epi)}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:300px}
+  .sub b{color:#11305c}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  main{flex:1;display:grid;gap:9px;padding:9px;min-height:0;
+    grid-template-columns:minmax(0,0.94fr) minmax(0,1.3fr);
+    grid-template-rows:minmax(0,1.05fr) minmax(0,1fr);
+    grid-template-areas:"clc flow" "tl tl";}
+  #pClc{grid-area:clc} #pFlow{grid-area:flow} #pTl{grid-area:tl}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap}
+  .phead .tag{font-size:10.5px;font-weight:700;color:#fff;padding:1px 9px;border-radius:20px;background:var(--accent)}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:10.5px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;justify-content:center;align-items:flex-start}
+  svg.full{display:block;width:100%;height:auto}
+
+  .ctrl{display:flex;gap:6px;align-items:center}
+  .ctrl button{font-size:11.5px;font-weight:700;cursor:pointer;border:1px solid #c3cedb;background:#fff;color:#33485e;border-radius:7px;padding:3px 10px}
+  .ctrl button:hover{background:#f1f5fa}
+  .ctrl button.play{background:var(--accent);color:#fff;border-color:var(--accent)}
+  .ctrl .tk{font-size:10.5px;color:var(--muted);margin-left:4px}
+  .ctrl .tk b{color:var(--txt);font-variant-numeric:tabular-nums}
+
+  footer{flex:none;border-top:1px solid var(--line);background:#fff;padding:7px 14px;display:flex;gap:16px;align-items:center;flex-wrap:wrap}
+  .read{font-size:11.4px;line-height:1.5;flex:1;min-width:280px}
+  .read code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:10.5px;font-weight:600;border:1px solid #f1d48a}
+  .legend{display:flex;gap:6px 12px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);align-items:center}
+  .legend span{display:inline-flex;gap:4px;align-items:center}
+  .legend i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
+
+  .flow{stroke-dasharray:6 6;animation:march .6s linear infinite}
+  @keyframes march{to{stroke-dashoffset:-12}}
+
+  @media(max-width:1100px){body{height:auto;overflow:auto}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto auto;grid-template-areas:"tl" "flow" "clc"}
+    .pbody{min-height:240px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>第六部分 · <span class="g">Speed-Of-Light 矩阵乘</span>（<code style="font-family:Consolas">matmul_multicta_kernel</code>）</h1>
+    <span class="badge c">CLC</span><span class="badge l">Load</span><span class="badge m">MMA</span><span class="badge e">Epilogue</span>
+    <div class="sub"><code>gl.warp_specialize</code> 把一个 CTA 拆成 <b>4 个并发分区</b>，靠 mbarrier 接力 → <b>重叠</b>（对比第五部分的单缓冲串行）。
+      <b>持久 + CLC</b>：CLC 分区用 <code>try_cancel</code> 动态领 tile、<code>_planar_snake</code> 重排提升 L2 命中，再把 pid 广播给全部 CTA。深缓冲 <code>STAGES=6 / ACC_STAGES=2</code>。</div>
+  </div>
+</header>
+
+<main>
+  <div class="panel" id="pClc">
+    <div class="phead"><span class="tag">① 原始数据 A×B→C · snake 调度</span>tile = A 行块 × B 列块
+      <span class="hint">青=②正在载入的 A/B·k 片 · 粉=正在计算 · 与②联动</span></div>
+    <div class="pbody"><div id="clcWrap" style="width:100%"></div></div>
+  </div>
+
+  <div class="panel" id="pFlow">
+    <div class="phead"><span class="tag">② 分区 · 缓冲 · barrier 数据流</span>4 分区领地 + 深流水缓冲池
+      <span class="hint">a/b 各一池(×6) · 槽标 A{r}·k、B{c}·k → ① 联动（青=载入 粉=计算）</span></div>
+    <div class="pbody"><div id="flowWrap" style="width:100%"></div></div>
+  </div>
+
+  <div class="panel" id="pTl">
+    <div class="phead"><span class="tag">③ 流水线时间线（4 泳道）</span>分区并发重叠
+      <div class="ctrl">
+        <button class="play" id="playBtn">▶ 播放</button>
+        <button id="stepB">◀</button><button id="stepF">▶</button><button id="resetB">⟲</button>
+        <span class="tk">tick <b id="tkval">0.0</b>/<span id="tkmax"></span> · 拖动时间轴 scrub · 联动 ①②</span>
+      </div>
+    </div>
+    <div class="pbody"><div id="tlWrap" style="width:100%"></div></div>
+  </div>
+</main>
+
+<footer>
+  <div class="read" id="readout"></div>
+  <div class="legend">
+    <span><i style="background:#9333ea"></i>CLC 调度</span>
+    <span><i style="background:#0891b2"></i>Load(TMA)</span>
+    <span><i style="background:#db2777"></i>MMA</span>
+    <span><i style="background:#ea580c"></i>Epilogue</span>
+    <span><i style="background:#16a34a"></i>就绪 barrier</span>
+  </div>
+</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+const COL={clc:'#9333ea',load:'#0891b2',mma:'#db2777',epi:'#ea580c',acc:'#7c3aed',
+  gmem:'#475569',ready:'#16a34a',empty:'#dc2626',A:'#2563eb',B:'#d97706',hl:'#ea580c'};
+
+/* ===== 配置（演示规模，对应 matmul_multicta_kernel）===== */
+const NT=3, KS=3, STAGES=6, ACC=2, NL=NT*KS;
+
+/* ===== 流水线模拟：CLC 先发 tile → Load 顺序抢跑(受 STAGES 背压) → MMA 顺序消费 ===== */
+const dC=0.5, dL=0.45, dM=0.9, dE=1.3;
+const _cS=[],_cE=[],_lS=[],_lE=[],_mS=[],_mE=[];
+for(let tl=0;tl<NT;tl++){ _cS[tl]=tl*0.6; _cE[tl]=_cS[tl]+dC; }   // CLC 抢跑发 tile（领先）
+for(let g=0;g<NL;g++){
+  const tl=Math.floor(g/KS), k=g%KS;
+  const seq = g>0?_lE[g-1]:0;                       // Load 分区顺序发起
+  const bp  = g>=STAGES?_mE[g-STAGES]:0;            // 缓冲被 MMA 消费(load_empty) 后才能再载
+  const clcC= (k===0)?_cE[tl]:0;                    // 该 tile 的第一片须等 CLC 发出后
+  _lS[g]=Math.max(seq,bp,clcC); _lE[g]=_lS[g]+dL;
+  _mS[g]=Math.max(_lE[g], g>0?_mE[g-1]:0); _mE[g]=_mS[g]+dM;  // MMA 顺序、等 load_ready
+}
+const _eS=[],_eE=[];
+for(let tl=0;tl<NT;tl++){
+  const lg=tl*KS+KS-1; let s=_mE[lg]+0.15;
+  if(tl>0) s=Math.max(s,_eE[tl-1]);               // epilogue 顺序
+  _eS[tl]=s; _eE[tl]=s+dE;
+}
+const BLK=[];
+for(let tl=0;tl<NT;tl++) BLK.push({lane:'clc',kind:'clc',tile:tl,t0:_cS[tl],t1:_cE[tl],c:COL.clc});
+for(let tl=0;tl<NT;tl++)for(let k=0;k<KS;k++){ const g=tl*KS+k; BLK.push({lane:'load',kind:'load',tile:tl,k,t0:_lS[g],t1:_lE[g],c:COL.load}); }
+for(let tl=0;tl<NT;tl++)for(let k=0;k<KS;k++){ const g=tl*KS+k; BLK.push({lane:'mma',kind:'mma',tile:tl,k,t0:_mS[g],t1:_mE[g],c:COL.mma}); }
+for(let tl=0;tl<NT;tl++) BLK.push({lane:'epi',kind:'epi',tile:tl,t0:_eS[tl],t1:_eE[tl],c:COL.epi});
+const TMAX=Math.ceil(_eE[NT-1]+0.4);
+const activeBlks=t=>BLK.filter(b=>t>=b.t0-1e-6 && t<b.t1-1e-6);
+function curTile(t){
+  const a=activeBlks(t);
+  const m=a.find(b=>b.lane==='mma'); if(m) return m.tile;
+  const l=a.find(b=>b.lane==='load'); if(l) return l.tile;
+  const e=a.find(b=>b.lane==='epi'); if(e) return e.tile;
+  const c=a.find(b=>b.lane==='clc'); if(c) return c.tile;
+  // 最近完成的
+  let last=0; BLK.forEach(b=>{ if(b.lane==='mma'&&b.t1<=t) last=Math.max(last,b.tile); });
+  return last;
+}
+function progBar(x,y,w,h,p,col){
+  const pc=Math.max(0,Math.min(1,p));
+  return `<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="${h/2}" fill="#dfe7f0"/>`+
+    (pc>0?`<rect x="${x}" y="${y}" width="${(w*pc).toFixed(1)}" height="${h}" rx="${h/2}" fill="${col}"/>`:'');
+}
+// 某 tile 的整体进度（按其 MMA 完成度，0..1）
+function tileProg(t,tl){
+  const ms=BLK.filter(b=>b.lane==='mma'&&b.tile===tl);
+  if(!ms.length) return 0;
+  const done=ms.filter(b=>b.t1<=t).length;
+  const cur=ms.find(b=>t>=b.t0&&t<b.t1);
+  return Math.max(0,Math.min(1,(done+(cur?(t-cur.t0)/(cur.t1-cur.t0):0))/ms.length));
+}
+
+/* ============================================================
+   ① CLC 瓦片调度（输出 tile 网格 + planar-snake 顺序）
+   ============================================================ */
+const GM=4, GN=4;                  // 演示网格 4×4=16 tiles
+function snakeCells(){
+  const cells=[]; let idx=0;
+  for(let c=0;c<GN;c++) for(let rr=0;rr<GM;rr++){
+    const r=(c%2===0)?rr:(GM-1-rr); cells.push({idx:idx++,r,c});
+  }
+  return cells;
+}
+const SNAKE=snakeCells();
+const orderOf={}; SNAKE.forEach(s=>orderOf[s.r+','+s.c]=s.idx);
+function renderCLC(t){
+  const acts=activeBlks(t);
+  const la=acts.find(b=>b.lane==='load')||null;     // ② 此刻正在载入的 (tile,k)
+  const ma=acts.find(b=>b.lane==='mma')||null;      // ② 此刻正在计算的 (tile,k)
+  const ct=curTile(t), cell=SNAKE[ct];
+  const lRC=la?SNAKE[la.tile]:null, mRC=ma?SNAKE[ma.tile]:null;
+  const W=352,H=392;
+  const cw=46, ch=42, x0=116, y0=106, Ax=42, Aw=66, By=46, Bh=54;
+  let g='';
+  g+=`<text x="10" y="13" style="font-size:10px;font-weight:800" fill="#1c2733">C tile = A 行块 × B 列块；<tspan fill="${COL.load}">青=②正在载入的片</tspan> <tspan fill="${COL.mma}">粉=正在计算的片</tspan></text>`;
+
+  // B 列块（上）——含 K 横切带，点亮 ② 当前 k
+  g+=`<text x="${x0+GN*cw/2}" y="${By-4}" text-anchor="middle" style="font-size:7.6px;font-weight:700" fill="${COL.B}">B (K×N) · 按 pid_n 切列块</text>`;
+  for(let c=0;c<GN;c++){
+    const x=x0+c*cw, reuse=c===0, isL=lRC&&lRC.c===c, isM=mRC&&mRC.c===c, act=isL?COL.load:(isM?COL.mma:null);
+    g+=`<rect x="${x}" y="${By}" width="${cw-4}" height="${Bh}" rx="3" fill="${lighten(COL.B,act?.3:.12)}" stroke="${act||(reuse?COL.B:'#e1c89a')}" stroke-width="${act?2.6:(reuse?1.6:1)}" ${reuse&&!act?'stroke-dasharray="4 3"':''}/>`;
+    g+=`<text x="${x+(cw-4)/2}" y="${By+10}" text-anchor="middle" style="font-size:6.8px;font-weight:800" fill="${COL.B}">B 列块${c}</text>`;
+    const bandY=By+14, bandH=(Bh-17)/KS;
+    for(let k=0;k<KS;k++){ const yy=bandY+k*bandH, lit=(isL&&la.k===k)?COL.load:((isM&&ma.k===k)?COL.mma:null);
+      g+=`<rect x="${x+3}" y="${yy}" width="${cw-10}" height="${bandH-1.5}" rx="1.5" fill="${lit?lighten(lit,.5):'#fff7ec'}" stroke="${lit||'#ecd9b7'}" stroke-width="${lit?1.4:.6}"/>`;
+      g+=`<text x="${x+6}" y="${yy+bandH/2+2}" style="font-size:5px;font-weight:700" fill="${lit||'#bfa06a'}">k${k}</text>`; }
+  }
+
+  // A 行块（左）——含 K 竖切带，点亮 ② 当前 k
+  g+=`<text x="${Ax+Aw/2}" y="${y0-4}" text-anchor="middle" style="font-size:7.6px;font-weight:700" fill="${COL.A}">A (M×K)</text>`;
+  for(let r=0;r<GM;r++){
+    const y=y0+r*ch, isL=lRC&&lRC.r===r, isM=mRC&&mRC.r===r, isCur=r===cell.r, act=isL?COL.load:(isM?COL.mma:null);
+    g+=`<rect x="${Ax}" y="${y}" width="${Aw}" height="${ch-4}" rx="3" fill="${lighten(COL.A,act?.3:.12)}" stroke="${act||(isCur?COL.hl:'#cfd8e3')}" stroke-width="${act?2.6:(isCur?2:1)}"/>`;
+    g+=`<text x="${Ax+Aw/2}" y="${y+10}" text-anchor="middle" style="font-size:6.8px;font-weight:800" fill="${COL.A}">A 行块${r}</text>`;
+    const colY=y+13, colH=ch-4-15, bw=(Aw-6)/KS;
+    for(let k=0;k<KS;k++){ const xx=Ax+3+k*bw, lit=(isL&&la.k===k)?COL.load:((isM&&ma.k===k)?COL.mma:null);
+      g+=`<rect x="${xx}" y="${colY}" width="${bw-1.5}" height="${colH}" rx="1.5" fill="${lit?lighten(lit,.5):'#eef4ff'}" stroke="${lit||'#cdddf2'}" stroke-width="${lit?1.4:.6}"/>`;
+      g+=`<text x="${xx+bw/2}" y="${colY+colH-2}" text-anchor="middle" style="font-size:5px;font-weight:700" fill="${lit||'#9bb4d8'}">k${k}</text>`; }
+  }
+
+  // snake 路径（蛇形顺序 #0→#${GM*GN-1}，逐列折返；箭头示方向）
+  g+=`<defs><marker id="snk" markerWidth="7" markerHeight="7" refX="3.5" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="${COL.clc}"/></marker></defs>`;
+  let path='';
+  SNAKE.forEach((s,i)=>{ const x=x0+s.c*cw+(cw-4)/2, y=y0+s.r*ch+(ch-4)/2; path+=(i===0?'M':'L')+x+','+y+' '; });
+  g+=`<path d="${path}" fill="none" stroke="${COL.clc}" stroke-width="1.5" stroke-dasharray="3 3" opacity="0.72" marker-mid="url(#snk)" marker-end="url(#snk)"/>`;
+
+  // C tiles（标出正在载入/计算的 tile）
+  for(const s of SNAKE){
+    const x=x0+s.c*cw, y=y0+s.r*ch, ord=s.idx, ours=ord<NT;
+    const state= ours?(ord<ct?'done':(ord===ct?'cur':'next')):'other';
+    let fill='#f4f7fb',stroke='#d7dee7',tcol='#aeb8c4';
+    if(state==='done'){fill=lighten(COL.clc,.16);stroke=COL.clc;tcol=COL.clc;}
+    else if(state==='cur'){fill=lighten(COL.hl,.24);stroke=COL.hl;tcol=COL.hl;}
+    else if(state==='next'){fill=lighten(COL.clc,.07);stroke=lighten(COL.clc,.5);tcol=COL.clc;}
+    g+=`<rect x="${x}" y="${y}" width="${cw-4}" height="${ch-4}" rx="4" fill="${fill}" stroke="${stroke}" stroke-width="${state==='cur'?2.6:1.2}"/>`;
+    g+=`<text x="${x+(cw-4)/2}" y="${y+(ch-4)/2-2}" text-anchor="middle" style="font-size:7.6px;font-weight:800" fill="${tcol}">(${s.r},${s.c})</text>`;
+    g+=`<text x="${x+(cw-4)/2}" y="${y+(ch-4)/2+8}" text-anchor="middle" style="font-size:6px" fill="${tcol}">#${ord}</text>`;
+    if(state==='done') g+=`<text x="${x+cw-12}" y="${y+10}" style="font-size:8px;font-weight:800" fill="${COL.ready}">✓</text>`;
+    if(state==='cur') g+=progBar(x+3, y+ch-9, cw-10, 3, tileProg(t,ord), COL.hl);
+    if(la && ord===la.tile && state!=='cur'){
+      g+=`<rect x="${x-1}" y="${y-1}" width="${cw-2}" height="${ch-2}" rx="5" fill="none" stroke="${COL.load}" stroke-width="2" stroke-dasharray="3 2"/>`;
+      g+=`<text x="${x+(cw-4)/2}" y="${y+ch-8}" text-anchor="middle" style="font-size:6px;font-weight:800" fill="${COL.load}">载入中</text>`; }
+  }
+
+  // 说明
+  const ny=y0+GM*ch+15;
+  const note=(yy,col,txt)=>{ g+=`<circle cx="16" cy="${yy-3}" r="3.1" fill="${col}"/><text x="25" y="${yy}" style="font-size:7.8px" fill="#445">${txt}</text>`; };
+  note(ny,    COL.clc, `planar-snake：tile_id 按蛇形(逐带折返)映射到 (pid_m,pid_n)，紫虚线即 #0→#${GM*GN-1} 顺序`);
+  note(ny+14, COL.B,  `相邻 id 在空间相邻 → 只换 A 行块或 B 列块、另一个不变 → 留 L2 命中（替代行优先扫）`);
+  note(ny+28, COL.load,`② 此刻载入 ${la?`A${lRC.r}·B${lRC.c}·k${la.k}`:'—'} → 对应 A/B·k 片亮青`);
+  note(ny+42, COL.mma, `② 此刻计算 ${ma?`A${mRC.r}·B${mRC.c}·k${ma.k}`:'—'} → 亮粉；橙框=当前输出 tile (${cell.r},${cell.c})`);
+  g+=`<text x="10" y="${ny+58}" style="font-size:7.2px;font-style:italic" fill="#7a8694">演示前 ${NT} 个同在第 0 列→共用 B 列块0；真实按 GRID_TILE_WIDTH=16 分带折返（小网格此处退化为整列）。</text>`;
+  $('clcWrap').innerHTML=`<svg class="full" viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+
+/* ============================================================
+   ② 分区 · 缓冲 · barrier 数据流
+   ============================================================ */
+function renderFlow(t){
+  const a=activeBlks(t);
+  const on={clc:!!a.find(b=>b.lane==='clc'), load:!!a.find(b=>b.lane==='load'),
+            mma:!!a.find(b=>b.lane==='mma'), epi:!!a.find(b=>b.lane==='epi')};
+  // 缓冲占用：已载入但未被 MMA 消费完 = loads完成 − mma完成
+  const loadsFin=BLK.filter(b=>b.lane==='load'&&b.t1<=t).length;
+  const mmaFin=BLK.filter(b=>b.lane==='mma'&&b.t1<=t).length;
+  const abOcc=Math.max(0,Math.min(STAGES,loadsFin-mmaFin));
+  // acc 占用：从该 tile 的 MMA 开始写 到 epilogue 读完(acc_empty) 之间（含正在累加）
+  let accOcc=0;
+  for(let tl=0;tl<NT;tl++){
+    const ms=BLK.filter(b=>b.lane==='mma'&&b.tile===tl);
+    const epi=BLK.find(b=>b.lane==='epi'&&b.tile===tl);
+    if(ms.length && epi){
+      const start=Math.min(...ms.map(b=>b.t0));
+      if(t>=start && t<epi.t1) accOcc++;
+    }
+  }
+  accOcc=Math.min(ACC,accOcc);
+  const ct=curTile(t), cell=SNAKE[ct];
+
+  const W=660,H=356;
+  let g=`<defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#9fb0c0"/></marker>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${COL.ready}"/></marker>
+    <marker id="ac" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${COL.clc}"/></marker>
+  </defs>`;
+
+  // 主流水模块
+  const GM_={x:8,y:150,w:62,h:84};      // GMEM A/B
+  const LD ={x:86,y:150,w:78,h:84};     // Load(TMA)
+  const AB ={x:180,y:150,w:150,h:84};   // a/b bufs ×STAGES
+  const MM ={x:346,y:150,w:88,h:84};    // MMA(Core)
+  const AC ={x:448,y:150,w:74,h:84};    // acc ×ACC
+  const EP ={x:530,y:150,w:86,h:84};    // Epilogue
+  const CLCB={x:86,y:36,w:530,h:74};    // CLC 分区（顶）
+
+  // 分区领地框（虚线）
+  const terr=(x,y,w,h,col,name,active)=>{
+    g+=`<rect x="${x-6}" y="${y-20}" width="${w+12}" height="${h+26}" rx="11" fill="${active?lighten(col,.05):'none'}" stroke="${col}" stroke-width="1.4" stroke-dasharray="7 5"/>`;
+    g+=`<rect x="${x-3}" y="${y-19}" width="${name.length*7+18}" height="14" rx="7" fill="${col}"/>`;
+    g+=`<text x="${x-3+(name.length*7+18)/2}" y="${y-8.5}" text-anchor="middle" style="font-size:9px;font-weight:800" fill="#fff">${name}</text>`;
+  };
+  terr(LD.x,LD.y,LD.w,LD.h,COL.load,'Load 分区',on.load);
+  terr(MM.x,MM.y,MM.w,MM.h,COL.mma,'MMA 分区',on.mma);
+  terr(EP.x,EP.y,EP.w,EP.h,COL.epi,'Epilogue 分区',on.epi);
+
+  // 连线
+  const arr=(x1,y1,x2,y2,active,col)=>`<path d="M${x1},${y1} L${x2},${y2}" fill="none" stroke="${active?col:'#c4cedb'}" stroke-width="${active?2.6:1.4}" marker-end="url(#ah)" ${active?'class="flow"':''}/>`;
+  g+=arr(GM_.x+GM_.w,191, LD.x,191, on.load,COL.load);
+  g+=arr(LD.x+LD.w,191, AB.x,191, on.load,COL.load);
+  g+=arr(AB.x+AB.w,191, MM.x,191, on.mma,COL.mma);
+  g+=arr(MM.x+MM.w,191, AC.x,191, on.mma,COL.mma);
+  g+=arr(AC.x+AC.w,191, EP.x,191, on.epi,COL.epi);
+  g+=arr(EP.x+EP.w,191, EP.x+EP.w+24,191, on.epi,COL.epi);
+  g+=`<text x="${EP.x+EP.w+22}" y="186" text-anchor="end" style="font-size:8px;font-weight:700" fill="${COL.epi}">→ C(HBM)</text>`;
+  // barrier 标签
+  const blab=(x,txt,col)=>{ g+=`<text x="${x}" y="240" text-anchor="middle" style="font-size:7.4px;font-weight:700" fill="${col}">${txt}</text>`; };
+  blab((AB.x+MM.x)/2+4,'load_ready ▸',COL.ready);
+  blab((MM.x+AC.x)/2,'acc_ready ▸',COL.ready);
+  blab((LD.x+AB.x)/2,'load_empty ◂',COL.empty);
+  blab((AC.x+EP.x)/2,'acc_empty ◂',COL.empty);
+
+  // 模块盒
+  const box=(m,col,active,lines)=>{
+    g+=`<rect x="${m.x}" y="${m.y}" width="${m.w}" height="${m.h}" rx="9" fill="${active?lighten(col,.16):'#f8fafc'}" stroke="${active?col:'#b5c2d0'}" stroke-width="${active?2.6:1.4}"/>`;
+    let ty=m.y+(lines.length>1?20:m.h/2+4);
+    lines.forEach((ln,i)=>{ g+=`<text x="${m.x+m.w/2}" y="${ty}" text-anchor="middle" style="font-size:${i===0?9.2:7.6}px;font-weight:${i===0?800:600}" fill="${i===0?(active?col:'#1c2733'):'#5b6b7d'}">${ln}</text>`; ty+=i===0?13:11; });
+  };
+  box(GM_,COL.gmem,on.load,['HBM','A · B']);
+  box(LD,COL.load,on.load,['TMA','multicast']);
+  box(MM,COL.mma,on.mma,['Tensor','Core','2-CTA']);
+  box(EP,COL.epi,on.epi,['store','subtile']);
+
+  // a 缓冲 / b 缓冲：各 STAGES 深的独立池；每个 K 步同时载入 A 片与 B 片（两池同步占用）
+  const abSlot=new Array(STAGES).fill(null);
+  for(let gg=0;gg<NL;gg++){ const s=gg%STAGES;
+    if(t>=_lS[gg] && t<_mE[gg]) abSlot[s]={tile:Math.floor(gg/KS), k:gg%KS,
+      ph: t<_lE[gg]?'load':(t>=_mS[gg]?'mma':'ready'), p:(t-_lS[gg])/(_lE[gg]-_lS[gg])}; }
+  const abN=abSlot.filter(Boolean).length;
+  g+=`<rect x="${AB.x}" y="${AB.y}" width="${AB.w}" height="${AB.h}" rx="9" fill="#f8fafc" stroke="#b5c2d0" stroke-width="1.4"/>`;
+  g+=`<text x="${AB.x+AB.w/2}" y="${AB.y+11}" text-anchor="middle" style="font-size:7.2px;font-weight:800" fill="#1c2733">a 缓冲 ×${STAGES} · b 缓冲 ×${STAGES}（各一池，占用 ${abN}）</text>`;
+  const lblW=10, slotW=(AB.w-12-lblW-(STAGES-1)*3)/STAGES;
+  const drawRow=(rowY,rh,kind)=>{
+    const col=kind==='a'?COL.A:COL.B;
+    g+=`<text x="${AB.x+4}" y="${rowY+rh/2+3}" style="font-size:8px;font-weight:800" fill="${col}">${kind}</text>`;
+    for(let s=0;s<STAGES;s++){
+      const sx=AB.x+6+lblW+s*(slotW+3), d=abSlot[s];
+      const st=d?(d.ph==='load'?COL.load:(d.ph==='mma'?COL.mma:col)):'#cfd8e3';
+      g+=`<rect x="${sx}" y="${rowY}" width="${slotW}" height="${rh}" rx="2.5" fill="${d?lighten(col,.16):'#eef2f7'}" stroke="${st}" stroke-width="${d?(d.ph==='ready'?1.2:2.2):0.8}"/>`;
+      if(d){ const sc=SNAKE[d.tile];
+        g+=`<text x="${sx+slotW/2}" y="${rowY+12}" text-anchor="middle" style="font-size:6.4px;font-weight:800" fill="${col}">${kind==='a'?'A'+sc.r:'B'+sc.c}</text>`;
+        g+=`<text x="${sx+slotW/2}" y="${rowY+rh-4}" text-anchor="middle" style="font-size:5.8px;font-weight:700" fill="#566">k${d.k}</text>`;
+        if(d.ph==='load') g+=progBar(sx+1.5, rowY+rh-2.2, slotW-3, 1.8, d.p, COL.load);
+      } else g+=`<text x="${sx+slotW/2}" y="${rowY+rh/2+2}" text-anchor="middle" style="font-size:5.4px" fill="#aeb8c4">空</text>`;
+    }
+  };
+  drawRow(AB.y+15, 28, 'a');     // 上排：A 片（A 行块·k）
+  drawRow(AB.y+46, 28, 'b');     // 下排：B 片（B 列块·k）
+
+  // acc 缓冲（ACC 槽）—— 每槽=某 tile 的 C 部分和
+  const accSlot=new Array(ACC).fill(null);
+  for(let tl=0;tl<NT;tl++){ const s=tl%ACC;
+    const ms=BLK.filter(b=>b.lane==='mma'&&b.tile===tl), epi=BLK.find(b=>b.lane==='epi'&&b.tile===tl);
+    if(!ms.length||!epi) continue;
+    const start=Math.min(...ms.map(b=>b.t0)), lastE=Math.max(...ms.map(b=>b.t1));
+    if(t>=start && t<epi.t1){ accSlot[s]={tile:tl, kdone:ms.filter(b=>b.t1<=t).length, K:ms.length,
+      ph: t<lastE?'mma':(t>=epi.t0?'epi':'ready')}; } }
+  g+=`<rect x="${AC.x}" y="${AC.y}" width="${AC.w}" height="${AC.h}" rx="9" fill="#f8fafc" stroke="#b5c2d0" stroke-width="1.4"/>`;
+  g+=`<text x="${AC.x+AC.w/2}" y="${AC.y+12}" text-anchor="middle" style="font-size:7.4px;font-weight:800" fill="${COL.acc}">acc ×${ACC} · C 部分和</text>`;
+  const aw=(AC.w-12-(ACC-1)*4)/ACC, asy=AC.y+18, ash=AC.h-30;
+  for(let s=0;s<ACC;s++){
+    const sx=AC.x+6+s*(aw+4), d=accSlot[s], tc=d?TCOL[d.tile%3]:'#cfd8e3';
+    g+=`<rect x="${sx}" y="${asy}" width="${aw}" height="${ash}" rx="3" fill="${d?lighten(tc,.26):'#eef2f7'}" stroke="${d?tc:'#cfd8e3'}" stroke-width="${d?1.6:1}"/>`;
+    if(d){ const sc=SNAKE[d.tile];
+      g+=`<text x="${sx+aw/2}" y="${asy+11}" text-anchor="middle" style="font-size:6.6px;font-weight:800" fill="${COL.acc}">C 块</text>`;
+      g+=`<text x="${sx+aw/2}" y="${asy+21}" text-anchor="middle" style="font-size:6.4px;font-weight:800" fill="${COL.acc}">(${sc.r},${sc.c})</text>`;
+      g+=`<text x="${sx+aw/2}" y="${asy+31}" text-anchor="middle" style="font-size:5.8px;font-weight:700" fill="#566">Σk ${d.kdone}/${d.K}</text>`;
+      g+=progBar(sx+2, asy+ash-11, aw-4, 2.6, d.kdone/d.K, COL.acc);
+      const pt={mma:'累加中',ready:'待写回',epi:'写回中'}[d.ph];
+      g+=`<text x="${sx+aw/2}" y="${asy+ash-3}" text-anchor="middle" style="font-size:5.4px;font-weight:700" fill="${d.ph==='epi'?COL.epi:COL.acc}">${pt}</text>`;
+    } else g+=`<text x="${sx+aw/2}" y="${asy+ash/2+3}" text-anchor="middle" style="font-size:6px" fill="#aeb8c4">空</text>`;
+    g+=`<text x="${sx+aw/2}" y="${AC.y+AC.h-2.5}" text-anchor="middle" style="font-size:5.2px" fill="#9aa7b4">#${s}</text>`;
+  }
+
+  // CLC 分区（顶）+ 广播
+  g+=`<rect x="${CLCB.x-6}" y="${CLCB.y-6}" width="${CLCB.w+12}" height="${CLCB.h+12}" rx="11" fill="${on.clc?lighten(COL.clc,.06):'#fbfaff'}" stroke="${COL.clc}" stroke-width="1.5" stroke-dasharray="7 5"/>`;
+  g+=`<text x="${CLCB.x+10}" y="${CLCB.y+15}" style="font-size:9.4px;font-weight:800" fill="${COL.clc}">CLC 分区（集群里只此分区做调度决定）</text>`;
+  g+=`<text x="${CLCB.x+10}" y="${CLCB.y+30}" style="font-size:7.4px" fill="#6b4b8a">① <tspan font-weight="700">try_cancel 抢单</tspan>：对集群共享「工作队列」原子领下一个 tile_id —— 谁先空闲谁领到，动态负载均衡（替代静态 grid 步进）</text>`;
+  g+=`<text x="${CLCB.x+10}" y="${CLCB.y+45}" style="font-size:7.4px" fill="#6b4b8a">② planar_snake(tile_id) → (pid_m,pid_n)，打包成一个 int64</text>`;
+  g+=`<text x="${CLCB.x+10}" y="${CLCB.y+60}" style="font-size:7.4px" fill="#6b4b8a">③ <tspan font-weight="700">广播</tspan>：写 clc_planar 共享缓冲 + 触发 barrier → 本集群全部 CTA 读到同一 tile（当前 #${ct} = pid(${cell.r},${cell.c})）</text>`;
+  // 广播虚线到 3 个消费分区
+  [LD,MM,EP].forEach(m=>{
+    g+=`<path d="M${m.x+m.w/2},${CLCB.y+CLCB.h} L${m.x+m.w/2},${m.y-20}" fill="none" stroke="${COL.clc}" stroke-width="1.4" stroke-dasharray="4 3" opacity="${on.clc?0.95:0.5}" marker-end="url(#ac)"/>`;
+  });
+
+  // 底部说明
+  g+=`<text x="8" y="298" style="font-size:7.4px;font-weight:700" fill="${COL.load}">a 缓冲、b 缓冲各 ×${STAGES} 深：每个 K 步同时取 A[行块,kᵢ] 与 B[kᵢ,列块]，两者都按 K 流式、均不常驻 SMEM。</text>`;
+  g+=`<text x="8" y="310" style="font-size:7.2px;font-weight:700" fill="#8a6d1f">B 的“常驻”发生在 L2（跨 tile 复用同一 B 列块，见 ①）—— 与这里 SMEM 的 a/b 双流缓冲是两个层级，别混。</text>`;
+  g+=`<text x="8" y="322" style="font-size:7.4px;font-weight:700" fill="${COL.acc}">acc ×${ACC}：当前 tile 的 C 部分和 Σₖ A·B（TMEM 累加）；双缓冲 → MMA 写 tile i 时 Epilogue 读 tile i−1。</text>`;
+  g+=`<text x="8" y="334" style="font-size:7.2px;font-weight:700" fill="#445">4 分区由 mbarrier 接力（load_ready/empty · acc_ready/empty · clc）；init 在 warp_specialize 前完成。</text>`;
+  g+=`<text x="8" y="346" style="font-size:7.2px;font-style:italic" fill="#7a8694">对比第五部分：单缓冲串行不重叠；这里专精+深缓冲铺满各阶段 → Speed of Light。</text>`;
+
+  $('flowWrap').innerHTML=`<svg class="full" viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+
+/* ============================================================
+   ③ 流水线时间线（4 泳道）
+   ============================================================ */
+const TL={padL:120,padR:24,top:30,sx:70,laneH:46,gap:10};
+const laneY=i=>TL.top + i*(TL.laneH+TL.gap);
+const LANES=[
+  {id:'clc', name:'CLC',     sub:'try_cancel 领 tile', c:COL.clc},
+  {id:'load',name:'Load',    sub:'TMA 多播·深缓冲',     c:COL.load},
+  {id:'mma', name:'MMA',     sub:'tcgen05 累加',        c:COL.mma},
+  {id:'epi', name:'Epilogue',sub:'subtile 写回',        c:COL.epi},
+];
+const xOf=t=>TL.padL+t*TL.sx;
+const laneIdx=id=>LANES.findIndex(l=>l.id===id);
+const TCOL=['#2563eb','#0d9488','#d97706'];   // tile 配色（0/1/2）
+function renderTL(t){
+  const W=xOf(TMAX)+TL.padR, H=laneY(LANES.length)+24;
+  let g=`<defs><marker id="aR" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${COL.ready}"/></marker></defs>`;
+  // 泳道
+  LANES.forEach((l,i)=>{
+    const y=laneY(i);
+    g+=`<rect x="${TL.padL}" y="${y}" width="${W-TL.padL-TL.padR}" height="${TL.laneH}" rx="6" fill="${lighten(l.c,.04)}" stroke="#eef2f7"/>`;
+    g+=`<text x="10" y="${y+TL.laneH/2-1}" style="font-size:11.5px;font-weight:800" fill="${l.c}">${l.name}</text>`;
+    g+=`<text x="10" y="${y+TL.laneH/2+12}" style="font-size:8px" fill="#8a98a8">${l.sub}</text>`;
+  });
+  // 时间刻度
+  for(let s=0;s<=TMAX;s++){ g+=`<line x1="${xOf(s)}" y1="${TL.top-6}" x2="${xOf(s)}" y2="${laneY(LANES.length)-4}" stroke="#eef2f7"/>`;
+    if(s%2===0) g+=`<text x="${xOf(s)}" y="${TL.top-8}" text-anchor="middle" style="font-size:7.6px" fill="#9aa7b4">${s}</text>`; }
+
+  // 同步箭头：clc→load(首)、load_ready load→mma、acc_ready mma(末)→epi
+  const blkOf=(lane,tile,k)=>BLK.find(b=>b.lane===lane&&b.tile===tile&&(k===undefined||b.k===k));
+  const sync=(p,q,col)=>{
+    if(!p||!q) return;
+    const y1=laneY(laneIdx(p.lane))+TL.laneH, x1=xOf(p.t1);
+    const y2=laneY(laneIdx(q.lane)), x2=xOf(q.t0);
+    const active = t>=p.t1-1e-6 && t<q.t0+0.4;
+    g+=`<path d="M${x1},${y1-6} C${x1},${(y1+y2)/2} ${x2},${(y1+y2)/2} ${x2},${y2+2}" fill="none" stroke="${col}" stroke-width="${active?2.2:1}" opacity="${active?1:0.32}" marker-end="url(#aR)" ${active?'class="flow"':''}/>`;
+  };
+  for(let tl=0;tl<NT;tl++){
+    sync(blkOf('clc',tl), blkOf('load',tl,0), COL.clc);
+    sync(blkOf('mma',tl,KS-1), blkOf('epi',tl), COL.ready);
+    for(let k=0;k<KS;k++) sync(blkOf('load',tl,k), blkOf('mma',tl,k), COL.ready);
+  }
+
+  // 忙块
+  BLK.forEach(b=>{
+    const y=laneY(laneIdx(b.lane))+6, h=TL.laneH-12, x=xOf(b.t0), w=xOf(b.t1)-xOf(b.t0);
+    const active=t>=b.t0-1e-6&&t<b.t1-1e-6, done=t>=b.t1-1e-6;
+    const tc=TCOL[b.tile%3];
+    g+=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="5" fill="${lighten(tc,active?0.4:(done?0.18:0.1))}" stroke="${active?COL.hl:tc}" stroke-width="${active?2.4:1.2}"/>`;
+    const p=Math.max(0,Math.min(1,(t-b.t0)/(b.t1-b.t0)));
+    if(p>0&&p<1) g+=`<rect x="${x}" y="${y+h-4}" width="${(w*p).toFixed(1)}" height="3" rx="1.5" fill="${COL.hl}"/>`;
+    let lab = b.kind==='clc'?`领 t${b.tile}`:b.kind==='load'?`ld t${b.tile}k${b.k}`:b.kind==='mma'?`mma t${b.tile}k${b.k}`:`store t${b.tile}`;
+    if(w>30) g+=`<text x="${x+w/2}" y="${y+h/2+3}" text-anchor="middle" style="font-size:7.6px;font-weight:700" fill="${tc}">${lab}</text>`;
+  });
+
+  // 重叠竖条（当前 tick 多分区并发）
+  const nAct=activeBlks(t).length;
+  const px=xOf(t);
+  g+=`<line x1="${px}" y1="${TL.top-10}" x2="${px}" y2="${laneY(LANES.length)-2}" stroke="${COL.hl}" stroke-width="2" stroke-dasharray="3 3"/>`;
+  g+=`<polygon points="${px-5},${TL.top-10} ${px+5},${TL.top-10} ${px},${TL.top-3}" fill="${COL.hl}"/>`;
+  g+=`<text x="${px+6}" y="${TL.top-4}" style="font-size:8px;font-weight:800" fill="${COL.hl}">${nAct} 分区并发</text>`;
+
+  $('tlWrap').innerHTML=`<svg class="full" id="tlsvg" viewBox="0 0 ${W} ${H}">${g}</svg>`;
+}
+
+/* ============================================================
+   驱动
+   ============================================================ */
+function renderReadout(t){
+  const a=activeBlks(t), names={clc:'CLC',load:'Load',mma:'MMA',epi:'Epilogue'};
+  const busy=[...new Set(a.map(b=>names[b.lane]))];
+  $('readout').innerHTML=`<b>tick ${t.toFixed(1)}</b> · 当前 tile <code>#${curTile(t)}</code> · 并发分区：`+
+    (busy.length?busy.map(n=>`<code>${n}</code>`).join(' '):'—')+
+    ` 。warp 专精让 ${busy.length} 个分区<b>同时</b>推进（深缓冲 + CLC 持久调度）→ 逼近 Speed of Light。`;
+}
+let tick=0, playing=false, raf=null, last=0;
+function setTick(t){ tick=Math.max(0,Math.min(TMAX,t)); draw(); }
+function draw(){
+  $('tkval').textContent=tick.toFixed(1);
+  renderCLC(tick); renderFlow(tick); renderTL(tick); renderReadout(tick);
+}
+function loop(ts){ if(!playing) return; if(!last) last=ts;
+  const dt=(ts-last)/1000; last=ts; tick+=dt*1.3;
+  if(tick>=TMAX){ tick=TMAX; playing=false; $('playBtn').textContent='▶ 重播'; draw(); return; }
+  draw(); raf=requestAnimationFrame(loop);
+}
+$('playBtn').onclick=()=>{ if(playing){ playing=false; $('playBtn').textContent='▶ 播放'; if(raf)cancelAnimationFrame(raf); return; }
+  if(tick>=TMAX) tick=0; playing=true; last=0; $('playBtn').textContent='⏸ 暂停'; raf=requestAnimationFrame(loop); };
+const stop=()=>{ playing=false; $('playBtn').textContent='▶ 播放'; if(raf)cancelAnimationFrame(raf); };
+$('stepF').onclick=()=>{ stop(); setTick(Math.floor(tick+1)); };
+$('stepB').onclick=()=>{ stop(); setTick(Math.ceil(tick-1)); };
+$('resetB').onclick=()=>{ stop(); setTick(0); };
+
+/* 拖动 scrub */
+function tickFromEvent(e){ const sv=$('tlsvg'); if(!sv) return tick;
+  const r=sv.getBoundingClientRect(), W=xOf(TMAX)+TL.padR, sc=W/r.width;
+  const cx=(e.touches?e.touches[0].clientX:e.clientX), xx=(cx-r.left)*sc;
+  return Math.max(0,Math.min(TMAX,(xx-TL.padL)/TL.sx)); }
+let scrubbing=false; const wrap=$('tlWrap'); wrap.style.cursor='ew-resize';
+wrap.addEventListener('pointerdown',e=>{ stop(); scrubbing=true; try{wrap.setPointerCapture(e.pointerId);}catch(_){}; setTick(tickFromEvent(e)); e.preventDefault(); });
+window.addEventListener('pointermove',e=>{ if(scrubbing){ setTick(tickFromEvent(e)); e.preventDefault(); } });
+window.addEventListener('pointerup',()=>{ scrubbing=false; });
+window.addEventListener('pointercancel',()=>{ scrubbing=false; });
+
+$('tkmax').textContent=TMAX.toFixed(0);
+draw();
+</script>
+</body>
+</html>

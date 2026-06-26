@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Block-Scaled MMA 数据表示可视化</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --panel:#ffffff; --panel2:#fafbfc; --ink:#1f2430; --muted:#5b6472;
+    --fp4:#2563eb; --fp4b:#1d4ed8; --byte:#d97706; --scale:#059669; --line:#e4e7ec;
+    --accent:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:"Segoe UI",system-ui,"Microsoft YaHei",sans-serif;line-height:1.6}
+  header{padding:28px 32px 12px}
+  h1{margin:0 0 6px;font-size:24px}
+  .sub{color:var(--muted);font-size:14px}
+  main{padding:8px 26px 60px;max-width:1820px;margin:0 auto;
+       display:grid;gap:16px;align-items:start;
+       grid-template-columns:320px minmax(0,1fr) minmax(0,1fr);
+       grid-template-areas:
+         "ctl axis block"
+         "why why   why"
+         "shape shape shape"
+         "cons cons cons";}
+  main > .panel{margin:0}
+  #pCtl{grid-area:ctl;position:sticky;top:12px}
+  #pAxis{grid-area:axis}
+  #pBlock{grid-area:block}
+  #pWhy{grid-area:why}
+  #pShape{grid-area:shape}
+  #pCons{grid-area:cons}
+  @media(max-width:1180px){
+    main{grid-template-columns:1fr;
+         grid-template-areas:"ctl" "axis" "block" "why" "shape" "cons";}
+    #pCtl{position:static}
+  }
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:14px;
+         padding:20px 22px;margin:18px 0;box-shadow:0 1px 2px rgba(16,24,40,.04)}
+  .panel h2{margin:0 0 4px;font-size:17px;display:flex;align-items:center;gap:10px}
+  .tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:6px;letter-spacing:.5px}
+  .tag.s{background:rgba(16,185,129,.15);color:var(--scale);border:1px solid rgba(16,185,129,.4)}
+  .tag.p{background:rgba(245,158,11,.15);color:var(--byte);border:1px solid rgba(245,158,11,.4)}
+  .desc{color:var(--muted);font-size:14px;margin:6px 0 16px}
+  code{background:#f3f4f7;padding:1px 6px;border-radius:5px;color:#6d28d9;font-size:13px}
+
+  /* controls */
+  .controls{display:flex;gap:22px;flex-wrap:wrap;align-items:center}
+  .ctl{display:flex;flex-direction:column;gap:4px}
+  .ctl label{font-size:12px;color:var(--muted)}
+  select,input[type=number]{background:#ffffff;color:var(--ink);border:1px solid var(--line);
+       border-radius:8px;padding:7px 10px;font-size:14px;min-width:130px}
+  .derived{display:flex;gap:14px;flex-wrap:wrap;margin-top:4px}
+  .chip{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 14px;font-size:13px}
+  .chip b{color:var(--ink)} .chip span{color:var(--muted)}
+  .chip .num{color:var(--accent);font-weight:700;font-size:15px}
+
+  /* K-axis diagram */
+  .scrollx{overflow-x:auto;padding:10px 2px 4px;border-radius:10px;background:#fafbfc;border:1px solid var(--line)}
+  .grid{display:grid;gap:0;width:max-content;margin:0 auto}
+  .rowlabel{font-size:12px;color:var(--muted);margin:14px 0 6px;display:flex;align-items:center;gap:8px}
+  .swatch{width:12px;height:12px;border-radius:3px;display:inline-block}
+  .cell{height:30px;display:flex;align-items:center;justify-content:center;
+        font-size:11px;border:1px solid rgba(0,0,0,.35);user-select:none}
+  .el{background:var(--fp4);color:#fff}
+  .el.alt{background:var(--fp4b)}
+  .byte{background:var(--byte);color:#1a1205;font-weight:700;border:1px solid #00000055}
+  .scale{background:var(--scale);color:#04130d;font-weight:700;border:1px solid #00000055}
+  .axis{font-size:10px;color:var(--muted);height:16px;display:flex;align-items:center;justify-content:center}
+
+  table{border-collapse:collapse;width:100%;font-size:13.5px;margin-top:6px}
+  th,td{border:1px solid var(--line);padding:8px 12px;text-align:left}
+  th{background:var(--panel2);color:var(--muted);font-weight:600}
+  td code{font-size:12.5px}
+  .why{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:760px){.why{grid-template-columns:1fr}}
+  .card{background:var(--panel2);border:1px solid var(--line);border-radius:12px;padding:16px 18px}
+  .card h3{margin:0 0 8px;font-size:15px}
+  .formula{font-family:"Consolas",monospace;background:#faf5ff;border:1px dashed #d6bcfa;
+           border-radius:8px;padding:10px 12px;font-size:14px;color:#6d28d9;margin:8px 0}
+  .bits{display:flex;gap:3px;margin:8px 0}
+  .bit{width:30px;height:34px;border-radius:5px;display:flex;align-items:center;justify-content:center;
+       font-family:monospace;font-size:12px;flex-direction:column;border:1px solid #00000055}
+  .bit small{font-size:8px;opacity:.85}
+  .sign{background:#ef4444;color:#fff} .exp{background:#8b5cf6;color:#fff} .man{background:#06b6d4;color:#04222a}
+  .note{font-size:12.5px;color:var(--muted);margin-top:8px}
+  .kbd{font-family:monospace;background:#f3f4f7;border:1px solid var(--line);border-bottom-width:2px;
+       border-radius:5px;padding:1px 6px;font-size:12px}
+
+  /* 2D A/B block */
+  .grid2{display:grid;gap:0;width:max-content;margin:2px 0}
+  .c2{height:22px;border:1px solid #e8ebf0;cursor:pointer}
+  .c2.p0{background:#d7e4ff}
+  .c2.p1{background:#eef3ff}
+  .c2.bb{border-right:2px solid #e6a23c}      /* 字节边界 // 2 */
+  .c2.sb{border-right:3px solid #2563eb}      /* scale 边界 // VEC_SIZE */
+  .c2.lit{background:#bbf7d0;border-top:3px solid #059669;border-bottom:3px solid #059669}
+  .c2.bandL{border-left:3px solid #059669}
+  .c2.bandR{border-right:3px solid #059669}
+  .c2.litB{background:#fcd34d}                /* 悬停元素所在字节 */
+  .rowtag{height:22px;display:flex;align-items:center;justify-content:flex-end;
+          padding-right:8px;font-size:11px;color:var(--muted)}
+  .sc{height:22px;display:flex;align-items:center;justify-content:center;font-size:11px;
+      background:#e9f8f1;border:1px solid #c4ecdb;color:#047857;font-weight:600;cursor:pointer}
+  .sc.litS{background:#34d399;color:#053d2b;border-color:#059669}
+  .colhdr{font-size:10px;color:var(--muted);display:flex;align-items:center;justify-content:center;height:16px}
+  .leg2{display:flex;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--muted);margin:10px 0 4px}
+  .leg2 i{width:14px;height:14px;border-radius:3px;display:inline-block;vertical-align:-2px;margin-right:5px}
+  #rd2{font-size:13px;color:var(--ink);background:#f3f4f7;border:1px solid var(--line);
+       border-radius:8px;padding:8px 12px;margin-top:10px;min-height:20px}
+  .dual{display:flex;flex-direction:column;gap:14px}
+  .blktitle{font-size:13px;font-weight:700;margin-bottom:5px}
+</style>
+</head>
+<body>
+<header>
+  <h1>Block-Scaled MMA 的数据表示</h1>
+  <div class="sub">为什么是 <code>K // VEC_SIZE</code>，为什么是 <code>K // 2</code> —— 同一根 K 轴上发生的两件独立的事</div>
+</header>
+
+<main>
+
+  <!-- 控制台 -->
+  <div class="panel" id="pCtl">
+    <h2>① 交互参数</h2>
+    <div class="desc">改变量化格式和 K，下面所有图和 shape 会跟着重算。</div>
+    <div class="controls">
+      <div class="ctl">
+        <label>量化格式 (operand)</label>
+        <select id="fmt">
+          <option value="mxfp4">mxfp4 (fp4 + e8m0 scale)</option>
+          <option value="nvfp4">nvfp4 (fp4 + e4m3 scale)</option>
+          <option value="mxfp8">mxfp8 (fp8 + e8m0 scale，不打包)</option>
+        </select>
+      </div>
+      <div class="ctl">
+        <label>逻辑 K（沿 reduction 维的元素个数）</label>
+        <input type="number" id="K" value="64" min="16" step="16">
+      </div>
+      <div class="ctl">
+        <label>M（A 的行数）</label>
+        <input type="number" id="M" value="128" min="1" step="1">
+      </div>
+      <div class="ctl">
+        <label>N（B 的行数）</label>
+        <input type="number" id="N" value="128" min="1" step="1">
+      </div>
+    </div>
+    <div class="derived" id="derived"></div>
+  </div>
+
+  <!-- K 轴三层对齐图 -->
+  <div class="panel" id="pAxis">
+    <h2>② K 轴的三层视图 <span class="tag p">// 2 = 打包</span> <span class="tag s">// VEC_SIZE = 量化</span></h2>
+    <div class="desc">
+      三行严格对齐，都是<strong>同一根 K 轴</strong>。最上面是逻辑元素；中间是它们在显存里的真实存储字节；
+      最下面是每个 scale 覆盖的范围。注意中间那行（<span style="color:var(--byte)">字节</span>）和最下面那行（<span style="color:var(--scale)">scale</span>）是
+      <strong>两套完全独立的分组</strong>。
+    </div>
+
+    <div class="rowlabel"><span class="swatch el"></span>逻辑元素 · 共 <b id="lblK">K</b> 个（fp4 / fp8）</div>
+    <div class="scrollx"><div class="grid" id="gElem"></div></div>
+
+    <div class="rowlabel"><span class="swatch byte"></span>存储字节 · uint8/fp8 · 每个 = <b id="lblEPB">2</b> 个元素 → 共 <b id="lblBytes">K/2</b> 个</div>
+    <div class="scrollx"><div class="grid" id="gByte"></div></div>
+
+    <div class="rowlabel"><span class="swatch scale"></span>Scale 因子 · 每个覆盖 <b id="lblVec">VEC_SIZE</b> 个元素 → 共 <b id="lblScales">K/VEC_SIZE</b> 个</div>
+    <div class="scrollx"><div class="grid" id="gScale"></div></div>
+
+    <div class="note" id="capNote"></div>
+  </div>
+
+  <!-- 为什么 -->
+  <div class="panel" id="pWhy">
+    <h2>③ 两个除法分别"为什么"</h2>
+    <div class="why">
+      <div class="card">
+        <h3><span class="tag p">// 2</span> &nbsp;打包 (packing) — 关于<b>存储</b></h3>
+        <p style="font-size:14px;color:var(--muted);margin:4px 0 0">
+          fp4 只有 <b>4 bit</b>，而内存最小可寻址单位是 1 字节 (8 bit)。Gluon 没有原生 fp4 存储类型，
+          于是<strong>沿 K 维把相邻 2 个 fp4 塞进 1 个 uint8</strong>（高 4 位 + 低 4 位）。
+        </p>
+        <div class="formula">storage_K = K / ELEM_PER_BYTE = K / (8 / bitwidth)</div>
+        <div class="bits">
+          <div class="bit sign">s<small>sign</small></div>
+          <div class="bit exp">e<small>exp</small></div>
+          <div class="bit exp">e<small>exp</small></div>
+          <div class="bit man">m<small>mant</small></div>
+          <div style="width:10px"></div>
+          <div class="bit sign">s</div><div class="bit exp">e</div><div class="bit exp">e</div><div class="bit man">m</div>
+        </div>
+        <div class="note">一个 uint8 = 两个 fp4 (<code>e2m1</code> = 1 符号 + 2 指数 + 1 尾数)。
+          所以 fp4 → <code>ELEM_PER_BYTE = 2</code>；fp8 已经是 8 bit → <code>ELEM_PER_BYTE = 1</code>，<b>不打包</b>。</div>
+      </div>
+
+      <div class="card">
+        <h3><span class="tag s">// VEC_SIZE</span> &nbsp;量化粒度 (scaling) — 关于<b>精度</b></h3>
+        <p style="font-size:14px;color:var(--muted);margin:4px 0 0">
+          block scaling 沿 K 把元素切成等长的块，<strong>每块 VEC_SIZE 个元素共用 1 个 scale 因子</strong>。
+          反量化时 scale 被广播乘到这 VEC_SIZE 个元素上。所以一行需要的 scale 个数 = K 除以块长。
+        </p>
+        <div class="formula">scale_K = K / VEC_SIZE</div>
+        <div class="note">VEC_SIZE 不是随便取的，由<strong>硬件支持的量化方案</strong>固定：
+          nvfp4 → <code>16</code>（NVIDIA 专有，scale 用 <code>float8_e4m3fn</code>）；
+          MX 格式 (mxfp4/mxfp8) → <code>32</code>（scale 用 <code>e8m0</code>，即 8 指数位 0 尾数位的 2 的幂）。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- shape 总表 -->
+  <div class="panel" id="pShape">
+    <h2>④ 最终 shape（当前参数）</h2>
+    <div class="desc">同一个张量有<strong>逻辑 shape</strong>（数学上的 M×K）和<strong>存储 shape</strong>（显存里 uint8 的实际形状），别混淆。</div>
+    <table id="shapeTbl"></table>
+    <div class="note">代码里对应：<code>A_ELEM_PER_BYTE = 2 if A_IS_FP4 else 1</code>；
+      <code>BLOCK_K = a_desc.block_type.shape[1] * A_ELEM_PER_BYTE</code>（descriptor 存的是字节维，乘回去才是逻辑 K）；
+      scale 的 K 偏移用 <code>k // VEC_SIZE</code>。</div>
+  </div>
+
+  <!-- A/B 2D 数据块 -->
+  <div class="panel" id="pBlock">
+    <h2>⑤ A / B 数据块：两种分组落在二维矩阵的哪里</h2>
+    <div class="desc">
+      把 K 轴铺成二维（行 = M 或 N，列 = K）。<strong>蓝深浅竖条</strong>是 scale 分组，每 <code>VEC_SIZE</code> 列一条
+      （蓝粗线 = <code>// VEC_SIZE</code> 边界）；<strong>琥珀细线</strong>是打包字节边界，每 <code>2</code> 列一根
+      （<code>// 2</code>，fp8 不打包则没有）。<b>把鼠标悬停在右侧某个 scale 方块</b>，左边会高亮它在原始数据里
+      影响的那一块 1×VEC_SIZE 区域；悬停某个元素，则同时高亮它所属的 scale 组和打包字节。
+    </div>
+    <div class="leg2">
+      <span><i style="background:#d7e4ff"></i>scale 组（交替深浅）</span>
+      <span><i style="background:#2563eb"></i>// VEC_SIZE 边界</span>
+      <span><i style="background:#e6a23c"></i>// 2 字节边界</span>
+      <span><i style="background:#bbf7d0;border:1px solid #059669"></i>悬停：scale 影响区</span>
+      <span><i style="background:#fcd34d"></i>悬停：元素所在字节</span>
+    </div>
+    <div class="dual">
+      <div>
+        <div class="blktitle" style="color:var(--fp4)">A operand · (M, K)</div>
+        <div class="scrollx"><div class="grid2" id="block2dA"></div></div>
+      </div>
+      <div>
+        <div class="blktitle" style="color:#0d9488">B operand · (N, K)</div>
+        <div class="scrollx"><div class="grid2" id="block2dB"></div></div>
+      </div>
+    </div>
+    <div id="rd2"></div>
+    <div class="note">每个 scale 只作用于<strong>自己这一行内</strong>连续 VEC_SIZE 个元素，<strong>不跨行、不跨 scale 组</strong>。
+      B operand 结构完全相同，只是行数是 <b>N</b>；区别仅在喂给 MMA 时 B 以转置 descriptor <code>b_smem.permute((1,0))</code> 传入，
+      其 scale 形状仍是 <code>[BLOCK_N, BLOCK_K//VEC_SIZE]</code>。</div>
+  </div>
+
+  <!-- 约束 -->
+  <div class="panel" id="pCons">
+    <h2>⑥ 受哪些约束才长这样</h2>
+    <table>
+      <tr><th>约束</th><th>取值 / 规则</th><th>来源</th></tr>
+      <tr><td>VEC_SIZE</td><td>nvfp4 = 16，mxfp4/mxfp8 = 32</td><td>硬件 <code>tcgen05_mma_scaled</code> 按固定粒度读 scale</td></tr>
+      <tr><td>scale dtype</td><td>nvfp4 → <code>float8_e4m3fn</code>；MX → <code>e8m0</code> (uint8)</td><td>量化方案定义</td></tr>
+      <tr><td>ELEM_PER_BYTE</td><td>fp4 = 2，fp8 = 1</td><td>= 8 / 位宽（字节可寻址）</td></tr>
+      <tr><td>打包方向</td><td>沿 <b>K（reduction）维</b>打包</td><td>惯例 + scale 也沿 K 分块，方向一致便于索引</td></tr>
+      <tr><td>BLOCK_K ≥ VEC_SIZE</td><td>tile 至少含 1 个完整 scale 块</td><td>scale 块不可再切分 (<code>assert BLOCK_K &gt;= VEC_SIZE</code>)</td></tr>
+      <tr><td>不能混用 scale 格式</td><td>nvfp4 不能和其它 MX 混</td><td><code>tcgen05_mma_scaled</code> 限制</td></tr>
+      <tr><td>混合精度 fp4 padding</td><td>mxfp8 × mxfp4 时 fp4 operand 在 smem 里要 padding，且 BLOCK_K ≥ 128</td><td>TMA swizzle 字节宽度 = 128 的要求</td></tr>
+    </table>
+  </div>
+
+</main>
+
+<script>
+const FMT = {
+  mxfp4:{bitwidth:4, vec:32, scaleDtype:"e8m0 (uint8)", isfp4:true},
+  nvfp4:{bitwidth:4, vec:16, scaleDtype:"float8_e4m3fn", isfp4:true},
+  mxfp8:{bitwidth:8, vec:32, scaleDtype:"e8m0 (uint8)", isfp4:false},
+};
+const MAX_CELLS = 64;          // 渲染上限，超出只画前 64 个元素
+const CW = 24;                  // 每个元素列宽 px
+
+const $ = id => document.getElementById(id);
+
+function render(){
+  const fmt = $("fmt").value;
+  const f = FMT[fmt];
+  let K = Math.max(parseInt($("K").value)||16, f.vec);
+  // 让 K 至少是 VEC_SIZE 与 2 的公倍数，避免半个块
+  K = Math.ceil(K / f.vec) * f.vec;
+  const M = Math.max(parseInt($("M").value)||1, 1);
+  const EPB = 8 / f.bitwidth;
+  const bytes = K / EPB;
+  const scales = K / f.vec;
+
+  // derived chips
+  $("derived").innerHTML = `
+    <div class="chip"><span>ELEM_PER_BYTE</span> <span class="num">${EPB}</span></div>
+    <div class="chip"><span>VEC_SIZE</span> <span class="num">${f.vec}</span></div>
+    <div class="chip"><span>scale dtype</span> <b>${f.scaleDtype}</b></div>
+    <div class="chip"><span>存储字节数 (K/${EPB})</span> <span class="num">${bytes}</span></div>
+    <div class="chip"><span>scale 个数 (K/${f.vec})</span> <span class="num">${scales}</span></div>`;
+
+  // labels
+  $("lblK").textContent = K;
+  $("lblEPB").textContent = EPB;
+  $("lblBytes").textContent = `K/${EPB} = ${bytes}`;
+  $("lblVec").textContent = f.vec;
+  $("lblScales").textContent = `K/${f.vec} = ${scales}`;
+
+  const shownK = Math.min(K, MAX_CELLS);
+  $("capNote").innerHTML = K > MAX_CELLS
+    ? `K=${K} 太长，下面只画前 ${MAX_CELLS} 个元素（其余同理重复）。`
+    : `当前完整画出全部 ${K} 个元素。`;
+
+  // ---- row 1: elements ----
+  const gE = $("gElem");
+  gE.style.gridTemplateColumns = `repeat(${shownK}, ${CW}px)`;
+  let h = "";
+  for(let i=0;i<shownK;i++){
+    const alt = Math.floor(i/EPB)%2 ? "alt" : "";  // 同一字节内同色，相邻字节交替
+    h += `<div class="cell el ${alt}">${i}</div>`;
+  }
+  // 第二行：每 VEC_SIZE 一个轴刻度（在元素行下方画 scale 边界更直观，这里给元素编号轴）
+  gE.innerHTML = h;
+
+  // ---- row 2: bytes ----
+  const gB = $("gByte");
+  gB.style.gridTemplateColumns = `repeat(${shownK}, ${CW}px)`;
+  h = "";
+  const shownBytes = Math.ceil(shownK/EPB);
+  for(let b=0;b<shownBytes;b++){
+    h += `<div class="cell byte" style="grid-column: span ${EPB}">u8#${b}</div>`;
+  }
+  gB.innerHTML = h;
+
+  // ---- row 3: scales ----
+  const gS = $("gScale");
+  gS.style.gridTemplateColumns = `repeat(${shownK}, ${CW}px)`;
+  h = "";
+  const shownScales = Math.ceil(shownK/f.vec);
+  for(let s=0;s<shownScales;s++){
+    const span = Math.min(f.vec, shownK - s*f.vec);
+    h += `<div class="cell scale" style="grid-column: span ${span}">scale[${s}] · 广播×${f.vec}</div>`;
+  }
+  gS.innerHTML = h;
+
+  // ---- shape table ----
+  const sk = `K/${f.vec}`;
+  const stK = f.isfp4 ? `K/${EPB}` : `K`;
+  $("shapeTbl").innerHTML = `
+    <tr><th>张量</th><th>逻辑 shape</th><th>存储 shape (uint8/fp8)</th><th>当前数值</th></tr>
+    <tr><td>A (operand)</td><td>(M, K)</td><td>(M, ${stK})</td><td>(${M}, ${f.isfp4?bytes:K})</td></tr>
+    <tr><td>A_scale</td><td>(M, ${sk})</td><td>(M, ${sk})</td><td>(${M}, ${scales})</td></tr>
+    <tr><td>B (operand)</td><td>(N, K)</td><td>(N, ${stK})</td><td>(N, ${f.isfp4?bytes:K})</td></tr>
+    <tr><td>B_scale</td><td>(N, ${sk})</td><td>(N, ${sk})</td><td>(N, ${scales})</td></tr>`;
+}
+
+// ---------- 二维 A/B 数据块 ----------
+const ROWS_SHOWN = 6;
+function getParams(){
+  const f = FMT[$("fmt").value];
+  let K = Math.max(parseInt($("K").value)||16, f.vec);
+  K = Math.ceil(K / f.vec) * f.vec;
+  const M = Math.max(parseInt($("M").value)||1, 1);
+  const N = Math.max(parseInt($("N").value)||1, 1);
+  const EPB = 8 / f.bitwidth;
+  const shownK = Math.min(K, MAX_CELLS);
+  const VEC = f.vec;
+  const scaleCols = Math.ceil(shownK / VEC);
+  return {f,K,M,N,EPB,shownK,VEC,scaleCols};
+}
+
+const blkA = $("block2dA"), blkB = $("block2dB");
+
+function buildBlock(el, totalRows){
+  const {EPB,shownK,VEC,scaleCols} = getParams();
+  const rows = Math.min(totalRows, ROWS_SHOWN);
+  const EW=18, SW=46, SPACER=22, TAG=40;
+  el.style.gridTemplateColumns =
+     `${TAG}px repeat(${shownK}, ${EW}px) ${SPACER}px repeat(${scaleCols}, ${SW}px)`;
+  let h="";
+  for(let m=0;m<rows;m++){
+    h += `<div class="rowtag">行${m}</div>`;
+    for(let k=0;k<shownK;k++){
+      const s = Math.floor(k/VEC);
+      let cls = "c2 " + (s%2 ? "p1":"p0");
+      if(EPB>1 && k%EPB===EPB-1 && k%VEC!==VEC-1) cls += " bb";
+      if(k%VEC===VEC-1) cls += " sb";
+      h += `<div class="${cls}" data-m="${m}" data-k="${k}"></div>`;
+    }
+    h += `<div></div>`;  // spacer
+    for(let s=0;s<scaleCols;s++)
+      h += `<div class="sc" data-m="${m}" data-s="${s}">s${s}</div>`;
+  }
+  el.innerHTML = h;
+}
+
+function render2D(){
+  const {K,M,N,shownK} = getParams();
+  buildBlock(blkA, M);
+  buildBlock(blkB, N);
+  $("rd2").textContent =
+    `A 显示前 ${Math.min(M,ROWS_SHOWN)} 行、B 前 ${Math.min(N,ROWS_SHOWN)} 行 × 前 ${shownK} 列（K=${K}）。悬停 scale 方块或元素查看影响区。`;
+}
+
+function clearHL(el){
+  el.querySelectorAll('.lit,.litB,.litS,.bandL,.bandR')
+    .forEach(e=>e.classList.remove('lit','litB','litS','bandL','bandR'));
+}
+function highlightBand(el,m,kStart,len,shownK){
+  const end = Math.min(kStart+len, shownK);
+  for(let k=kStart;k<end;k++){
+    const c = el.querySelector(`[data-m="${m}"][data-k="${k}"]`);
+    if(!c) continue;
+    c.classList.add('lit');
+    if(k===kStart) c.classList.add('bandL');
+    if(k===end-1)  c.classList.add('bandR');
+  }
+}
+function setReadout(name,m,s,kStart,len,shownK,EPB){
+  const end = Math.min(kStart+len, shownK);
+  const nEl = end-kStart;
+  const detail = EPB>1 ? `${nEl} 个元素 = ${nEl/EPB} 个字节` : `${nEl} 个元素`;
+  $("rd2").textContent =
+    `${name}_scale[行${m}, ${s}]  影响 →  ${name} 行${m} 的 K = ${kStart}..${end-1}（${detail}）`;
+}
+function attachHover(el, name){
+  el.addEventListener('mouseover', e=>{
+    const {VEC,EPB,shownK} = getParams();
+    const sc = e.target.closest('[data-s]');
+    const cel = e.target.closest('[data-k]');
+    if(sc){
+      clearHL(el);
+      const m=+sc.dataset.m, s=+sc.dataset.s;
+      highlightBand(el, m, s*VEC, VEC, shownK);
+      sc.classList.add('litS');
+      setReadout(name, m, s, s*VEC, VEC, shownK, EPB);
+    } else if(cel){
+      clearHL(el);
+      const m=+cel.dataset.m, k=+cel.dataset.k, s=Math.floor(k/VEC);
+      highlightBand(el, m, s*VEC, VEC, shownK);
+      if(EPB>1){
+        const bs=Math.floor(k/EPB)*EPB;
+        for(let i=bs;i<bs+EPB;i++){
+          const c=el.querySelector(`[data-m="${m}"][data-k="${i}"]`);
+          if(c) c.classList.add('litB');
+        }
+      }
+      const scell=el.querySelector(`[data-m="${m}"][data-s="${s}"]`);
+      if(scell) scell.classList.add('litS');
+      setReadout(name, m, s, s*VEC, VEC, shownK, EPB);
+    }
+  });
+  el.addEventListener('mouseout', ()=>clearHL(el));
+}
+attachHover(blkA, "A");
+attachHover(blkB, "B");
+
+["fmt","K","M","N"].forEach(id=>$(id).addEventListener("input",()=>{render();render2D();}));
+render();
+render2D();
+</script>
+</body>
+</html>

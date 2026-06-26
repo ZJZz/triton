@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第三部分 · 2-CTA TCGen5MMA（外积切分 + two_ctas 三处改动）</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#fff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#0891b2; --hl:#ea580c;
+    --c0:#2563eb; --c1:#0d9488; --two:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#fff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px}
+  header h1 .g{color:var(--accent)}
+  .badge{font-size:11px;font-weight:700;color:#fff;background:var(--accent);padding:3px 10px;border-radius:20px}
+  .badge.c0{background:var(--c0)} .badge.c1{background:var(--c1)} .badge.two{background:var(--two)}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:300px}
+  .sub b{color:#11305c}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  main{flex:1;display:grid;gap:9px;padding:9px;min-height:0;
+    grid-template-columns:minmax(0,1.15fr) minmax(0,0.95fr) minmax(0,1.05fr);
+    grid-template-rows:minmax(0,1.2fr) minmax(0,0.78fr);
+    grid-template-areas:"data outer changes" "time time time";}
+  #pData{grid-area:data} #pOuter{grid-area:outer} #pChg{grid-area:changes} #pTime{grid-area:time}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);
+    background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap}
+  .phead .tag{font-size:10.5px;font-weight:700;color:#fff;padding:1px 9px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:10.5px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;justify-content:center;align-items:flex-start}
+  .gridsvg{display:block;cursor:crosshair}
+
+  .chg{width:100%;font-size:11.5px}
+  .chg .item{border:1px solid #e2d6f5;background:#faf7ff;border-radius:9px;padding:7px 9px;margin-bottom:8px}
+  .chg .item h4{margin:0 0 4px;font-size:11.5px;color:var(--two);display:flex;align-items:center;gap:6px}
+  .chg .num{display:inline-flex;width:17px;height:17px;border-radius:50%;background:var(--two);color:#fff;
+    font-size:10px;align-items:center;justify-content:center;font-weight:800}
+  .chg pre{margin:3px 0 0;font-family:Consolas,monospace;font-size:10.5px;background:#fff;border:1px solid #ece2fb;
+    border-radius:6px;padding:5px 7px;white-space:pre-wrap;color:#4b2e83;line-height:1.45}
+  .chg pre b{color:var(--two);background:#efe6fc;padding:0 2px;border-radius:3px}
+  .chg small{display:block;color:#6b7a89;margin-top:4px;font-size:10px}
+  .barvs{display:flex;gap:8px;margin-top:2px}
+  .barvs div{flex:1;border-radius:8px;padding:6px 8px;font-size:10.5px;line-height:1.45}
+  .barvs .ok{background:#f3eefc;border:1px solid #d9c8f3}
+  .barvs .no{background:#eef6ff;border:1px solid #c5dbf5}
+  .barvs b{font-family:Consolas,monospace}
+
+  footer{flex:none;border-top:1px solid var(--line);background:#fff;padding:8px 14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  .read{font-size:12px;line-height:1.55;flex:1;min-width:280px}
+  .read .lead{font-weight:800;color:var(--hl)}
+  .read code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  .legend{display:flex;gap:7px 12px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);align-items:center;max-width:330px}
+  .legend span{display:inline-flex;gap:4px;align-items:center}
+  .legend i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
+  @media(max-width:1100px){
+    body{height:auto;overflow:auto}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto auto auto;
+      grid-template-areas:"data" "outer" "changes" "time"}
+    .pbody{min-height:240px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>第三部分 · <span class="g">2-CTA TCGen5MMA</span>（外积切分 + <code style="font-family:Consolas">two_ctas</code>）</h1>
+    <span class="badge c0">CTA0</span>
+    <span class="badge c1">CTA1</span>
+    <span class="badge two">two_ctas</span>
+    <div class="sub">用 test 的真实数据：<b>A[256×64] @ B[64×128] = C[256×128]</b>，2 个 CTA 成一对协同算一个 tile。
+      一对 CTA：<b>A 沿 M 切 (1,0)</b>、<b>B 沿 N 切 (0,1)</b>、<b>累加器沿 M 切 (1,0)</b>。
+      把鼠标移到 <b>左边任一数据块</b> → 中间外积图与底部读数联动。</div>
+  </div>
+</header>
+
+<main>
+  <div class="panel" id="pData">
+    <div class="phead"><span class="tag" style="background:#475569">① 原始数据怎样切给一对 CTA</span>
+      <span class="hint">悬停 A/B/C 的分片</span></div>
+    <div class="pbody" style="align-items:center"><div id="svgData"></div></div>
+  </div>
+
+  <div class="panel" id="pOuter">
+    <div class="phead"><span class="tag" style="background:var(--two)">② 外积：4 块怎么拼出 C</span>
+      <span class="hint">行=A 分片, 列=B 分片</span></div>
+    <div class="pbody" style="align-items:center"><div id="svgOuter"></div></div>
+  </div>
+
+  <div class="panel" id="pChg">
+    <div class="phead"><span class="tag" style="background:var(--two)">③ 启用 2CTA 的三处改动</span>
+      <span class="hint">相对单 CTA</span></div>
+    <div class="pbody" style="align-items:stretch"><div class="chg" id="chgBox"></div></div>
+  </div>
+
+  <div class="panel" id="pTime">
+    <div class="phead"><span class="tag" style="background:#0f766e">④ 单 tile kernel 时间线（two_cta_tcgen05_kernel）</span>
+      <span class="hint">★ = 2CTA 专属</span></div>
+    <div class="pbody" style="align-items:flex-start"><div id="svgTime"></div></div>
+  </div>
+</main>
+
+<footer>
+  <div class="read" id="read"></div>
+  <div class="legend" id="legend"></div>
+</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+function setSvg(id, inner, W, H){ $(id).innerHTML=`<svg class="gridsvg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`; }
+const C0='#2563eb', C1='#0d9488', TWO='#7c3aed', HL='#ea580c';
+const ctaCol=c=>c===0?C0:C1;
+
+/* ===== ① 原始数据 + 2CTA 切分（交互）===== */
+const G={
+  A:{x:30,  y:104, w:62,  h:196},   // [256×64]  沿 M 横切
+  B:{x:120, y:32,  w:172, h:56},    // [64×128]  沿 N 竖切
+  C:{x:120, y:104, w:172, h:196},   // [256×128] 沿 M 横切
+};
+function buildData(){
+  const A=G.A,B=G.B,C=G.C;
+  const W=320, H=340;
+  let g='';
+  // 标题/算式
+  g+=`<text x="${A.x+A.w/2}" y="${A.y-8}" text-anchor="middle" style="font-size:10.5px;font-weight:800" fill="#1c2733">A [256×64]</text>`;
+  g+=`<text x="${B.x+B.w/2}" y="22" text-anchor="middle" style="font-size:10.5px;font-weight:800" fill="#1c2733">B [64×128]</text>`;
+  g+=`<text x="${C.x+C.w/2}" y="${C.y-8}" text-anchor="middle" style="font-size:10.5px;font-weight:800" fill="#1c2733">C = A @ B　[256×128]</text>`;
+  g+=`<text x="${A.x+A.w+13}" y="${C.y+C.h+16}" text-anchor="middle" style="font-size:14px;font-weight:800" fill="#94a3b8">@</text>`;
+
+  // A：上半 CTA0 / 下半 CTA1（沿 M (1,0)）
+  g+=region('A0', A.x, A.y, A.w, A.h/2, 0, '基(1,0)');
+  g+=region('A1', A.x, A.y+A.h/2, A.w, A.h/2, 1, '');
+  // B：左半 CTA0 / 右半 CTA1（沿 N (0,1)）
+  g+=region('B0', B.x, B.y, B.w/2, B.h, 0, '基(0,1)');
+  g+=region('B1', B.x+B.w/2, B.y, B.w/2, B.h, 1, '');
+  // C：上半 CTA0 / 下半 CTA1（沿 M (1,0)）
+  g+=region('C0', C.x, C.y, C.w, C.h/2, 0, '基(1,0)');
+  g+=region('C1', C.x, C.y+C.h/2, C.w, C.h/2, 1, '');
+
+  // 维度箭头标注
+  g+=`<text x="14" y="${A.y+A.h/2}" text-anchor="middle" transform="rotate(-90 14 ${A.y+A.h/2})" style="font-size:9px;font-weight:700" fill="#5b6b7d">M=256 ↓（切 2）</text>`;
+  g+=`<text x="${B.x+B.w/2}" y="${B.y-0}" text-anchor="middle" style="font-size:0" fill="#000"></text>`;
+  setSvg('svgData', g, W, H);
+  attachData();
+}
+function region(id,x,y,w,h,cta,tag){
+  const col=ctaCol(cta);
+  let s=`<rect class="rg" data-id="${id}" x="${x}" y="${y}" width="${w-1}" height="${h-1}" `+
+        `fill="${lighten(col,.26)}" stroke="${col}" stroke-width="1.2"/>`;
+  s+=`<text x="${x+w/2}" y="${y+h/2-2}" text-anchor="middle" style="font-size:11px;font-weight:800;pointer-events:none" fill="${col}">${id}</text>`;
+  s+=`<text x="${x+w/2}" y="${y+h/2+12}" text-anchor="middle" style="font-size:8.5px;pointer-events:none" fill="#5b6b7d">CTA${cta}</text>`;
+  if(tag) s+=`<text x="${x+w/2}" y="${y+h-4}" text-anchor="middle" style="font-size:8px;font-weight:700;pointer-events:none" fill="${col}">${tag}</text>`;
+  return s;
+}
+
+/* ===== ② 外积 2×2（交互，受 ① 驱动）===== */
+const OU={x0:84, y0:70, cw:116, ch:66};
+function buildOuter(){
+  const {x0,y0,cw,ch}=OU;
+  const W=x0+2*cw+72, H=y0+2*ch+62;
+  let g='';
+  g+=`<text x="${x0+cw}" y="20" text-anchor="middle" style="font-size:10px;font-weight:700" fill="#1c2733">每个 CTA 的累加器 = 它的 A 半行 @ 整个 B</text>`;
+  // 顶部表头（B 分片 = 列），分两行避免相撞
+  for(let j=0;j<2;j++){
+    const cx=x0+j*cw+cw/2, col=ctaCol(j);
+    g+=`<text x="${cx}" y="${y0-22}" text-anchor="middle" style="font-size:11px;font-weight:800" fill="${col}">B${j}</text>`;
+    g+=`<text x="${cx}" y="${y0-9}" text-anchor="middle" style="font-size:8.5px" fill="${col}">CTA${j} · 列${j?'64–127':'0–63'}</text>`;
+  }
+  // 左侧表头（A 分片 = 行），旋转短标签
+  for(let i=0;i<2;i++){
+    const cy=y0+i*ch+ch/2, col=ctaCol(i);
+    g+=`<text x="${x0-12}" y="${cy}" text-anchor="middle" transform="rotate(-90 ${x0-12} ${cy})" style="font-size:10px;font-weight:800" fill="${col}">A${i} · CTA${i}</text>`;
+  }
+  // 4 块：owner = 行(A 分片)
+  for(let i=0;i<2;i++)for(let j=0;j<2;j++){
+    const col=ctaCol(i), x=x0+j*cw, y=y0+i*ch, cross=(i!==j);
+    g+=`<rect data-cell="${i}${j}" x="${x}" y="${y}" width="${cw-5}" height="${ch-5}" rx="6" `+
+       `fill="${lighten(col,.22)}" stroke="${col}" stroke-width="1.2" ${cross?'stroke-dasharray="5 3"':''}/>`;
+    g+=`<text x="${x+(cw-5)/2}" y="${y+ch/2-4}" text-anchor="middle" style="font-size:12px;font-weight:800;pointer-events:none" fill="${col}">A${i} @ B${j}</text>`;
+    g+=`<text x="${x+(cw-5)/2}" y="${y+ch/2+13}" text-anchor="middle" style="font-size:8.5px;pointer-events:none" fill="${cross?'#b45309':'#5b6b7d'}">${cross?'跨 CTA 取 B':'本 CTA 自有'}</text>`;
+  }
+  // 右侧：每行 → 哪个 C 分片
+  for(let i=0;i<2;i++){
+    const col=ctaCol(i), y=y0+i*ch+ch/2;
+    g+=`<text x="${x0+2*cw+8}" y="${y-2}" style="font-size:10.5px;font-weight:800" fill="${col}">→ C${i}</text>`;
+    g+=`<text x="${x0+2*cw+8}" y="${y+12}" style="font-size:8px" fill="#7a8694">行${i?'128–255':'0–127'}</text>`;
+  }
+  g+=`<text x="${x0-30}" y="${y0+2*ch+26}" style="font-size:9.5px" fill="#7a8694">虚线块 = 该 CTA 要用对方的 B 分片 → 2CTA collective MMA 跨 CTA 取数。</text>`;
+  g+=`<text x="${x0-30}" y="${y0+2*ch+42}" style="font-size:9.5px" fill="#7a8694">累加器只沿 M 切 (1,0)：每个 CTA 拿全部 128 列，只算自己那 128 行。</text>`;
+  g+=`<g id="ovOuter"></g>`;
+  setSvg('svgOuter', g, W, H);
+}
+
+/* ===== 联动高亮 ===== */
+const RG={
+  A0:{name:'A · M-上半', rng:'行 0–127',  cta:0, basis:'(1,0)', dim:'dim0 (M)', ten:'A'},
+  A1:{name:'A · M-下半', rng:'行 128–255',cta:1, basis:'(1,0)', dim:'dim0 (M)', ten:'A'},
+  B0:{name:'B · N-左半', rng:'列 0–63',   cta:0, basis:'(0,1)', dim:'dim1 (N)', ten:'B'},
+  B1:{name:'B · N-右半', rng:'列 64–127', cta:1, basis:'(0,1)', dim:'dim1 (N)', ten:'B'},
+  C0:{name:'C 累加器 · M-上半', rng:'行 0–127',  cta:0, basis:'(1,0)', dim:'dim0 (M)', ten:'C'},
+  C1:{name:'C 累加器 · M-下半', rng:'行 128–255',cta:1, basis:'(1,0)', dim:'dim0 (M)', ten:'C'},
+};
+function outerHL(region){
+  const cells=[];
+  if(region[0]==='A'){ const i=+region[1]; cells.push(i+'0',i+'1'); }   // 整行
+  else if(region[0]==='B'){ const j=+region[1]; cells.push('0'+j,'1'+j); } // 整列
+  else if(region[0]==='C'){ const i=+region[1]; cells.push(i+'0',i+'1'); } // 该 CTA 的两块
+  let ov='';
+  cells.forEach(cid=>{
+    const i=+cid[0], j=+cid[1], {x0,y0,cw,ch}=OU, x=x0+j*cw, y=y0+i*ch;
+    ov+=`<rect x="${x-2}" y="${y-2}" width="${cw+1}" height="${ch+1}" rx="7" fill="none" stroke="${HL}" stroke-width="2.6" pointer-events="none"/>`;
+  });
+  if($('ovOuter')) $('ovOuter').innerHTML=ov;
+}
+function dataHL(region){
+  // ① 高亮
+  document.querySelectorAll('#svgData .rg').forEach(r=>{
+    r.setAttribute('stroke-width', r.dataset.id===region?'3.2':'1.2');
+    r.style.filter = r.dataset.id===region?'brightness(0.96)':'none';
+  });
+  // overlay 框
+  const el=document.querySelector(`#svgData .rg[data-id="${region}"]`);
+  outerHL(region);
+  const r=RG[region], col=ctaCol(r.cta);
+  let extra='';
+  if(r.ten==='C') extra=`要算它需要 <b>A${r.cta} @ 整个 B</b>：B${r.cta} 在本 CTA，B${1-r.cta} 在 <b style="color:${ctaCol(1-r.cta)}">CTA${1-r.cta}</b> → 2CTA collective MMA 跨 CTA 取数。`;
+  else if(r.ten==='B') extra=`两个 CTA 各持半个 B；MMA 时一对 CTA 互相取对方的 B 分片，凑齐整个 B。`;
+  else extra=`A 沿 M 切，CTA${r.cta} 只负责自己这 128 行的乘加。`;
+  $('read').innerHTML=`<span class="lead">${region} — ${r.name}</span>（${r.rng}）归 <b style="color:${col}">CTA${r.cta}</b>；`+
+    `cga_layout 基 <code>${r.basis}</code> 表示沿 <b>${r.dim}</b> 切。${extra}`;
+}
+function clearHL(){
+  document.querySelectorAll('#svgData .rg').forEach(r=>{r.setAttribute('stroke-width','1.2');r.style.filter='none';});
+  if($('ovOuter')) $('ovOuter').innerHTML='';
+  $('read').innerHTML=`<span class="lead">把鼠标移到左边 A / B / C 的任一分片 →</span> `+
+    `看它归哪个 CTA、对应哪条 cga_layout 基，以及在外积里如何拼出 C。`+
+    `要点：<b>A (1,0) 沿 M</b>、<b>B (0,1) 沿 N</b>、<b>累加器 (1,0) 沿 M</b>；<code>expect</code> 字节仍按 <b>每 CTA</b> 计，不是整对。`;
+}
+function attachData(){
+  document.querySelectorAll('#svgData .rg').forEach(r=>{
+    r.addEventListener('pointerenter',()=>dataHL(r.dataset.id));
+  });
+  $('svgData').addEventListener('pointerleave',clearHL);
+}
+
+/* ===== ③ 三处改动（静态）===== */
+function buildChg(){
+  $('chgBox').innerHTML=`
+   <div class="item">
+     <h4><span class="num">1</span> 累加器开 2CTA 模式</h4>
+     <pre>TensorMemoryLayout(block=(cta_m, tile_n),
+   col_stride=1, cga_layout=cga_layout,
+   <b>two_ctas=True</b>)</pre>
+   </div>
+   <div class="item">
+     <h4><span class="num">2</span> MMA 前要等的 barrier 开 2CTA</h4>
+     <pre>tma_bar = mbarrier.allocate_mbarrier(<b>two_ctas=True</b>)</pre>
+     <small>lead CTA 要等「两行都到齐」才发起 collective MMA。</small>
+   </div>
+   <div class="item">
+     <h4><span class="num">3</span> 等 MMA 完成的 barrier 计数</h4>
+     <pre>count = tcgen05_mma_barrier_count(
+   [smem_a, smem_b], <b>two_ctas=...</b>)</pre>
+     <small>单 tile 例子里简化为 count=1；循环 / multicast 例子才用 barrier_count。</small>
+   </div>
+   <div class="barvs">
+     <div class="ok"><b style="color:var(--two)">tma_bar</b>：<b>two_ctas=True</b> ✓<br>lead 等两个 CTA 的 load 都完成</div>
+     <div class="no"><b style="color:#2563eb">mma_bar</b>：普通 ✗<br>MMA 完成信号自动<b>多播</b>给一对的两个 CTA</div>
+   </div>
+   <div style="font-size:10px;color:#6b7a89;margin-top:6px">规则：一旦某个 <code style="font-family:Consolas">tcgen05_mma</code> 用了 2CTA，本 kernel 所有 MMA 都必须 2CTA。</div>`;
+}
+
+/* ===== ④ 单 tile 流水线泳道图（静态）===== */
+function buildTime(){
+  // 两条 CTA 泳道 + 共享的 barrier 闸口 + 协同 MMA
+  const laneH=52, gapLane=16, labX=10, ox=70;
+  const y0=58, y1=y0+laneH+gapLane;               // 两条泳道顶部
+  const cy0=y0+laneH/2, cy1=y1+laneH/2;
+  const spanTop=y0, spanBot=y1+laneH;
+  // 列坐标
+  const loadX=ox, loadW=132;
+  const tmaX=loadX+loadW+16;                       // tma_bar 闸口
+  const mmaX=tmaX+30, mmaW=150;                     // 协同 MMA（跨两泳道）
+  const mmabX=mmaX+mmaW+16;                         // mma_bar 闸口
+  const stX=mmabX+30, stW=130;
+  const W=stX+stW+18, H=spanBot+74;
+  let g='';
+  g+=`<defs><marker id="ap" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#7a8694"/></marker>`+
+     `<marker id="apm" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${TWO}"/></marker></defs>`;
+  g+=`<text x="${ox}" y="22" style="font-size:11px;font-weight:800" fill="#0f766e">把硬件单元看成并行泳道，mbarrier 是单元之间的「闸口」——时间 →</text>`;
+
+  // 泳道底色 + 标签
+  [[y0,C0,'CTA0'],[y1,C1,'CTA1']].forEach(([y,col,nm])=>{
+    g+=`<rect x="${ox-6}" y="${y}" width="${W-ox-6}" height="${laneH}" rx="8" fill="${lighten(col,.07)}" stroke="${lighten(col,.25)}" stroke-width="1"/>`;
+    g+=`<text x="${labX}" y="${y+laneH/2+4}" style="font-size:11px;font-weight:800" fill="${col}">${nm}</text>`;
+  });
+
+  // ① 各 CTA 并行 TMA load
+  [[cy0,C0,'A0,B0'],[cy1,C1,'A1,B1']].forEach(([cy,col,d])=>{
+    const y=cy-19;
+    g+=`<rect x="${loadX}" y="${y}" width="${loadW}" height="38" rx="7" fill="${lighten(col,.2)}" stroke="${col}" stroke-width="1.3"/>`;
+    g+=`<text x="${loadX+8}" y="${y+15}" style="font-size:10px;font-weight:800" fill="${col}">TMA async_load</text>`;
+    g+=`<text x="${loadX+8}" y="${y+30}" style="font-family:Consolas;font-size:9px" fill="#445">${d} → smem</text>`;
+    // arrive 箭头到 tma_bar 闸口
+    g+=`<line x1="${loadX+loadW}" y1="${cy}" x2="${tmaX-2}" y2="${cy}" stroke="${TWO}" stroke-width="1.4" marker-end="url(#apm)"/>`;
+  });
+
+  // ② tma_bar 闸口（two_ctas，跨两泳道）
+  g+=`<rect x="${tmaX}" y="${spanTop}" width="22" height="${spanBot-spanTop}" rx="6" fill="${lighten(TWO,.18)}" stroke="${TWO}" stroke-width="1.6"/>`;
+  g+=`<text x="${tmaX+11}" y="${(spanTop+spanBot)/2}" text-anchor="middle" transform="rotate(-90 ${tmaX+11} ${(spanTop+spanBot)/2})" style="font-size:10px;font-weight:800" fill="${TWO}">tma_bar ★ two_ctas</text>`;
+  g+=`<text x="${tmaX+11}" y="${spanTop-6}" text-anchor="middle" style="font-size:8.5px;font-weight:700" fill="${TWO}">等两 CTA 到齐</text>`;
+  // 闸口 → MMA（wait 通过）
+  g+=`<line x1="${tmaX+22}" y1="${(spanTop+spanBot)/2}" x2="${mmaX-2}" y2="${(spanTop+spanBot)/2}" stroke="#7a8694" stroke-width="1.4" marker-end="url(#ap)"/>`;
+
+  // ③ 协同 MMA（跨两泳道一个大框）
+  g+=`<rect x="${mmaX}" y="${spanTop}" width="${mmaW}" height="${spanBot-spanTop}" rx="9" fill="${lighten(TWO,.1)}" stroke="${TWO}" stroke-width="1.8" stroke-dasharray="6 3"/>`;
+  const mcy=(spanTop+spanBot)/2;
+  g+=`<text x="${mmaX+mmaW/2}" y="${mcy-16}" text-anchor="middle" style="font-size:11px;font-weight:800" fill="${TWO}">tcgen05_mma ★</text>`;
+  g+=`<text x="${mmaX+mmaW/2}" y="${mcy-1}" text-anchor="middle" style="font-size:9px" fill="#5b3aa0">collective · 一对 CTA 协同</text>`;
+  g+=`<text x="${mmaX+mmaW/2}" y="${mcy+13}" text-anchor="middle" style="font-family:Consolas;font-size:8.5px" fill="#5b3aa0">acc(two_ctas=True)</text>`;
+  g+=`<text x="${mmaX+mmaW/2}" y="${mcy+27}" text-anchor="middle" style="font-size:8.5px" fill="#5b3aa0">读两 CTA 的 A/B 分片</text>`;
+  // MMA → mma_bar
+  g+=`<line x1="${mmaX+mmaW}" y1="${mcy}" x2="${mmabX-2}" y2="${mcy}" stroke="#7a8694" stroke-width="1.4" marker-end="url(#ap)"/>`;
+
+  // ④ mma_bar 闸口（完成多播）
+  g+=`<rect x="${mmabX}" y="${spanTop}" width="22" height="${spanBot-spanTop}" rx="6" fill="${lighten(C0,.16)}" stroke="${C0}" stroke-width="1.6"/>`;
+  g+=`<text x="${mmabX+11}" y="${mcy}" text-anchor="middle" transform="rotate(-90 ${mmabX+11} ${mcy})" style="font-size:10px;font-weight:800" fill="${C0}">mma_bar</text>`;
+  g+=`<text x="${mmabX+11}" y="${spanTop-6}" text-anchor="middle" style="font-size:8.5px;font-weight:700" fill="${C0}">完成多播</text>`;
+  // 闸口 多播给两泳道的 store
+  [[cy0],[cy1]].forEach(([cy])=>{
+    g+=`<path d="M${mmabX+22},${mcy} C${stX-20},${mcy} ${stX-20},${cy} ${stX-2},${cy}" fill="none" stroke="${C0}" stroke-width="1.3" marker-end="url(#ap)"/>`;
+  });
+
+  // ⑤ 各 CTA 写回自己的 C 半
+  [[cy0,C0,'C0'],[cy1,C1,'C1']].forEach(([cy,col,d])=>{
+    const y=cy-19;
+    g+=`<rect x="${stX}" y="${y}" width="${stW}" height="38" rx="7" fill="${lighten(col,.2)}" stroke="${col}" stroke-width="1.3"/>`;
+    g+=`<text x="${stX+8}" y="${y+15}" style="font-size:10px;font-weight:800" fill="${col}">store ${d}</text>`;
+    g+=`<text x="${stX+8}" y="${y+30}" style="font-family:Consolas;font-size:9px" fill="#445">acc→smem→global</text>`;
+  });
+
+  // 底部说明
+  g+=`<text x="${ox}" y="${spanBot+24}" style="font-size:10px" fill="#0f766e"><tspan font-weight="800" fill="${TWO}">★ 紫 = 2CTA 专属</tspan>：tma_bar(two_ctas)、collective MMA、acc(two_ctas)；mma_bar 普通但完成信号自动多播。</text>`;
+  g+=`<text x="${ox}" y="${spanBot+40}" style="font-size:10px" fill="#7a8694">expect 字节仍按 <tspan font-family="Consolas">a.nbytes_per_cta + b.nbytes_per_cta</tspan>（每 CTA）。</text>`;
+  g+=`<text x="${ox}" y="${spanBot+56}" style="font-size:10px" fill="#b45309">单 tile = 各段顺序跑一遍；下一节放进 K 循环后，load／MMA／store 跨迭代重叠 → 才是真正的流水线。</text>`;
+  setSvg('svgTime', g, W, H);
+}
+
+/* legend */
+$('legend').innerHTML =
+  `<span><i style="background:${lighten(C0,.26)};border-color:${C0}"></i>CTA0</span>`+
+  `<span><i style="background:${lighten(C1,.26)};border-color:${C1}"></i>CTA1</span>`+
+  `<span><i style="background:${lighten(TWO,.2)};border-color:${TWO}"></i>two_ctas / 跨 CTA</span>`+
+  `<span><i style="background:#ea580c"></i>当前悬停</span>`;
+
+buildData(); buildOuter(); buildChg(); buildTime(); clearHL();
+</script>
+</body>
+</html>

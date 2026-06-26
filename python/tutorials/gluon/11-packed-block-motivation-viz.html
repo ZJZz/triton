@@ -1,0 +1,662 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>优化 2 的出发动机 · 为什么是 [M//(32·4), K//(VEC·4), 32, 4, 4]</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#ffffff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#7c3aed; --new:#ea580c;
+    --good:#16a34a; --bad:#dc2626; --tma:#0891b2; --core:#db2777; --smem:#16a34a;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#ffffff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px;letter-spacing:.3px}
+  header h1 .g{color:var(--accent)}
+  .badge{font-size:11px;font-weight:600;color:#fff;background:var(--accent);
+    padding:3px 11px;border-radius:20px;white-space:nowrap}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:280px}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;
+    padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  .stepper{display:flex;align-items:center;gap:7px;margin-top:8px;flex-wrap:wrap}
+  .chip{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:#fff;
+    border-radius:9px;padding:5px 11px;cursor:pointer;transition:.15s}
+  .chip:hover{border-color:var(--accent)}
+  .chip.on{border-color:var(--accent);background:#f3eefe;box-shadow:0 0 0 2px rgba(124,58,237,.12)}
+  .chip .num{width:20px;height:20px;border-radius:50%;background:var(--line);color:#445;
+    font-weight:800;font-size:11px;display:flex;align-items:center;justify-content:center}
+  .chip.on .num{background:var(--accent);color:#fff}
+  .chip .ct{display:flex;flex-direction:column;line-height:1.15}
+  .chip .ck{font-weight:700;font-size:12px}
+  .chip .cs{font-size:10px;color:var(--muted);font-family:Consolas,monospace}
+  .chevron{font-size:13px;color:#aebac8;font-weight:800}
+  .navbtns{margin-left:auto;display:flex;gap:6px}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 13px;
+    cursor:pointer;font-size:12px;font-weight:600;color:var(--txt)}
+  .btn:hover{border-color:var(--accent)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+  .legend{display:flex;gap:16px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted);align-items:center}
+  .legend .lg{display:flex;align-items:center;gap:5px;white-space:nowrap}
+  .legend .lg i{width:14px;height:14px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.18)}
+  .legend .lg b{color:var(--txt)}
+  .legend .lg i.ring{background:#fff;border:2px solid #ea580c}
+  .legend .lg i.pale{background:#eef1f6;border:1px solid #c7d0db}
+  .legend .sep{width:1px;height:15px;background:var(--line)}
+
+  main{flex:1;display:grid;gap:9px;padding:9px;min-height:0;
+    grid-template-columns:minmax(0,1fr) 392px;
+    grid-template-rows:minmax(0,1fr) auto;
+    grid-template-areas:"diag expl" "formula expl";}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  #pDiag{grid-area:diag}
+  #pFormula{grid-area:formula}
+  #pExpl{grid-area:expl}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);
+    background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none}
+  .phead .tag{font-size:10.5px;font-weight:600;color:#fff;padding:1px 8px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:11px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:6px;display:block}
+  #diagSvg{min-width:0}
+  #diagSvg svg{width:100%;height:auto;display:block;transform-origin:0 0;transition:transform .08s}
+
+  .zoomctl{display:flex;align-items:center;gap:4px}
+  .zoomctl button{width:24px;height:22px;border:1px solid var(--line);background:#fff;border-radius:6px;
+    cursor:pointer;font-size:13px;font-weight:800;color:var(--txt);line-height:1;padding:0}
+  .zoomctl button:hover{border-color:var(--accent);color:var(--accent)}
+  .zoomctl button.wide{width:auto;padding:0 8px;font-size:11px;font-weight:700}
+  .zoomctl #zoomLbl{font-size:11px;font-weight:700;color:var(--muted);min-width:38px;text-align:center;
+    font-family:Consolas,monospace}
+
+  .explain{padding:10px 13px;font-size:12.5px;line-height:1.62;overflow:auto}
+  .explain h3{margin:2px 0 7px;font-size:13px;color:#11305c}
+  .explain p{margin:0 0 9px}
+  .explain b{color:#11305c}
+  .explain code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;
+    padding:0 5px;border-radius:3px;font-size:11.5px;font-weight:600;border:1px solid #f1d48a}
+  .explain .key{background:#f3eefe;border:1px solid #d9c9f7;border-left:3px solid var(--accent);
+    border-radius:6px;padding:7px 10px;margin:8px 0;font-size:12px}
+  .explain .key b{color:#5b21b6}
+  table.cons{width:100%;border-collapse:collapse;margin-top:4px;font-size:11.5px}
+  table.cons th,table.cons td{border:1px solid #e3ebf3;padding:4px 7px;text-align:left;vertical-align:top}
+  table.cons th{background:#f4f8fc;color:#11305c}
+  table.cons code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 4px;border-radius:3px;border:1px solid #f1d48a;font-weight:600}
+
+  .formula{padding:10px 14px;overflow:auto}
+  .frow{display:flex;gap:6px;align-items:stretch;flex-wrap:wrap}
+  .dim{flex:1;min-width:86px;border:1.5px solid var(--line);border-radius:9px;padding:6px 8px;background:#fff;text-align:center;cursor:pointer;transition:.12s}
+  .dim:hover{border-color:var(--accent);box-shadow:0 0 0 2px rgba(124,58,237,.08)}
+  .dim .d{font-family:Consolas,monospace;font-weight:800;font-size:14px;color:#0550ae}
+  .dim .sub{font-size:10px;color:var(--muted);margin-top:3px;line-height:1.3}
+  .dim.hl{border-color:var(--accent);background:#f3eefe;box-shadow:0 0 0 2px rgba(124,58,237,.10)}
+  .dim.sel{border-color:var(--new);background:#fff3e8;box-shadow:0 0 0 2px rgba(234,88,12,.20)}
+  .dim.sel .d{color:#9a3412}
+  .dim.unit{border-color:var(--core)}
+  .braces{display:flex;gap:6px;margin-top:5px}
+  .brc{border-radius:7px;padding:3px 8px;font-size:10.5px;font-weight:700;text-align:center}
+  .brc.idx{flex:0 0 auto;background:#eef6ff;color:#0550ae;border:1px solid #cfe0f5}
+  .brc.unit{flex:1;background:#fdecf4;color:#9d174d;border:1px solid #f5c6da}
+  @media(max-width:1040px){
+    body{height:auto;overflow:auto}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto auto;grid-template-areas:"diag" "formula" "expl"}
+    #pDiag{min-height:340px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>优化 2 的出发动机 <span class="g">·</span> 为什么 shape 长这样</h1>
+    <span class="badge">[M//(32·4), K//(VEC·4), 32, 4, 4]</span>
+    <span class="badge" id="badgeNum" style="background:var(--new)">= [16, 32, 32, 4, 4]</span>
+    <div class="sub"><b>本页示例</b>（与 .py 测试同参）：<code>M=2048, K=4096, VEC_SIZE=32(MX)</code> → <code>SCALE_K = K//VEC = 128</code>，
+      原始 <code>A_scale = [2048, 128]</code>，swizzle 成 <code>[16, 32, 32, 4, 4]</code>。
+      教程原话：<i>“contiguous access of a block of 128 rows … for each <code>[BLOCK_M, BLOCK_K]</code> subtile.”</i></div>
+  </div>
+  <div class="stepper" id="stepper"></div>
+  <div class="legend">
+    <span class="lg"><i style="background:#2563eb"></i><b>Operand A</b>　原始量化数据 [M, K]</span>
+    <span class="lg"><i style="background:#7c3aed"></i><b>A_scale</b>　缩放因子 [M, SCALE_K]</span>
+    <span class="sep"></span>
+    <span class="lg"><i class="pale"></i>浅色大块 = <b>完整数据</b></span>
+    <span class="lg"><i class="ring"></i>橙色高亮/虚线框 = <b>当前这条 MMA 的「部分」</b></span>
+  </div>
+</header>
+
+<main>
+  <div class="panel" id="pDiag">
+    <div class="phead"><span class="tag" id="diagTag" style="background:var(--accent)">动机</span><span id="diagTitle"></span>
+      <span class="hint" id="diagHint"></span>
+      <div class="zoomctl">
+        <button id="zoomOut" title="缩小">－</button>
+        <span id="zoomLbl">100%</span>
+        <button id="zoomIn" title="放大">＋</button>
+        <button id="zoomReset" class="wide" title="还原大小">还原</button>
+      </div></div>
+    <div class="pbody"><div id="diagSvg"></div></div>
+  </div>
+
+  <div class="panel" id="pFormula">
+    <div class="phead"><span class="tag" style="background:#7c3aed">A_scale 的 5D 形状逐维拆解</span>
+      <span class="hint">点维度卡片 → 左图高亮它索引的数据</span></div>
+    <div class="formula" id="formula"></div>
+  </div>
+
+  <div class="panel" id="pExpl">
+    <div class="phead"><span class="tag" style="background:var(--core)">讲解</span><span id="explName"></span></div>
+    <div class="explain" id="explain"></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+const COL={tma:'#0891b2',core:'#db2777',smem:'#16a34a',acc:'#7c3aed',bad:'#dc2626',good:'#16a34a',new:'#ea580c',gmem:'#475569'};
+const GRP=['#2563eb','#0d9488','#d97706','#7c3aed']; // 4 个 M 组(d1)
+
+/* ===== 具体示例参数（与 11-tcgen05-mma-scaled.py 测试一致）===== */
+const EX={M:2048, K:4096, N:2048, VEC:32};      // MX 格式 VEC_SIZE=32
+EX.SCALE_K = EX.K/EX.VEC;                         // 128 = K//VEC
+EX.BLOCK_K = EX.VEC*4;                            // 128 = 一个 MMA 沿 K 取的元素数 (MX 最小, = VEC·4)
+EX.SCALE_BLOCK_K = EX.BLOCK_K/EX.VEC;             // 4   = 一个 MMA 的 scale 列数 = BLOCK_K//VEC
+EX.NITER   = EX.K/EX.BLOCK_K;                     // 32  = K//BLOCK_K 次内层循环
+EX.REP_M   = EX.M/128;                            // 16  = M//(32·4)
+EX.REP_K   = EX.SCALE_K/EX.SCALE_BLOCK_K;         // 32  = SCALE_K//4 = K//(VEC·4)
+EX.NCELL   = EX.REP_M*EX.REP_K;                   // 512 个 [128,4] 格子
+
+/* 张量配色：A=蓝、A_scale=紫、当前部分=橙（与页眉图例一致） */
+const TEN={A:'#2563eb', S:'#7c3aed', cur:'#ea580c'};
+// 带白描边的醒目文字标签（当作「徽标」用）
+const lbl=(x,y,t,c,s,anchor)=>`<text x="${x}" y="${y}"${anchor?` text-anchor="${anchor}"`:''} style="font-size:${s||10}px;font-weight:800;paint-order:stroke;stroke:#fff;stroke-width:3.2px;stroke-linejoin:round" fill="${c}">${t}</text>`;
+
+/* ===== 步骤 ===== */
+const STEPS=[
+ {tag:'① 粒度', title:'一次 MMA 消费一个 [128, 4] 的 scale 块',
+  hint:'内层循环每个 K 块 = 一条 tcgen05_mma_scaled',
+  explName:'矩阵乘内层循环的最小工作单元'},
+ {tag:'② 摆法', title:'这 128 行必须按 32 × 4 摆（硬件 TMEM scale 布局）',
+  hint:'128 = 4 组 × 32 行；K 的 4 列在最内 → [32, 4, 4]',
+  explName:'为什么是 32、4、4'},
+ {tag:'③ 动机', title:'让「一次 MMA 的 scale」整块连续 → 一条 TMA 搬完',
+  hint:'自然布局：被 SCALE_K 跨距打散；packed：512B 连续',
+  explName:'出发动机 = TMA 友好的连续访问'},
+ {tag:'④ 约束', title:'shape 约束全是这条粒度推出来的',
+  hint:'BLOCK_M=128 · BLOCK_N≥128 · BLOCK_K≥VEC·4',
+  explName:'三条约束的由来'},
+];
+let step=0, selDim=null, zoom=1;
+
+/* ===== 缩放 ===== */
+function applyZoom(){
+  const svg=$('diagSvg').querySelector('svg');
+  if(svg) svg.style.transform=`scale(${zoom})`;
+  const lbl=$('zoomLbl'); if(lbl) lbl.textContent=Math.round(zoom*100)+'%';
+}
+function setZoom(z){ zoom=Math.max(0.5,Math.min(4,Math.round(z*100)/100)); applyZoom(); }
+
+/* ===== stepper ===== */
+function buildStepper(){
+  let h='';
+  STEPS.forEach((s,i)=>{
+    if(i) h+=`<span class="chevron">›</span>`;
+    h+=`<div class="chip${i===step?' on':''}" data-i="${i}">
+      <span class="num">${i+1}</span><span class="ct"><span class="ck">${s.tag}</span></span></div>`;
+  });
+  h+=`<div class="navbtns"><button class="btn" id="prev">◀</button>
+    <button class="btn primary" id="next">下一步 ▶</button></div>`;
+  $('stepper').innerHTML=h;
+  document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>setStep(+c.dataset.i));
+  $('prev').onclick=()=>setStep(step-1);
+  $('next').onclick=()=>setStep(step+1);
+}
+function setStep(i){ selDim=null; step=Math.max(0,Math.min(STEPS.length-1,i)); render(); }
+
+// 点击某个维度卡片 → 跳到能展示它的那张图，并高亮它索引的数据
+// 维度 0/1 是外层索引（在 ① 粒度图里）；2/3/4 是 [32,4,4] 内部（在 ② 摆法图里）
+function setDim(i){
+  selDim = (selDim===i) ? null : i;          // 再点一次取消
+  if(selDim!==null) step = (selDim<=1) ? 0 : 1;
+  render();
+}
+
+/* ===== 5D 形状面板 ===== */
+function drawFormula(){
+  // 维：M//(32·4) | SCALE_K//4 | 32 | 4 | 4
+  const dims=[
+    {d:String(EX.REP_M), sub:'M//(32·4) = 2048//128<br>第几个128行块·pid_m', cls:step===2?'hl':''},
+    {d:String(EX.REP_K), sub:'K//(VEC·4) = 4096//128<br>第几个4列块·每次K迭代', cls:step===2?'hl':''},
+    {d:'32', sub:'组内行 (d2)<br>固定 32', cls:'unit'+(step===1?' hl':'')},
+    {d:'4', sub:'M组 (d1)<br>固定 4', cls:'unit'+(step===1?' hl':'')},
+    {d:'4', sub:'K列 (d4)=4×VEC<br>固定 4', cls:'unit'+(step===1?' hl':'')},
+  ];
+  let h=`<div style="margin:0 0 8px;padding:6px 9px;border-radius:7px;background:#f6f3fd;border:1px solid #d9c9f7;border-left:3px solid #7c3aed;font-size:11px;line-height:1.55">
+    这个 5D 形状只针对 <b style="color:#6d28d9">A_scale（缩放因子·紫色）</b>。
+    <b style="color:#1d4ed8">Operand A（蓝色）</b> 始终是 2D <span style="font-family:Consolas,monospace">[M, K]</span>，<b>不做</b> 5D 重排（沿 K 本就连续，普通 TMA 直接搬）。
+  </div><div class="frow">`;
+  dims.forEach((x,i)=> h+=`<div class="dim ${x.cls}${selDim===i?' sel':''}" data-dim="${i}"><div class="d">${x.d}</div><div class="sub">${x.sub}</div></div>`);
+  h+=`</div>
+  <div style="margin-top:6px;font-size:11.5px;font-weight:700;color:#0550ae;font-family:Consolas,monospace">
+    完整 5D shape = [${EX.REP_M}, ${EX.REP_K}, 32, 4, 4]　←　原始 A_scale = [${EX.M}, ${EX.SCALE_K}]　(= [M, K//VEC])</div>
+  <div class="braces">
+    <div class="brc idx" style="flex:2">前两维 [${EX.REP_M}, ${EX.REP_K}] = 它在整张量里的<b>位置</b>（grid / K 迭代索引）</div>
+    <div class="brc unit" style="flex:3">末三维 [32,4,4] = <b>一次 MMA 的 512 个 scale</b>（= 一个 [128,4] 块）</div>
+  </div>`;
+  if(selDim===null){
+    h+=`<div style="margin-top:7px;font-size:11px;color:#7a8694">👆 点任意一个维度卡片，左图就会高亮它在数据里索引的那一片。</div>`;
+  }
+  $('formula').innerHTML=h;
+  $('formula').querySelectorAll('.dim').forEach(el=> el.onclick=()=>setDim(+el.dataset.dim));
+}
+
+/* ===== 全景定位图：当前这一格在整张 A_scale 中的位置 ===== */
+function overviewMap(){
+  let g='';
+  const gx0=60, gy0=56, cw=30, ch=16, gap=4, NC=6, NR=4;
+  const curR=0, curC=2;
+  const cellX=c=>gx0+c*(cw+gap), cellY=r=>gy0+r*(ch+gap);
+  const ccx=cellX(curC), ccy=cellY(curR);
+
+  g+=`<text x="34" y="20" style="font-size:12px;font-weight:800" fill="#11305c">原始完整数据 · A_scale（A 的「缩放因子」张量，不是 A 本身）= [M, SCALE_K] = [${EX.M}, ${EX.SCALE_K}]</text>`;
+  g+=`<text x="34" y="36" style="font-size:9.5px" fill="#7a8694">A_scale 与 A 算子 <tspan font-weight="800" fill="#9a3412">同 M 行</tspan>；列数 = SCALE_K = K // VEC_SIZE = ${EX.K} // ${EX.VEC} = ${EX.SCALE_K}（≠ K）。每个小格 = 一条 MMA 用的 [128,4] scale 块。</text>`;
+
+  // 坐标轴提示
+  g+=`<text x="${gx0-8}" y="${gy0+ch}" text-anchor="end" style="font-size:8.5px;font-weight:700" fill="${GRP[0]}">M↓</text>`;
+  g+=`<text x="${cellX(0)}" y="${gy0-3}" style="font-size:8.5px;font-weight:700" fill="${GRP[2]}">K→</text>`;
+  g+=`<text x="${ccx+cw/2}" y="${gy0-3}" text-anchor="middle" style="font-size:8.5px;font-weight:800" fill="${TEN.cur}">↓当前·部分</text>`;
+
+  // 网格（末行/末列用省略号表示「还有很多格」）
+  for(let r=0;r<NR;r++)for(let c=0;c<NC;c++){
+    const x=cellX(c), y=cellY(r);
+    if(r===NR-1 && c===NC-1) continue;
+    if(r===NR-1){ g+=`<text x="${x+cw/2}" y="${y+ch/2+4}" text-anchor="middle" style="font-size:11px" fill="#90a0b0">⋮</text>`; continue; }
+    if(c===NC-1){ g+=`<text x="${x+cw/2}" y="${y+ch/2+4}" text-anchor="middle" style="font-size:11px" fill="#90a0b0">⋯</text>`; continue; }
+    const isCur=(r===curR&&c===curC);
+    g+=`<rect x="${x}" y="${y}" width="${cw}" height="${ch}" rx="3" fill="${isCur?lighten(TEN.cur,.20):lighten(TEN.S,.12)}" stroke="${isCur?TEN.cur:'#c9b6ef'}" stroke-width="${isCur?2.4:1}"/>`;
+  }
+
+  // 右侧「它从哪来」说明框
+  const bx=300;
+  g+=`<rect x="${bx}" y="46" width="396" height="86" rx="9" fill="#fff3e8" stroke="${COL.new}" stroke-width="1.4"/>`;
+  g+=`<text x="${bx+14}" y="64" style="font-size:10.5px;font-weight:800" fill="#9a3412">高亮这一格是怎么来的？</text>`;
+  g+=`<text x="${bx+14}" y="81" style="font-size:9.5px" fill="#7a3a1a">它在整张里的坐标 = 5D 形状的前两维：</text>`;
+  g+=`<text x="${bx+14}" y="96" style="font-size:9.5px" fill="#7a3a1a">· 第 pid_m 个 128 行块　(M//(32·4) → 共 ${EX.REP_M} 个)</text>`;
+  g+=`<text x="${bx+14}" y="111" style="font-size:9.5px" fill="#7a3a1a">· 第 k 个 4 列块　(K//(VEC·4) → 共 ${EX.REP_K} 个，内层每次 +1)</text>`;
+  g+=`<text x="${bx+14}" y="126" style="font-size:9.5px" fill="#7a3a1a">整张共有 ${EX.REP_M} × ${EX.REP_K} = ${EX.NCELL} 个这样的格子。</text>`;
+
+  // selDim：前两维=换「哪一格」（位置动画）；末三维=在格子内部
+  let cap='';
+  if(selDim===0){
+    const ys=[0,1,2].map(r=>cellY(r)).join(';');
+    g+=`<rect x="${ccx}" y="${cellY(0)}" width="${cw}" height="${ch}" rx="3" fill="${lighten(COL.new,.34)}" stroke="${COL.new}" stroke-width="2.6"><animate attributeName="y" values="${ys}" dur="1.8s" calcMode="discrete" repeatCount="indefinite"/></rect>`;
+    cap='前维 d0 = M//(32·4)：选「第几个 128 行块」(pid_m) —— 高亮格在整张里上下移动';
+  } else if(selDim===1){
+    const xs=[0,1,2,3,4].map(c=>cellX(c)).join(';');
+    g+=`<rect x="${cellX(0)}" y="${ccy}" width="${cw}" height="${ch}" rx="3" fill="${lighten(COL.new,.34)}" stroke="${COL.new}" stroke-width="2.6"><animate attributeName="x" values="${xs}" dur="1.8s" calcMode="discrete" repeatCount="indefinite"/></rect>`;
+    cap='前维 d1 = K//(VEC·4)：内层循环「第几个 4 列块」—— 高亮格在整张里左右移动';
+  } else if(selDim!==null){
+    cap='末三维 [32,4,4] 不换格子，是在「当前这一格」内部的摆法 —— 见下方放大图';
+  }
+  if(cap) g+=`<text x="34" y="146" style="font-size:9.5px;font-weight:700" fill="${COL.new}">${cap}</text>`;
+
+  // 分割线 + 放大提示（下方 detail 已整体下移 158）
+  g+=`<line x1="20" y1="152" x2="700" y2="152" stroke="#cfd8e3" stroke-width="1.2" stroke-dasharray="7 5"/>`;
+  g+=`<rect x="278" y="144" width="244" height="16" rx="8" fill="#fff" stroke="${COL.new}" stroke-width="1.1"/>`;
+  g+=`<text x="400" y="156" text-anchor="middle" style="font-size:9.5px;font-weight:800" fill="${COL.new}">↓ 以下 = 把上面高亮的「这一个格」放大 ↓</text>`;
+  return g;
+}
+
+/* ===== 主图 ===== */
+function drawDiag(){
+  const withOverview = step<=2;
+  let g=`<svg viewBox="0 0 720 ${withOverview?614:440}">`;
+  g+=`<defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#7c3aed"/></marker>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#16a34a"/></marker>
+    <marker id="ao" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#ea580c"/></marker>
+    <pattern id="hatch" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
+      <rect width="7" height="7" fill="#eef2f7"/><line x1="0" y1="0" x2="0" y2="7" stroke="#c7d0db" stroke-width="2"/></pattern></defs>`;
+  if(withOverview){
+    g+=overviewMap();
+    g+=`<g transform="translate(0,158)">`;
+    if(step===0) g+=diagGranularity();
+    else if(step===1) g+=diagLayout();
+    else g+=diagMotive();
+    g+=`</g>`;
+  } else {
+    g+=diagConstraints();
+  }
+  g+=`</svg>`;
+  $('diagSvg').innerHTML=g;
+  applyZoom();
+}
+
+/* —— ① 粒度：A tile 沿 K 切块，每块一条 MMA，对应一个 [128,4] scale —— */
+function diagGranularity(){
+  let g='';
+  // A 算子 tile：高=BLOCK_M(128)，宽=K，沿 K 切成 BLOCK_K 块；高亮最后一块（便于水平引出）
+  const ax=46, ay=70, aw=320, ah=150, nK=4, bw=aw/nK;
+  const fk=nK-1;                                  // focus = 最后一个 K 块
+  g+=`<text x="${ax}" y="42" style="font-size:12px;font-weight:700" fill="#1c2733">A 算子 = 原始量化数据（不是 scale！）整张 A = [M, K]；下面是其中一条 [BLOCK_M=128, K] 行块</text>`;
+  g+=`<text x="${ax}" y="58" style="font-size:10px" fill="#5b6b7d">K = A 的列数（reduction 维元素数）；内层循环沿 K 每次取一个 [128, BLOCK_K] 子块。</text>`;
+  g+=`<text x="${ax-12}" y="${ay+ah/2}" text-anchor="middle" transform="rotate(-90 ${ax-12} ${ay+ah/2})" style="font-size:10.5px;font-weight:700" fill="#5b6b7d">BLOCK_M = 128 行 ↓</text>`;
+  for(let k=0;k<nK;k++){
+    const focus=k===fk, bxx=ax+k*bw;
+    g+=`<rect x="${bxx}" y="${ay}" width="${bw-4}" height="${ah}" rx="5"
+      fill="${lighten(TEN.A,.12)}" stroke="#9bb6e6" stroke-width="1.2"/>`;
+    g+=`<text x="${bxx+(bw-4)/2}" y="${ay+ah/2+4}" text-anchor="middle" style="font-size:11px;font-weight:${focus?800:600}" fill="${focus?TEN.cur:TEN.A}">K块${k}</text>`;
+    if(focus){
+      g+=`<rect x="${bxx-2}" y="${ay-2}" width="${bw}" height="${ah+4}" rx="6" fill="none" stroke="${TEN.cur}" stroke-width="2.8"/>`;
+      g+=`<text x="${bxx+(bw-4)/2}" y="${ay+ah+17}" text-anchor="middle" style="font-size:9.5px;font-weight:700" fill="${TEN.cur}">↑ 当前部分：这条 MMA 的 A 子块 [128, BLOCK_K]</text>`;
+    }
+  }
+  // 算子徽标：标清这是 Operand A，且只是完整 A 的一个 128 行块（部分）
+  g+=lbl(ax+8, ay+16, 'Operand A', TEN.A, 11.5);
+  g+=lbl(ax+8, ay+30, '（整张 A 的 1 个 128 行块 = 部分）', TEN.A, 8.5);
+  g+=`<text x="${ax}" y="${ay+ah+35}" style="font-size:10px" fill="#7a8694">每个 [BLOCK_M, BLOCK_K] 子块 = 一条 MMA；图中仅示意前 4 个。</text>`;
+  g+=`<text x="${ax}" y="${ay+ah+49}" style="font-size:10px" fill="#7a8694">沿 K 实际共 K//BLOCK_K 个 —— 见下方「K 维换算」。</text>`;
+
+  // 右侧 scale 块（4 列；128 行示意 4 行），竖直居中对齐到 focus 中线
+  const cw=42, ch=24, cols=4;
+  const fcx=ax+nK*bw-4, fcy=ay+ah/2;
+  const sx=470, sy=fcy-2*ch;
+  g+=lbl(sx, sy-28, 'A_scale · 当前部分（这条 MMA 的 scale）', TEN.S, 11);
+  g+=`<text x="${sx}" y="${sy-13}" style="font-size:10px;font-weight:700" fill="${TEN.S}">= A_scale 的 [BLOCK_M, BLOCK_K//VEC] = [128, 4]</text>`;
+  const rlab=['行0','行1','⋮','行127'];
+  for(let r=0;r<4;r++){
+    const yy=sy+r*ch;
+    if(rlab[r]==='⋮'){ g+=`<text x="${sx+cols*cw/2}" y="${yy+ch/2+4}" text-anchor="middle" style="font-size:13px" fill="#90a0b0">⋮</text>`; }
+    else {
+      for(let c=0;c<cols;c++)
+        g+=`<rect x="${sx+c*cw}" y="${yy}" width="${cw-3}" height="${ch-3}" rx="3" fill="${lighten(COL.acc,.18)}" stroke="${COL.acc}" stroke-width="1"/>`;
+      g+=`<text x="${sx+cols*cw+6}" y="${yy+ch/2+3}" style="font-size:9px" fill="#5b6b7d">${rlab[r]}</text>`;
+    }
+  }
+  g+=`<text x="${sx+cols*cw/2}" y="${sy+4*ch+14}" text-anchor="middle" style="font-size:9.5px" fill="#5b6b7d">4 列 = BLOCK_K//VEC（每列 1 个 scale，管 VEC 个 K 元素）</text>`;
+  // 橙色虚线框：标清这一整块就是「当前部分」
+  g+=`<rect x="${sx-5}" y="${sy-5}" width="${cols*cw}" height="${4*ch+10}" rx="7" fill="none" stroke="${TEN.cur}" stroke-width="2" stroke-dasharray="6 4"/>`;
+
+  // 水平实线箭头：focus 右边缘 → scale 块左侧
+  g+=`<path d="M${fcx+3},${fcy} L${sx-13},${fcy}" fill="none" stroke="${COL.acc}" stroke-width="2.4" marker-end="url(#ah)"/>`;
+  const mx=(fcx+3+sx-13)/2;
+  g+=`<rect x="${mx-22}" y="${fcy-25}" width="44" height="16" rx="8" fill="#fff" stroke="${COL.acc}" stroke-width="1.1"/>`;
+  g+=`<text x="${mx}" y="${fcy-13}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="${COL.acc}">需要</text>`;
+
+  // 总结大字
+  const boxY=sy+4*ch+26;
+  g+=`<rect x="${sx-4}" y="${boxY}" width="232" height="64" rx="9" fill="#f3eefe" stroke="${COL.acc}" stroke-width="1.5"/>`;
+  g+=`<text x="${sx+112}" y="${boxY+22}" text-anchor="middle" style="font-size:13px;font-weight:800" fill="#5b21b6">128 × 4 = 512 个 scale</text>`;
+  g+=`<text x="${sx+112}" y="${boxY+40}" text-anchor="middle" style="font-size:10.5px" fill="#6b4ea8">= 一次 MMA 的「原子 scale 单元」</text>`;
+  g+=`<text x="${sx+112}" y="${boxY+56}" text-anchor="middle" style="font-size:9px" fill="#8a7bb5">(BLOCK_K=VEC·4 最小时正好这么大)</text>`;
+
+  // ===== K 维换算链：BLOCK_K ↔ VEC ↔ SCALE_K（关系全在这里）=====
+  const kx=46, kW=620, ky1=312, kh1=22, ky2=358, kh2=24;
+  const gW=kW/EX.REP_K, bW=kW*EX.BLOCK_K/EX.K, sW=gW/4;   // 一组宽 = 一个 BLOCK_K 宽（二者相等）
+  g+=`<text x="${kx}" y="294" style="font-size:11.5px;font-weight:800" fill="#11305c">K 维换算：A 的 K　↔　A_scale 的 SCALE_K　（示例 K=${EX.K}, VEC_SIZE=${EX.VEC}, BLOCK_K=${EX.BLOCK_K}）</text>`;
+  g+=`<text x="${kx+bW+6}" y="307" style="font-size:9px;font-weight:800" fill="${COL.new}">BLOCK_K=${EX.BLOCK_K} 元素 = 一个 MMA 沿 K 取的片</text>`;
+
+  // Bar1：K 个元素
+  g+=`<rect x="${kx}" y="${ky1}" width="${kW}" height="${kh1}" rx="4" fill="${lighten('#2563eb',.12)}" stroke="#2563eb" stroke-width="1.3"/>`;
+  for(let i=1;i<8;i++) g+=`<line x1="${kx+i*kW/8}" y1="${ky1}" x2="${kx+i*kW/8}" y2="${ky1+kh1}" stroke="#9bb6e6" stroke-width="0.8"/>`;
+  g+=`<text x="${kx+kW/2}" y="${ky1+kh1/2+4}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="#1c2733">A 沿 K：${EX.K} 个元素（K = A 的列数 / reduction 维）</text>`;
+  g+=`<rect x="${kx}" y="${ky1-2}" width="${bW}" height="${kh1+4}" rx="3" fill="${lighten(COL.new,.22)}" stroke="${COL.new}" stroke-width="2"/>`;
+
+  // 换算：每 VEC 个元素压成 1 个 scale（x 起点避开下面的对齐虚线）
+  g+=`<text x="${kx+80}" y="${ky1+kh1+18}" style="font-size:9.5px;font-weight:700" fill="${GRP[2]}">每 VEC_SIZE=${EX.VEC} 个元素共享 1 个 scale　⇒　SCALE_K = K // VEC = ${EX.K} // ${EX.VEC} = ${EX.SCALE_K}　↓</text>`;
+
+  // Bar2：SCALE_K 个 scale 列，按 4 列分组（REP_K 组）
+  g+=`<rect x="${kx}" y="${ky2}" width="${kW}" height="${kh2}" rx="4" fill="${lighten(TEN.S,.12)}" stroke="#c9b6ef" stroke-width="1.3"/>`;
+  for(let i=1;i<EX.REP_K;i++) g+=`<line x1="${kx+i*gW}" y1="${ky2}" x2="${kx+i*gW}" y2="${ky2+kh2}" stroke="#d3c4f2" stroke-width="0.7"/>`;
+  for(let c=0;c<4;c++) g+=`<rect x="${kx+c*sW}" y="${ky2}" width="${Math.max(sW-0.6,1)}" height="${kh2}" fill="${lighten(COL.new,.22)}" stroke="${COL.new}" stroke-width="0.7"/>`;
+  g+=`<rect x="${kx}" y="${ky2-1}" width="${gW}" height="${kh2+2}" rx="2" fill="none" stroke="${COL.new}" stroke-width="2"/>`;
+  g+=`<text x="${kx+kW/2}" y="${ky2+kh2+15}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="#1c2733">A_scale 沿 SCALE_K：${EX.SCALE_K} 个 scale 列（橙色首组 4 列 = BLOCK_K//VEC = SCALE_BLOCK_K = ${EX.SCALE_BLOCK_K} = 一个 [128,4] 块的 K 维）</text>`;
+
+  // 对齐虚线：BLOCK_K 元素 ↔ 4 个 scale 列
+  g+=`<line x1="${kx}" y1="${ky1+kh1+2}" x2="${kx}" y2="${ky2-2}" stroke="${COL.new}" stroke-width="1.1" stroke-dasharray="3 2"/>`;
+  g+=`<line x1="${kx+bW}" y1="${ky1+kh1+2}" x2="${kx+gW}" y2="${ky2-2}" stroke="${COL.new}" stroke-width="1.1" stroke-dasharray="3 2"/>`;
+
+  // 结论
+  g+=`<rect x="${kx}" y="${ky2+kh2+24}" width="${kW}" height="40" rx="9" fill="#fff3e8" stroke="${COL.new}" stroke-width="1.4"/>`;
+  g+=`<text x="${kx+12}" y="${ky2+kh2+42}" style="font-size:10.5px;font-weight:800" fill="#9a3412">沿 K 共 SCALE_K // 4 = K // BLOCK_K = ${EX.NITER} 个 [128,4] 块 = ${EX.NITER} 次内层循环（每次一条 MMA）。</text>`;
+  g+=`<text x="${kx+12}" y="${ky2+kh2+58}" style="font-size:9.5px" fill="#7a3a1a">这 ${EX.NITER} 就是上方「全景图」K→ 轴的列数：A_scale 的 K 维 SCALE_K=${EX.SCALE_K}，每 4 列打成一个块 ⇒ ${EX.REP_K} 个块。</text>`;
+
+  return g;
+}
+
+/* —— ② 摆法：[128,4] → 128 拆 4×32 → [32,4,4] —— */
+function diagLayout(){
+  let g='';
+  g+=`<text x="40" y="38" style="font-size:12px;font-weight:700" fill="#1c2733">这 512 个 scale 在硬件（TMEM scale 布局）里有固定摆法：把 128 行拆成 4 组 × 32 行</text>`;
+  // 左：128 行竖条，分 4 组（每组32），4 色
+  const lx=70, ly=64, lw=70, gH=72, gap=6;
+  g+=`<text x="${lx+lw/2}" y="${ly-8}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="#5b6b7d">[128 行] × [4 列]</text>`;
+  for(let gi=0;gi<4;gi++){
+    const yy=ly+gi*(gH+gap), c=GRP[gi];
+    g+=`<rect x="${lx}" y="${yy}" width="${lw}" height="${gH}" rx="5" fill="${lighten(c,.20)}" stroke="${c}" stroke-width="1.6"/>`;
+    g+=`<text x="${lx+lw/2}" y="${yy+gH/2-3}" text-anchor="middle" style="font-size:10px;font-weight:800" fill="${c}">组 d1=${gi}</text>`;
+    g+=`<text x="${lx+lw/2}" y="${yy+gH/2+12}" text-anchor="middle" style="font-size:9px" fill="${c}">行 ${gi*32}–${gi*32+31}</text>`;
+  }
+  g+=`<text x="${lx+lw/2}" y="${ly+4*(gH+gap)+8}" text-anchor="middle" style="font-size:9.5px" fill="#7a8694">128 = 4(组) × 32(行)</text>`;
+
+  // 箭头
+  g+=`<path d="M${lx+lw+12},${ly+150} L${lx+lw+70},${ly+150}" stroke="${COL.acc}" stroke-width="2" marker-end="url(#ah)"/>`;
+
+  // 右：拆出的三维结构 [32, 4, 4]
+  const rx=lx+lw+90, ry=80;
+  const sel=selDim;                  // 2=“32”(d2行) · 3=“4”(d1组) · 4=“4”(d4 K列)
+  g+=`<text x="${rx}" y="${ry-20}" style="font-size:11.5px;font-weight:700" fill="${COL.acc}">硬件要求的内部形状 = [32, 4, 4]</text>`;
+  // 画一个代表性的 d2(32 取 4 个示意) × d1(4) 网格，每格含 4(K列) 细条（始终全亮）
+  const cw=86, ch=30, mcw=cw/4;
+  const d2lab=['d2=0','d2=1','⋮','d2=31'];
+  for(let r=0;r<4;r++){
+    const yy=ry+r*ch;
+    if(d2lab[r]==='⋮'){ g+=`<text x="${rx+2*cw}" y="${yy+ch/2+4}" text-anchor="middle" style="font-size:13px" fill="#90a0b0">⋮</text>`; continue; }
+    for(let gi=0;gi<4;gi++){
+      const c=GRP[gi];
+      for(let kk=0;kk<4;kk++)
+        g+=`<rect x="${rx+gi*cw+kk*mcw}" y="${yy}" width="${mcw-1.5}" height="${ch-3}" rx="2" fill="${lighten(c,.26)}" stroke="${c}" stroke-width="0.8"/>`;
+    }
+    g+=`<text x="${rx-6}" y="${yy+ch/2+3}" text-anchor="end" style="font-size:8.5px" fill="#5b6b7d">${d2lab[r]}</text>`;
+  }
+  // 顶部 d1 标注
+  for(let gi=0;gi<4;gi++)
+    g+=`<text x="${rx+gi*cw+cw/2}" y="${ry-6}" text-anchor="middle" style="font-size:9px;font-weight:700" fill="${GRP[gi]}">d1=${gi}·(4列)</text>`;
+
+  // ===== 遍历方向动画：当前维的索引按内存顺序“扫过”网格 =====
+  const gH4=4*ch;
+  if(sel===4){ // d4 最内层、最快：在一个代表格内左→右扫 4 个 K 列
+    const cx=rx, cy=ry, xs=[0,1,2,3].map(k=>cx+k*mcw).join(';');
+    g+=`<rect x="${rx}" y="${ry-3}" width="${cw}" height="${ch-3+6}" rx="3" fill="none" stroke="${COL.new}" stroke-width="1.6" stroke-dasharray="4 3"/>`;
+    g+=`<rect x="${cx}" y="${cy}" width="${mcw-1.5}" height="${ch-3}" rx="2" fill="${lighten(COL.new,.34)}" stroke="${COL.new}" stroke-width="2">
+        <animate attributeName="x" values="${xs}" dur="1.6s" calcMode="discrete" repeatCount="indefinite"/></rect>`;
+    g+=`<text x="${rx+cw+8}" y="${ry+ch/2+3}" style="font-size:9px;font-weight:700" fill="${COL.new}">d4 →（一个格内，最快）</text>`;
+  }
+  if(sel===3){ // d1：左→右扫过 4 个 M 组（4 列）
+    const xs=[0,1,2,3].map(gi=>rx+gi*cw).join(';');
+    g+=`<rect x="${rx}" y="${ry-2}" width="${cw-2}" height="${gH4-2}" rx="3" fill="${lighten(COL.new,.16)}" stroke="${COL.new}" stroke-width="2.4">
+        <animate attributeName="x" values="${xs}" dur="2.2s" calcMode="discrete" repeatCount="indefinite"/></rect>`;
+  }
+  if(sel===2){ // d2：上→下扫过 32 行（示意 4 排，平滑）
+    g+=`<rect x="${rx-2}" y="${ry}" width="${4*cw}" height="${ch-3}" rx="3" fill="${lighten(COL.new,.16)}" stroke="${COL.new}" stroke-width="2.4">
+        <animate attributeName="y" values="${ry};${ry+gH4-(ch-3)}" dur="2.4s" calcMode="linear" repeatCount="indefinite"/></rect>`;
+  }
+
+  const capN = sel===2?'d2（“32”·组内行）：沿 32 行 <tspan font-weight="800">上 → 下</tspan> 遍历（每行 4 组 ×4 K列 = 16 个 scale）'
+    : sel===3?'d1（“4”·M组）：沿 4 个 M 组 <tspan font-weight="800">左 → 右</tspan> 遍历（每组一竖列 = 32×4 = 128 个 scale）'
+    : sel===4?'d4（“4”·K列，最内层最快）：在一个 16B 格内沿 4 个 scale 列 <tspan font-weight="800">左 → 右</tspan> 遍历'
+    : '外层 32 (d2 组内行) · 中层 4 (d1 组) · 内层 4 (d4 = K 的 4 列)';
+  g+=`<text x="${rx+2*cw}" y="${ry+4*ch+16}" text-anchor="middle" style="font-size:9.5px;font-weight:${sel?700:400}" fill="${sel?COL.new:'#7a8694'}">${capN}</text>`;
+  // 内存遍历顺序条
+  if(sel!==null){
+    const order=[['d4','最快'],['d1',''],['d2',''],['K块',''],['M块','最慢']];
+    const cur = sel===4?'d4':sel===3?'d1':sel===2?'d2':'';
+    let ox=rx, oy=ry+4*ch+104, h2='';
+    h2+=`<text x="${ox}" y="${oy}" style="font-size:9px;font-weight:700" fill="#5b6b7d">内存遍历顺序：</text>`;
+    let px=ox+72;
+    order.forEach((o,i)=>{
+      const on=o[0]===cur;
+      h2+=`<rect x="${px}" y="${oy-10}" width="36" height="14" rx="7" fill="${on?lighten(COL.new,.2):'#eef2f7'}" stroke="${on?COL.new:'#c7d0db'}" stroke-width="${on?2:1}"/>`;
+      h2+=`<text x="${px+18}" y="${oy}" text-anchor="middle" style="font-size:8.5px;font-weight:${on?800:600}" fill="${on?COL.new:'#7a8694'}">${o[0]}</text>`;
+      px+=36; if(i<order.length-1){ h2+=`<text x="${px+4}" y="${oy}" style="font-size:9px" fill="#aebac8">›</text>`; px+=14; }
+    });
+    g+=h2;
+  }
+
+  g+=`<rect x="${rx}" y="${ry+4*ch+26}" width="360" height="58" rx="9" fill="#f3eefe" stroke="${COL.acc}" stroke-width="1.5"/>`;
+  g+=`<text x="${rx+180}" y="${ry+4*ch+47}" text-anchor="middle" style="font-size:12.5px;font-weight:800" fill="#5b21b6">32 × 4 × 4 = 512 字节，整块连续</text>`;
+  g+=`<text x="${rx+180}" y="${ry+4*ch+65}" text-anchor="middle" style="font-size:10px" fill="#6b4ea8">→ 描述符当作 […, 2, 256]：256B 内维，TMA 一条消息搞定</text>`;
+  g+=`<text x="40" y="430" style="font-size:10px" fill="#7a8694">注：32、4、4 不是随便取的 —— 它就是 tcgen05 的 TensorMemoryScalesLayout 对「128 行 scale」的固定排布规则。swizzle 的目的就是预先把 GMEM 摆成这个样子。</text>`;
+  return g;
+}
+
+/* —— ③ 动机：自然布局散 vs packed 连续 —— */
+function diagMotive(){
+  let g='';
+  // 上：自然布局——一个 MMA 的 [128,4] 被 SCALE_K 跨距打散
+  g+=`<text x="40" y="36" style="font-size:12px;font-weight:700" fill="${COL.bad}">✗ 自然布局 [M, SCALE_K]：一次 MMA 的 128 行 scale 被 SCALE_K 跨距打散成 128 段</text>`;
+  const y0=52, x0=40, cw=30, ch=24, seg=4, gp=46;
+  let x=x0;
+  for(let r=0;r<3;r++){
+    g+=`<rect x="${x}" y="${y0}" width="${seg*cw}" height="${ch}" rx="3" fill="${lighten(COL.acc,.18)}" stroke="${COL.acc}" stroke-width="1.2"/>`;
+    g+=`<text x="${x+seg*cw/2}" y="${y0+ch/2+4}" text-anchor="middle" style="font-size:9px;font-weight:700" fill="${COL.acc}">行${r}·4B</text>`;
+    x+=seg*cw;
+    g+=`<rect x="${x}" y="${y0}" width="${gp}" height="${ch}" rx="3" fill="url(#hatch)" stroke="#c7d0db" stroke-width="1"/>`;
+    g+=`<text x="${x+gp/2}" y="${y0+ch/2+4}" text-anchor="middle" style="font-size:8px" fill="#90a0b0">别的列</text>`;
+    x+=gp;
+  }
+  g+=`<text x="${x+8}" y="${y0+ch/2+4}" style="font-size:10px" fill="#90a0b0">⋯（共 128 段，每段仅 4 字节）</text>`;
+  g+=`<text x="${x0}" y="${y0+ch+18}" style="font-size:9.5px" fill="#7a8694">每行只有这 4 个属于本 MMA，后面紧跟沿 K 的其它 scale → TMA 得发一堆 16B 小消息、抖 L2。</text>`;
+
+  // 中：packed——512B 连续，分 2×256
+  const y1=150;
+  g+=`<text x="40" y="${y1-6}" style="font-size:12px;font-weight:700" fill="${COL.good}">✓ packed-block：同一个 MMA 的 512 个 scale 连成一整片 512 字节</text>`;
+  const pw=560, half=pw/2;
+  g+=`<rect x="${x0}" y="${y1+6}" width="${pw}" height="${ch+6}" rx="5" fill="${lighten(COL.acc,.16)}" stroke="${COL.acc}" stroke-width="1.6"/>`;
+  for(let h=0;h<2;h++){
+    g+=`<rect x="${x0+h*half+4}" y="${y1+10}" width="${half-8}" height="${ch-2}" rx="3" fill="none" stroke="${COL.tma}" stroke-width="1.6" stroke-dasharray="5 3"/>`;
+    g+=`<text x="${x0+h*half+half/2}" y="${y1+10+ch/2+3}" text-anchor="middle" style="font-size:9.5px;font-weight:700" fill="${COL.tma}">256 字节 = 2 条缓存行</text>`;
+  }
+  g+=`<path d="M${x0},${y1+6+ch+14} L${x0+pw},${y1+6+ch+14}" stroke="${COL.good}" stroke-width="1.4"/>`;
+  g+=`<text x="${x0+pw/2}" y="${y1+6+ch+28}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="${COL.good}">512 字节 = 一次 MMA 的全部 scale（切成 2×256：最内维 256B ≫ 天然的 16B）</text>`;
+
+  // 下：路径 GMEM →TMA→ SMEM
+  const y2=250;
+  g+=`<text x="40" y="${y2}" style="font-size:11.5px;font-weight:700" fill="#1c2733">于是数据通路变成 ——</text>`;
+  const bx=[40,250,470], bw2=150, by=y2+12, bh=46;
+  const labs=[['Global Mem','packed scales',COL.gmem],['TMA','async_load · 256B',COL.tma],['SMEM','scale buf',COL.smem]];
+  labs.forEach((L,i)=>{
+    g+=`<rect x="${bx[i]}" y="${by}" width="${bw2}" height="${bh}" rx="9" fill="${lighten(L[2],.14)}" stroke="${L[2]}" stroke-width="2"/>`;
+    g+=`<text x="${bx[i]+bw2/2}" y="${by+19}" text-anchor="middle" style="font-size:11px;font-weight:700" fill="${L[2]}">${L[0]}</text>`;
+    g+=`<text x="${bx[i]+bw2/2}" y="${by+35}" text-anchor="middle" style="font-size:9.5px" fill="#5b6b7d">${L[1]}</text>`;
+    if(i<2) g+=`<path d="M${bx[i]+bw2},${by+bh/2} L${bx[i+1]},${by+bh/2}" stroke="#9fb0c0" stroke-width="2.4" marker-end="url(#ag)"/>`;
+  });
+  g+=`<text x="40" y="${by+bh+26}" style="font-size:11px" fill="#5b6b7d">这正是教程说的：<b style="color:#11305c">“contiguous access of a block of 128 rows … for each [BLOCK_M, BLOCK_K] subtile”</b> —— 一条 TMA 精确地搬来一次 MMA 所需的全部 scale。</text>`;
+  return g;
+}
+
+/* —— ④ 约束 —— */
+function diagConstraints(){
+  let g='';
+  g+=`<text x="40" y="40" style="font-size:12px;font-weight:700" fill="#1c2733">「一次 MMA = [128 行 × 4 列] = [32×4, 4]」这条粒度，直接钉死了三个 shape 约束：</text>`;
+  const rows=[
+    ['BLOCK_M == 128', 'M 维：一个 MMA 的 scale 单元正好 128 行（= 32×4）。少了凑不齐硬件布局，多了不是一个单元。', GRP[0]],
+    ['BLOCK_N ≥ 128', 'B 算子同理（B 的「行」是 N）。它的 scale 也按 128 行打包，所以 N 至少 128。', GRP[1]],
+    ['BLOCK_K ≥ VEC_SIZE × 4', '末维那个「4」要求每个 MMA 至少覆盖 4 个 scale 列 = 4×VEC 个 K 元素。MX(VEC32)=128，nvfp4(VEC16)=64。', GRP[2]],
+  ];
+  let y=64;
+  rows.forEach(([k,v,c])=>{
+    g+=`<rect x="40" y="${y}" width="640" height="58" rx="9" fill="${lighten(c,.10)}" stroke="${c}" stroke-width="1.6"/>`;
+    g+=`<rect x="40" y="${y}" width="8" height="58" rx="4" fill="${c}"/>`;
+    g+=`<text x="62" y="${y+24}" style="font-size:13px;font-weight:800;font-family:Consolas,monospace" fill="#11305c">${k}</text>`;
+    g+=`<text x="62" y="${y+44}" style="font-size:10.5px" fill="#445">${v}</text>`;
+    y+=68;
+  });
+  // 前两维
+  g+=`<rect x="40" y="${y}" width="640" height="52" rx="9" fill="#eef6ff" stroke="#0550ae" stroke-width="1.4"/>`;
+  g+=`<text x="62" y="${y+22}" style="font-size:12px;font-weight:800;font-family:Consolas,monospace" fill="#0550ae">前两维 M//(32·4) , K//(VEC·4)</text>`;
+  g+=`<text x="62" y="${y+40}" style="font-size:10.5px" fill="#445">= 这个 MMA 单元在整张 scale 里的位置：行块索引(pid_m) 与 K 迭代索引。每次内层循环挑一个。</text>`;
+  return g;
+}
+
+/* ===== 讲解 ===== */
+const EXPL=[
+ `<h3>内层循环的最小工作单元</h3>
+  <p>block-scaled matmul 的内层循环，每个 <code>BLOCK_K</code> 步发一条 <code>tcgen05_mma_scaled</code>，处理 A 的一个
+  <code>[BLOCK_M, BLOCK_K]</code> 子块。要把它反量化，就需要对应的
+  <code>[BLOCK_M, BLOCK_K//VEC_SIZE]</code> 这一块 scale。</p>
+  <div class="key"><b>关键：</b>当 <code>BLOCK_K</code> 取最小值 <code>VEC_SIZE·4</code> 时，这块 scale 正好是
+  <code>[128, 4] = 512</code> 个 —— 这就是一次 MMA 的<b>原子 scale 单元</b>。优化 2 的一切都围绕"高效搬运这个单元"展开。</p>
+  <div class="key" style="background:#fff3e8;border-color:#f0b894;border-left-color:#ea580c">
+  <b style="color:#9a3412">两个张量别搞混（变量关系）：</b><br>
+  · <b>A</b>（算子 = 原始量化数据）= <code>[M, K]</code><br>
+  · <b>A_scale</b>（缩放因子）= <code>[M, SCALE_K]</code>，其中 <code>SCALE_K = K // VEC_SIZE</code>（≠ K）<br>
+  二者<b>共用 M 行</b>；A 沿 K 每 <code>VEC_SIZE</code> 个元素 → A_scale 的 1 个 scale 列。<br>
+  一条 MMA = A 的 <code>[128, BLOCK_K]</code> 子块 + A_scale 的 <code>[128, BLOCK_K//VEC] = [128,4]</code> scale 块。</div>`,
+
+ `<h3>32、4、4 是哪来的</h3>
+  <p>这 512 个 scale 不是随意排列：<code>tcgen05</code> 的张量内存布局
+  <code>TensorMemoryScalesLayout</code> 规定，128 行 scale 必须拆成
+  <b>4 组 × 32 行</b>，K 方向的 4 列在最内。</p>
+  <p>于是这个原子单元的内部形状被钉死为 <code>[32, 4, 4]</code>：</p>
+  <p>· <b>32</b> = 组内行(d2)　· <b>4</b> = 第几组(d1)　· <b>4</b> = K 的 4 列(d4)。</p>
+  <div class="key"><b>所以</b> 5D 形状 <code>[…, 32, 4, 4]</code> 的末三维，就是"一次 MMA 的 512 个 scale + 硬件要求的内部摆法"。
+  <code>32×4×4 = 512 = 2×256</code> → 描述符的 <b>256B 内维</b>。</div>`,
+
+ `<h3>出发动机：连续 = TMA 友好</h3>
+  <p>自然布局 <code>[M, SCALE_K]</code> 行优先：一次 MMA 要的 128 行，在内存里被 <code>SCALE_K</code> 跨距切成
+  <b>128 段、每段才 4 字节</b>。TMA 只能发一堆 16 字节小消息，反复抖 L2。</p>
+  <p>packed-block 把这 512 个 scale <b>预先连成一整片 512 字节</b>，再让描述符把末三维当作
+  <code>[2, 256]</code> → 最内连续维 = <b>256 字节</b>。</p>
+  <div class="key"><b>为什么是 256？</b>TMA 按「最内连续维」发内存事务，这一维越大越好。若按天然的
+  <code>32×16</code> 看，最内维只有 <b>16 B</b> → 海量 16B 小消息、抖 L2（simple 版的毛病）。切成
+  <code>2×256</code> 后，最内维 <b>256 B = 2 条 L2 缓存行</b>（且 16B 对齐、整除 512）→ 少量大消息、吃满 L2。
+  256 是 swizzle 允许的、尽量大的连续块，所以 512 用 <code>2×256</code> 表示。</div>
+  <div class="key">这正是教程那句话：<i>contiguous access of a block of 128 rows of scale factors … for each
+  <code>[BLOCK_M, BLOCK_K]</code> subtile</i>。<b>「让一次 MMA 的 scale 连续」就是优化 2 的出发动机。</b></div>`,
+
+ `<h3>三条 shape 约束的由来</h3>
+  <p>明白了"一次 MMA = <code>[128 行 × 4 列] = [32×4, 4]</code>"这条粒度，约束就是它的<b>直接推论</b>：</p>
+  <table class="cons">
+    <tr><th>约束</th><th>原因</th></tr>
+    <tr><td><code>BLOCK_M==128</code></td><td>scale 单元正好 128 行(32×4)</td></tr>
+    <tr><td><code>BLOCK_N≥128</code></td><td>B 算子的 scale 也按 128 行打包</td></tr>
+    <tr><td><code>BLOCK_K≥VEC·4</code></td><td>末维"4"需 4 个 scale 列<br>MX=128 / nvfp4=64</td></tr>
+  </table>
+  <div class="key">前两维 <code>M//(32·4)</code>、<code>K//(VEC·4)</code> 只是"这个单元在整张量里的索引"（grid 与 K 迭代）。
+  换句话说：<b>shape 不是约定，而是被硬件的 MMA scale 粒度逼出来的。</b></div>`,
+];
+
+/* ===== render ===== */
+function render(){
+  const s=STEPS[step];
+  $('diagTag').textContent=`${step+1}·${s.tag.replace(/^[①②③④]\s*/,'')}`;
+  $('diagTitle').textContent=s.title;
+  $('diagHint').textContent=s.hint;
+  $('explName').textContent=s.explName;
+  $('explain').innerHTML=EXPL[step];
+  document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',+c.dataset.i===step));
+  $('prev').disabled=step===0; $('next').disabled=step===STEPS.length-1;
+  drawDiag(); drawFormula();
+}
+buildStepper(); render();
+$('zoomIn').onclick   =()=>setZoom(zoom+0.2);
+$('zoomOut').onclick  =()=>setZoom(zoom-0.2);
+$('zoomReset').onclick=()=>setZoom(1);
+window.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'||e.key==='ArrowDown') setStep(step+1);
+  else if(e.key==='ArrowLeft'||e.key==='ArrowUp') setStep(step-1);
+  else if(e.key==='+'||e.key==='=') setZoom(zoom+0.2);
+  else if(e.key==='-'||e.key==='_') setZoom(zoom-0.2);
+  else if(e.key==='0') setZoom(1);
+});
+</script>
+</body>
+</html>

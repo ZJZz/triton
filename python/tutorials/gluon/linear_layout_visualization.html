@@ -1,0 +1,702 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Linear Layout 可视化 · 09-tma-gather-scatter</title>
+<style>
+  :root{
+    --bg:#f6f8fa; --panel:#ffffff; --panel2:#eef1f5; --border:#d0d7de;
+    --fg:#1f2328; --muted:#656d76; --accent:#0969da; --green:#1a7f37;
+    --red:#cf222e; --yellow:#9a6700; --purple:#8250df;
+    --w0:#0969da; --w1:#bf3989; --w2:#1a7f37; --w3:#bc4c00;
+    --mono:'SF Mono',ui-monospace,'Cascadia Code',Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+    line-height:1.6;font-size:15px}
+  .wrap{max-width:1180px;margin:0 auto;padding:28px 22px 80px}
+  h1{font-size:26px;margin:0 0 6px}
+  h2{font-size:20px;margin:34px 0 12px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+  h3{font-size:16px;margin:20px 0 8px;color:var(--accent)}
+  .sub{color:var(--muted);margin:0 0 8px}
+  code,.mono{font-family:var(--mono)}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:18px 20px;margin:14px 0}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:880px){.grid2{grid-template-columns:1fr}}
+  pre{background:#f6f8fa;border:1px solid var(--border);border-radius:8px;padding:14px;overflow:auto;
+    font-family:var(--mono);font-size:13px;margin:8px 0}
+  .kw{color:var(--purple)} .num{color:#0550ae} .str{color:#0a3069} .com{color:var(--muted)}
+  .pill{display:inline-block;padding:2px 9px;border-radius:999px;font-size:12px;font-weight:600}
+  .ok{background:rgba(63,185,80,.16);color:var(--green);border:1px solid rgba(63,185,80,.4)}
+  .bad{background:rgba(248,81,73,.16);color:var(--red);border:1px solid rgba(248,81,73,.4)}
+  .warn{background:rgba(210,153,34,.16);color:var(--yellow);border:1px solid rgba(210,153,34,.4)}
+  button.sel{cursor:pointer;background:var(--panel2);color:var(--fg);border:1px solid var(--border);
+    border-radius:8px;padding:9px 13px;margin:0 8px 8px 0;font-size:13px;transition:.12s;text-align:left}
+  button.sel:hover{border-color:var(--accent)}
+  button.sel.active{border-color:var(--accent);background:rgba(88,166,255,.14);box-shadow:0 0 0 1px var(--accent) inset}
+  button.sel .t{display:block;font-weight:700}
+  button.sel .d{display:block;font-size:11px;color:var(--muted)}
+  .seg{display:inline-flex;border:1px solid var(--border);border-radius:8px;overflow:hidden;margin:0 10px 8px 0}
+  .seg button{background:var(--panel);color:var(--muted);border:0;border-right:1px solid var(--border);
+    padding:7px 14px;cursor:pointer;font-size:13px}
+  .seg button:last-child{border-right:0}
+  .seg button.active{background:var(--accent);color:#04121f;font-weight:700}
+  select{background:var(--panel2);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:6px 9px;font-size:13px}
+  table{border-collapse:collapse;font-family:var(--mono);font-size:12.5px}
+  .step{border-left:3px solid var(--accent);background:var(--panel2);padding:10px 14px;margin:10px 0;border-radius:0 8px 8px 0}
+  .step b{color:var(--accent)}
+  .basis{font-family:var(--mono);font-size:13px}
+  .tag{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}
+  .legend span{display:inline-flex;align-items:center;margin-right:16px;font-size:12.5px}
+  .legend i{width:13px;height:13px;border-radius:3px;display:inline-block;margin-right:6px}
+  .grid-el{display:grid;gap:3px}
+  .cell{aspect-ratio:1;display:flex;align-items:center;justify-content:center;border-radius:4px;
+    font-family:var(--mono);font-size:11px;color:#fff;position:relative;cursor:pointer;
+    border:1px solid rgba(255,255,255,.35)}
+  .cell.dim{opacity:.2}
+  .cell.hl{outline:2px solid #1f2328;outline-offset:-2px;z-index:2}
+  .tree{font-family:var(--mono);font-size:13px}
+  .node{cursor:pointer;padding:3px 6px;border-radius:5px;display:inline-block}
+  .node:hover{background:var(--panel2)}
+  .children{margin-left:18px;border-left:1px dashed var(--border);padding-left:12px}
+  .chunk{outline:1px solid rgba(0,0,0,.18)}
+  .hint{color:var(--muted);font-size:13px}
+  /* 硬件规格摘要 */
+  .kvhot{background:rgba(9,105,218,.1);border-color:var(--accent);color:var(--accent)}
+  .kvhot b{font-size:16px}
+  /* 寄存器文件 */
+  .regwrap{margin-top:6px}
+  .regbig{color:var(--accent);font-size:20px;font-weight:800;font-family:var(--mono)}
+  .regchunks{display:flex;flex-wrap:wrap;gap:10px;margin-top:10px}
+  .regchunk{border:1px solid var(--border);border-radius:8px;padding:8px;background:var(--panel2)}
+  .rclabel{font-size:11px;color:var(--muted);margin-bottom:6px;font-family:var(--mono);text-align:center}
+  .rcslots{display:flex;gap:5px}
+  .rslot{display:flex;flex-direction:column;align-items:center;border:1.5px solid;border-radius:6px;
+    padding:4px 7px;min-width:40px;background:var(--panel)}
+  .rno{font-size:10px;color:var(--muted);font-family:var(--mono)}
+  .rel{font-size:15px;font-weight:700;font-family:var(--mono)}
+  .lanestrip{display:flex;flex-wrap:wrap;gap:4px;margin-top:8px}
+  .lanebox{border:1px solid var(--border);border-radius:5px;padding:4px 8px;font-family:var(--mono);
+    font-size:11px;background:var(--panel2);cursor:pointer}
+  .lanebox.active{border-color:var(--accent);background:rgba(9,105,218,.1);color:var(--accent);font-weight:700}
+  .lanebox.same{opacity:.7}
+  .kvs{display:flex;flex-wrap:wrap;gap:8px}
+  .kv{background:var(--panel2);border:1px solid var(--border);border-radius:6px;padding:5px 10px;font-size:12.5px;font-family:var(--mono)}
+  .bigeq{font-family:var(--mono);font-size:13px;background:#f6f8fa;border:1px solid var(--border);
+    border-radius:8px;padding:12px;overflow:auto}
+  a{color:var(--accent)}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <h1>把任意 Layout 转成 Linear Layout</h1>
+  <p class="sub">可视化 <code>python/tutorials/gluon/09-tma-gather-scatter.py</code> 第 140–211 行的
+  <code>to_linear_layout</code> 工具 —— 它把 Gluon 的分布式 layout 翻译成统一的 <b>DistributedLinearLayout</b>，
+  用来判断一个 layout 是否能用于 <code>async_gather / async_scatter</code> 的 <code>gather4/scatter4</code> 指令。</p>
+
+  <!-- ============ 概念 ============ -->
+  <h2>① 什么是 Linear Layout？</h2>
+  <div class="panel">
+    <p>一个 <b>分布式 layout</b> 回答的问题是：张量里的每个逻辑元素，被「哪一份硬件资源」持有？硬件坐标分四层（从小到大）：</p>
+    <div class="kvs">
+      <span class="kv">register 寄存器（一个线程内的多个值）</span>
+      <span class="kv">lane 通道（warp 内的 32 个线程）</span>
+      <span class="kv">warp（CTA 内的若干 warp）</span>
+      <span class="kv">block / CGA（多 CTA，本例为空）</span>
+    </div>
+    <p style="margin-top:12px">Linear layout 的核心思想：这个「硬件坐标 → 张量下标」的映射，在 <b>GF(2)（二进制按位异或）</b> 意义下是线性的。
+    于是只需记录每一层「翻动某一个 bit 会让张量下标变化多少」，这个变化量就叫一个 <b>basis（基）</b>。</p>
+    <div class="bigeq">
+element_index  =  ⨁ <span class="com">// 按位异或</span>
+      reg_bases[i]   for each bit i set in  register_id
+    ⨁ lane_bases[i]  for each bit i set in  lane_id
+    ⨁ warp_bases[i]  for each bit i set in  warp_id
+    </div>
+    <p style="margin-top:12px">例如 <code>reg_bases=[[1],[2],...]</code> 表示：寄存器号的 bit0 让下标 +1，bit1 让下标 +2 ——
+    所以 <b>寄存器 0,1,2,3 恰好持有连续的元素 0,1,2,3</b>。这正是 gather4「4 个连续行进连续寄存器」的要求。
+    而 <code>lane_bases</code> 全是 <code>[0]</code> 表示「翻动 lane 号下标不变」，即 <b>同一 warp 内 32 个线程持有完全相同的数据（广播）</b>。</p>
+    <p class="hint">教程结论（第 136–139 行）：一个 layout 对 gather4 合法 ⟺ <b>前两个 reg_bases 是 [1] 和 [2]</b> 且 <b>所有 lane_bases 都是 [0]</b>。</p>
+  </div>
+
+  <!-- ============ 选择 layout ============ -->
+  <h2>② 选择一个 Layout（对应代码里的 4 个例子）</h2>
+  <div id="picker"></div>
+
+  <div class="grid2">
+    <div class="panel">
+      <h3 style="margin-top:0">源 Layout（Python）</h3>
+      <pre id="srcCode"></pre>
+      <div id="srcNote" class="hint"></div>
+    </div>
+    <div class="panel">
+      <h3 style="margin-top:0">转换结果 DistributedLinearLayout</h3>
+      <pre id="resOut"></pre>
+      <div id="validBox"></div>
+    </div>
+  </div>
+
+  <!-- ============ 转换过程 ============ -->
+  <h2>③ 转换是怎么发生的（逐步讲解）</h2>
+  <p class="sub">下面的步骤由可视化脚本用与 Triton 相同的规则现场推导（已对齐代码注释里的 4 个打印结果）。</p>
+  <div id="steps"></div>
+
+  <!-- ============ 层次化可视化 ============ -->
+  <h2>④ 层次化查看数据分布</h2>
+  <div class="panel">
+    <div>
+      <span class="tag">查看粒度</span><br/>
+      <div class="seg" id="levelSeg">
+        <button data-lv="cta" class="active">CTA（整体）</button>
+        <button data-lv="warp">Warp 级</button>
+        <button data-lv="lane">Lane 级</button>
+        <button data-lv="reg">Register 级</button>
+      </div>
+      <span id="selWrap" style="display:none">
+        &nbsp; warp <select id="warpSel"></select>
+        <span id="laneWrap">&nbsp; lane <select id="laneSel"></select></span>
+      </span>
+    </div>
+
+    <div style="margin-top:12px"><span class="tag">硬件规格</span></div>
+    <div class="kvs" id="hwSummary" style="margin:6px 0 4px"></div>
+
+    <div class="legend" id="legend" style="margin:12px 0 8px"></div>
+
+    <div class="grid2" style="align-items:start">
+      <div>
+        <h3>张量元素网格（shape = [256]）</h3>
+        <p class="hint" id="gridHint"></p>
+        <div id="grid" class="grid-el" style="grid-template-columns:repeat(16,1fr)"></div>
+      </div>
+      <div>
+        <h3 id="detailTitle">硬件分层树</h3>
+        <div id="detail"></div>
+      </div>
+    </div>
+
+    <div class="regwrap" style="margin-top:20px;border-top:1px solid var(--border);padding-top:14px">
+      <div id="regfile"></div>
+    </div>
+  </div>
+
+  <!-- ============ 合法性说明 ============ -->
+  <h2>⑤ 为什么合法 / 不合法</h2>
+  <div class="panel" id="why"></div>
+
+  <p class="hint" style="margin-top:30px">参考源码：
+  <a href="09-tma-gather-scatter.py#L140-L211">09-tma-gather-scatter.py:140-211</a> ·
+  <code>to_linear_layout()</code> 实际调用的是 C++ 端 <code>GluonOpBuilder.to_linear_layout</code>，
+  本页用等价的 JS 重新实现以便可视化。</p>
+</div>
+
+<script>
+/* =========================================================================
+   1) 转换算法：Blocked / Slice -> DistributedLinearLayout
+   规则（与 Triton toLinearLayout 一致，已对齐教程的 4 个打印输出）：
+     - 按 order（minor first）依次为 register / lane / warp 三类分配 basis
+     - 每类每维分配 log2(size) 个 bit，basis 值 = 当前 stride * 2^i
+     - 三类处理完后，若 shape[d] > tile[d]，追加 register basis 做广播复制
+     - 最后对每个 basis 分量取 mod shape[d]（处理 tile > shape 的截断）
+   ========================================================================= */
+const log2 = n => Math.round(Math.log2(n));
+
+function blockedToLinear(b, shape){
+  const rank = shape.length;
+  const stride = new Array(rank).fill(1);
+  const reg=[], lane=[], warp=[];
+  const steps=[];
+  const cats = [["register", b.sizePerThread, reg],
+                ["lane", b.threadsPerWarp, lane],
+                ["warp", b.warpsPerCta, warp]];
+  for(const [name, sizes, out] of cats){
+    const added=[];
+    for(const d of b.order){
+      const n = log2(sizes[d]);
+      for(let i=0;i<n;i++){
+        const v = new Array(rank).fill(0);
+        v[d] = stride[d] * (1<<i);
+        out.push(v); added.push(v);
+      }
+      stride[d] *= sizes[d];
+    }
+    steps.push({cat:name, sizes:sizes.slice(), order:b.order.slice(),
+                added:added.map(v=>v.slice()), stride:stride.slice()});
+  }
+  // 广播：shape 比 tile 大，追加 register basis
+  const bcast=[];
+  for(const d of b.order){
+    if(shape[d] > stride[d]){
+      const extra = log2(shape[d]/stride[d]);
+      for(let i=0;i<extra;i++){
+        const v = new Array(rank).fill(0);
+        v[d] = stride[d]*(1<<i);
+        reg.push(v); bcast.push(v.slice());
+      }
+    }
+  }
+  const tile = stride.slice();
+  const mod = vecs => vecs.map(v=>v.map((x,d)=>shape[d] ? ((x % shape[d])+shape[d])%shape[d] : x));
+  return {ll:{reg:mod(reg), lane:mod(lane), warp:mod(warp), block:[], shape},
+          steps, bcast, tile};
+}
+
+function sliceToLinear(s, shape){
+  const dim = s.dim, p = s.parent;
+  const tileDim = p.sizePerThread[dim]*p.threadsPerWarp[dim]*p.warpsPerCta[dim];
+  const parentShape = shape.slice(); parentShape.splice(dim,0,tileDim);
+  const inner = blockedToLinear(p, parentShape);
+  const drop = vecs => vecs.map(v=>{const c=v.slice(); c.splice(dim,1); return c;});
+  const ll = {reg:drop(inner.ll.reg), lane:drop(inner.ll.lane),
+              warp:drop(inner.ll.warp), block:[], shape};
+  return {ll, inner, dim, parentShape, tileDim};
+}
+
+function convert(layout, shape){
+  if(layout.type==="slice") return {kind:"slice", ...sliceToLinear(layout, shape)};
+  return {kind:"blocked", ...blockedToLinear(layout, shape)};
+}
+
+/* 前向映射：硬件坐标 -> 元素下标（1D） */
+function elementAt(ll, r,l,w,blk){
+  const rank = ll.shape.length, coord=new Array(rank).fill(0);
+  const ap=(idx,bases)=>{for(let i=0;i<bases.length;i++) if((idx>>i)&1)
+      for(let d=0;d<rank;d++) coord[d]^=bases[i][d];};
+  ap(r,ll.reg); ap(l,ll.lane); ap(w,ll.warp); ap(blk,ll.block||[]);
+  return coord;
+}
+
+/* =========================================================================
+   2) 四个示例 layout（与源码完全一致）
+   ========================================================================= */
+const NW = 4, TPW = 32, SHAPE=[256];
+const LAYOUTS = [
+  {
+    name:"SliceLayout dim=0（合法 · 高效）",
+    desc:"教程推荐写法",
+    layout:{type:"slice", dim:0, parent:{
+      sizePerThread:[1,4], threadsPerWarp:[32,1], warpsPerCta:[1,4], order:[1,0]}},
+    code:
+`gl.SliceLayout(
+    dim=0,
+    parent=gl.BlockedLayout(
+        size_per_thread=[1, 4],
+        threads_per_warp=[32, 1],
+        warps_per_cta=[1, 4],
+        order=[1, 0],
+    ),
+)`,
+    note:"dim=1 被切成 4 个连续元素 → 4 个连续寄存器；再沿 warp 平铺。沿 dim=0 取 slice 后，一个 warp 内所有线程映射到相同的 4 个元素（广播）。"
+  },
+  {
+    name:"SliceLayout dim=1（与上者完全等价）",
+    desc:"转置写法，结果一模一样",
+    layout:{type:"slice", dim:1, parent:{
+      sizePerThread:[4,1], threadsPerWarp:[1,32], warpsPerCta:[4,1], order:[0,1]}},
+    code:
+`gl.SliceLayout(
+    dim=1,
+    parent=gl.BlockedLayout(
+        size_per_thread=[4, 1],
+        threads_per_warp=[1, 32],
+        warps_per_cta=[4, 1],
+        order=[0, 1],
+    ),
+)`,
+    note:"把上面的 blocked layout 转置后沿 dim=1 切片，得到与 dim=0 版本完全相同的 linear layout。"
+  },
+  {
+    name:"BlockedLayout 全在寄存器（合法但低效）",
+    desc:"warp_bases 全 0",
+    layout:{type:"blocked", sizePerThread:[256], threadsPerWarp:[32], warpsPerCta:[4], order:[0]},
+    code:
+`gl.BlockedLayout(
+    size_per_thread=[256],
+    threads_per_warp=[32],
+    warps_per_cta=[4],
+    order=[0],
+)`,
+    note:"256 个元素全部塞进单个线程的寄存器。所有 lane / warp 拿到相同数据 → 合法，但编译器只让 warp 0 干活，其余 warp 空转，效率低。"
+  },
+  {
+    name:"BlockedLayout（不合法 ✗）",
+    desc:"lane_bases 不全为 0",
+    layout:{type:"blocked", sizePerThread:[4], threadsPerWarp:[32], warpsPerCta:[4], order:[0]},
+    code:
+`gl.BlockedLayout(
+    size_per_thread=[4],
+    threads_per_warp=[32],
+    warps_per_cta=[4],
+    order=[0],
+)`,
+    note:"4 个连续元素进寄存器没问题，但随后沿 lane 平铺 → 同一 warp 内不同线程持有不同数据，违反 gather4「warp 内广播」的要求。"
+  },
+];
+
+/* =========================================================================
+   3) 渲染
+   ========================================================================= */
+const WCOL = ['var(--w0)','var(--w1)','var(--w2)','var(--w3)'];
+let curIdx = 0, level = "cta", selWarp = 0, selLane = 0;
+
+function fmtVec(v){ return "["+v.join(", ")+"]"; }
+function fmtBases(arr){ return "["+arr.map(fmtVec).join(", ")+"]"; }
+
+function pyColor(s){
+  return s
+    .replace(/(#.*)$/gm,'<span class="com">$1</span>')
+    .replace(/\b(gl|SliceLayout|BlockedLayout)\b/g,'<span class="kw">$1</span>')
+    .replace(/\b(\d+)\b/g,'<span class="num">$1</span>');
+}
+
+function renderPicker(){
+  const p = document.getElementById('picker');
+  p.innerHTML = LAYOUTS.map((L,i)=>
+    `<button class="sel ${i===curIdx?'active':''}" data-i="${i}">
+       <span class="t">${L.name}</span><span class="d">${L.desc}</span></button>`).join('');
+  p.querySelectorAll('button').forEach(b=>b.onclick=()=>{curIdx=+b.dataset.i; selWarp=0; selLane=0; renderAll();});
+}
+
+function renderSource(){
+  const L = LAYOUTS[curIdx];
+  document.getElementById('srcCode').innerHTML = pyColor(L.code);
+  document.getElementById('srcNote').textContent = L.note;
+}
+
+function isValid(ll){
+  const regOK = ll.reg.length>=2 &&
+    ll.reg[0].length===1 && ll.reg[0][0]===1 &&
+    ll.reg[1].length===1 && ll.reg[1][0]===2;
+  const laneOK = ll.lane.every(v=>v.every(x=>x===0));
+  const warpAllZero = ll.warp.length>0 && ll.warp.every(v=>v.every(x=>x===0));
+  return {valid: regOK && laneOK, regOK, laneOK, warpAllZero};
+}
+
+function renderResult(conv){
+  const ll = conv.ll;
+  const out =
+`DistributedLinearLayout(
+    reg_bases=${fmtBases(ll.reg)},
+    lane_bases=${fmtBases(ll.lane)},
+    warp_bases=${fmtBases(ll.warp)},
+    block_bases=${fmtBases(ll.block)},
+    shape=${fmtVec(ll.shape)}
+)`;
+  document.getElementById('resOut').innerHTML = pyColor(out.replace(/#/g,''));
+  const v = isValid(ll);
+  const box = document.getElementById('validBox');
+  let html = '';
+  html += `<div style="margin-top:6px">
+    <span class="pill ${v.regOK?'ok':'bad'}">前两个 reg_bases = [1],[2] ${v.regOK?'✓':'✗'}</span>
+    <span class="pill ${v.laneOK?'ok':'bad'}">lane_bases 全为 [0] ${v.laneOK?'✓':'✗'}</span></div>`;
+  if(v.valid && v.warpAllZero)
+    html += `<div style="margin-top:8px"><span class="pill warn">合法但低效：warp_bases 全为 [0]，只有 warp 0 工作</span></div>`;
+  else if(v.valid)
+    html += `<div style="margin-top:8px"><span class="pill ok">合法且高效：工作被分散到所有 warp</span></div>`;
+  else
+    html += `<div style="margin-top:8px"><span class="pill bad">不合法：不能用于 gather4 / scatter4</span></div>`;
+  box.innerHTML = html;
+}
+
+function renderSteps(conv){
+  const host = document.getElementById('steps');
+  let h = '';
+  const blockedSteps = (conv.kind==="slice") ? conv.inner.steps : conv.steps;
+  const blockedBcast = (conv.kind==="slice") ? conv.inner.bcast : conv.bcast;
+  const blockedTile  = (conv.kind==="slice") ? conv.inner.tile  : conv.tile;
+  const pshape = (conv.kind==="slice") ? conv.parentShape : conv.ll.shape;
+
+  if(conv.kind==="slice"){
+    h += `<div class="step"><b>步骤 0 · 还原父 layout 的 shape</b><br/>
+      SliceLayout 先在父 BlockedLayout 上工作。被切掉的维度 dim=${conv.dim} 的大小 =
+      父 layout 在该维上的 tile = size_per_thread·threads_per_warp·warps_per_cta = <b>${conv.tileDim}</b>。<br/>
+      于是父 layout 的形状为 <code>${fmtVec(pshape)}</code>（把 ${conv.tileDim} 插回到第 ${conv.dim} 维）。</div>`;
+  }
+  blockedSteps.forEach((s,i)=>{
+    const nbits = s.added.length;
+    h += `<div class="step"><b>步骤 ${conv.kind==="slice"?i+1:i+1} · 为 ${s.cat} 分配 basis</b><br/>
+      sizes = <code>${fmtVec(s.sizes)}</code>，按 order = <code>${fmtVec(s.order)}</code>（低维优先）分配
+      ${nbits} 个 bit。<br/>
+      新增 ${s.cat}_bases = <span class="basis">${nbits?fmtBases(s.added):'[]（该层无 bit）'}</span><br/>
+      <span class="hint">累计 stride（每维 tile 进度）= ${fmtVec(s.stride)}</span></div>`;
+  });
+  // 广播
+  const bstep = conv.kind==="slice" ? 4 : 4;
+  h += `<div class="step"><b>步骤 ${bstep} · 广播补齐（shape &gt; tile）</b><br/>`;
+  if(blockedBcast.length)
+    h += `tile = <code>${fmtVec(blockedTile)}</code>，而 shape = <code>${fmtVec(pshape)}</code> 更大，
+      需要把 tile 沿对应维重复 → 追加 ${blockedBcast.length} 个 register basis：
+      <span class="basis">${fmtBases(blockedBcast)}</span>`;
+  else
+    h += `tile = <code>${fmtVec(blockedTile)}</code> 已覆盖 shape <code>${fmtVec(pshape)}</code>，无需广播。`;
+  h += `</div>`;
+  // 截断 / 取模
+  h += `<div class="step"><b>步骤 ${bstep+1} · 取模 shape（tile &gt; shape 时的截断）</b><br/>
+    对每个 basis 分量取 <code>mod shape[d]</code>。凡是落到 ≥ shape 的 basis 会变成 0（即退化为广播）。<br/>
+    <span class="hint">${conv.kind==="blocked" && blockedTile.some((t,d)=>t>conv.ll.shape[d])
+      ? '本例发生了截断：部分 lane/warp basis 被归零。'
+      : '本例无需截断。'}</span></div>`;
+  if(conv.kind==="slice"){
+    h += `<div class="step"><b>步骤 ${bstep+2} · 切片：删除 dim=${conv.dim} 分量</b><br/>
+      把上面父 layout 每个 basis 向量里第 ${conv.dim} 维的分量去掉，得到 1D 的结果。<br/>
+      <span class="hint">关键效果：原本只作用于 dim=${conv.dim} 的 lane basis，其剩余分量变为 0 → lane 全广播。</span></div>`;
+  }
+  host.innerHTML = h;
+}
+
+/* ---- 计算每个元素被哪些 warp / (warp,lane,reg) 持有 ---- */
+function buildMaps(ll){
+  const nR=1<<ll.reg.length, nL=1<<ll.lane.length, nW=1<<ll.warp.length;
+  const N = ll.shape[0];
+  const warpsOf = Array.from({length:N},()=>new Set());
+  // perWarp[w] = { laneIdentical:bool, regToEl:[...] for lane0, lanesDiffer:Set per lane }
+  const perWarp = [];
+  for(let w=0; w<nW; w++){
+    const laneReg = []; // laneReg[l] = [elem per reg]
+    for(let l=0;l<nL;l++){
+      const arr=[];
+      for(let r=0;r<nR;r++){
+        const e = elementAt(ll,r,l,w,0)[0];
+        arr.push(e); warpsOf[e].add(w);
+      }
+      laneReg.push(arr);
+    }
+    const ident = laneReg.every(a=>a.every((x,i)=>x===laneReg[0][i]));
+    perWarp.push({laneReg, ident});
+  }
+  return {nR,nL,nW,N,warpsOf,perWarp};
+}
+
+let curConv=null, curMaps=null;
+
+function renderLegend(){
+  const m=curMaps;
+  let h='';
+  for(let w=0; w<m.nW; w++)
+    h+=`<span><i style="background:${WCOL[w%4]}"></i>warp ${w}</span>`;
+  if(LAYOUTS[curIdx].layout.type==="blocked" && isValid(curConv.ll).warpAllZero)
+    h+=`<span><i style="background:#57606a"></i>所有 warp 共享（广播）</span>`;
+  document.getElementById('legend').innerHTML=h;
+}
+
+function renderHWSummary(){
+  const m=curMaps;
+  const total=m.nW*m.nL*m.nR, copies=total/m.N;
+  document.getElementById('hwSummary').innerHTML=
+    `<span class="kv">warps / CTA = <b>${m.nW}</b></span>
+     <span class="kv">lanes / warp = <b>${m.nL}</b></span>
+     <span class="kv kvhot">regs / lane = <b>${m.nR}</b></span>
+     <span class="kv">硬件槽位 = ${m.nW}×${m.nL}×${m.nR} = <b>${total}</b></span>
+     <span class="kv">张量元素 = <b>${m.N}</b></span>
+     <span class="kv">每元素副本 = <b>${copies}</b>${copies>1?'（广播冗余）':''}</span>`;
+}
+
+function renderRegFile(){
+  const m=curMaps;
+  const w=(level==="cta")?0:selWarp, l=(level==="cta")?0:selLane;
+  const arr=m.perWarp[w].laneReg[l];
+  const col=WCOL[w%4];
+  let h=`<h3 style="margin-top:0">寄存器文件 · warp ${w} / lane ${l}</h3>
+    <p>这一个线程持有 <span class="regbig">${arr.length}</span> 个寄存器
+       （= 2<sup>reg_bases 个数</sup> = 2<sup>${curConv.ll.reg.length}</sup>），
+       分成 <b>${arr.length/4}</b> 个 gather4 块（每块 4 个连续寄存器）。
+       ${level==="cta"?'<span class="hint">当前为整体视图，默认显示 warp 0 / lane 0；切到 Warp / Lane 级可选其它线程。</span>':''}</p>
+    <div class="regchunks">`;
+  for(let c=0;c<arr.length;c+=4){
+    h+=`<div class="regchunk"><div class="rclabel">块 ${c/4} · R${c}–R${c+3}</div><div class="rcslots">`;
+    for(let r=c;r<c+4;r++)
+      h+=`<div class="rslot" style="border-color:${col}">
+            <span class="rno">R${r}</span><span class="rel" style="color:${col}">${arr[r]}</span></div>`;
+    h+=`</div></div>`;
+  }
+  h+=`</div>`;
+  document.getElementById('regfile').innerHTML=h;
+}
+
+function renderGrid(){
+  const m=curMaps, ll=curConv.ll, N=m.N;
+  const cols=16;
+  document.getElementById('grid').style.gridTemplateColumns=`repeat(${cols},1fr)`;
+  // 高亮集合：当前粒度下被选中硬件持有的元素
+  let hset=null, hint='';
+  if(level==="cta"){ hint='整张张量；颜色 = 持有该元素的 warp（点格子可在右侧查看其硬件归属）。'; }
+  else if(level==="warp"){
+    hset=new Set(); const pw=m.perWarp[selWarp];
+    pw.laneReg[0].forEach(e=>hset.add(e));
+    hint=`高亮 = warp ${selWarp} 持有的 ${hset.size} 个元素。`;
+  } else if(level==="lane"){
+    hset=new Set(); m.perWarp[selWarp].laneReg[selLane].forEach(e=>hset.add(e));
+    hint=`高亮 = warp ${selWarp} / lane ${selLane} 持有的 ${hset.size} 个元素（若 lane 广播则与整 warp 相同）。`;
+  } else { // reg
+    hset=new Set(); m.perWarp[selWarp].laneReg[selLane].forEach(e=>hset.add(e));
+    hint=`高亮 = warp ${selWarp} / lane ${selLane} 的寄存器持有的元素，右侧表显示 reg→元素 的精确映射。`;
+  }
+  document.getElementById('gridHint').textContent=hint;
+
+  let h='';
+  for(let e=0;e<N;e++){
+    const ws=[...m.warpsOf[e]];
+    let bg;
+    if(ws.length>1) bg='#57606a';
+    else bg=WCOL[ws[0]%4];
+    const dim = hset && !hset.has(e) ? ' dim':'';
+    const hl  = (level!=="cta" && hset && hset.has(e)) ? ' hl':'';
+    h+=`<div class="cell${dim}${hl}" style="background:${bg}" title="元素 ${e} · warp ${ws.join('/')}" data-e="${e}">${e}</div>`;
+  }
+  document.getElementById('grid').innerHTML=h;
+  document.getElementById('grid').querySelectorAll('.cell').forEach(c=>{
+    c.onclick=()=>showElement(+c.dataset.e);
+  });
+}
+
+function showElement(e){
+  const m=curMaps;
+  const holders=[];
+  for(let w=0;w<m.nW;w++){
+    const pw=m.perWarp[w];
+    // 找出 lane / reg
+    for(let l=0;l<m.nL;l++){
+      const r = pw.laneReg[l].indexOf(e);
+      if(r>=0){ holders.push({w,l,r}); }
+    }
+  }
+  // 汇总：通常每个 warp 内所有 lane 都持有（广播），reg 相同
+  const byWarp={};
+  holders.forEach(h=>{ (byWarp[h.w]=byWarp[h.w]||new Set()).add(h.r); });
+  let txt=`<div class="panel" style="margin-top:0"><b>元素 ${e}</b> 被以下硬件持有：<br/>`;
+  Object.keys(byWarp).forEach(w=>{
+    const regs=[...byWarp[w]];
+    const pw=m.perWarp[w];
+    txt+=`<div style="margin-top:6px">· warp <b style="color:${WCOL[w%4]}">${w}</b>，
+      reg <b>${regs.join(',')}</b>，lane = ${pw.ident?'全部 0–'+(m.nL-1)+'（广播，每个 lane 都持有）':'部分 lane'}</div>`;
+  });
+  txt+=`</div>`;
+  document.getElementById('detail').innerHTML = txt + currentDetailHTML();
+  document.getElementById('detailTitle').textContent = `元素 ${e} 的硬件归属`;
+}
+
+/* 右侧详情：根据粒度展示树 / 表 */
+function currentDetailHTML(){
+  const m=curMaps;
+  if(level==="reg" || level==="lane"){
+    const arr=m.perWarp[selWarp].laneReg[selLane];
+    const ident=m.perWarp[selWarp].ident;
+    const cons = arr[0]===0&&arr[1]===1&&arr[2]===2&&arr[3]===3;
+    return `<h3>warp ${selWarp} / lane ${selLane}</h3>
+      <p>这一个线程（lane）持有 <span class="regbig">${arr.length}</span> 个寄存器。</p>
+      <p class="hint">每 4 个连续寄存器 = 1 个 gather4 块，共 ${arr.length/4} 块。</p>
+      <p class="hint">前 4 个寄存器（第 0 块）= [${arr.slice(0,4).join(', ')}]
+        ${cons?'<span class="pill ok">连续 0,1,2,3 ✓</span>':''}</p>
+      <p class="hint">${ident?'同 warp 内 32 个 lane 数据完全相同（广播 ✓）。':'⚠ 同 warp 内不同 lane 数据不同（违反 gather4）。'}</p>
+      <p class="hint">↓ 下方「寄存器文件」把这 ${arr.length} 个寄存器逐格画出来。</p>`;
+  }
+  if(level==="warp"){
+    const pw=m.perWarp[selWarp];
+    const nregs=pw.laneReg[0].length;
+    let h=`<h3>warp ${selWarp}</h3>
+      <p>该 warp 有 <b>${m.nL}</b> 个 lane（线程），<b>每个</b> lane 各持有
+        <span class="regbig">${nregs}</span> 个寄存器。</p>
+      <p class="hint">${pw.ident
+        ? '所有 lane 的数据<b>完全相同</b>（广播 ✓，符合 gather4）。'
+        : '⚠ 不同 lane 的数据<b>不同</b>（违反 gather4）。'}</p>
+      <p class="hint">点击某个 lane，下方「寄存器文件」会展示它的 ${nregs} 个寄存器：</p>
+      <div class="lanestrip">`;
+    const show=Math.min(m.nL,16);
+    for(let l=0;l<show;l++){
+      const cls=(l===selLane?'active ':'')+(pw.ident?'same':'');
+      h+=`<div class="lanebox ${cls}" data-lane="${l}">lane ${l}</div>`;
+    }
+    if(m.nL>show) h+=`<div class="lanebox">… 共 ${m.nL} 个</div>`;
+    h+=`</div>`;
+    return h;
+  }
+  // cta：树
+  let h=`<div class="tree"><div class="node" style="font-weight:700">▸ CTA（${m.nW} warps · 每 warp ${m.nL} lanes · 每 lane ${m.nR} regs）</div>
+    <div class="children">`;
+  for(let w=0;w<m.nW;w++){
+    const pw=m.perWarp[w];
+    const els=pw.laneReg[0];
+    const sample = els.slice(0,4).join(',')+(els.length>4?' …':'');
+    h+=`<div style="margin:6px 0">
+      <span class="node" style="color:${WCOL[w%4]};font-weight:700">▸ warp ${w}</span>
+      <span class="hint"> 持有 ${new Set(els).size} 个元素，lane ${pw.ident?'广播（全相同）':'各不同'}；reg0–3 = [${sample}]</span>
+    </div>`;
+  }
+  h+=`</div></div>
+    <p class="hint" style="margin-top:10px">切换上方「Warp / Lane / Register 级」可逐层下钻；点击左侧任意元素可反查它的硬件归属。</p>`;
+  return h;
+}
+
+function renderDetail(){
+  document.getElementById('detailTitle').textContent =
+    level==="cta" ? "硬件分层树（CTA → warp → lane → reg）"
+    : level==="warp" ? `Warp ${selWarp} 明细`
+    : `Warp ${selWarp} / Lane ${selLane} 明细`;
+  document.getElementById('detail').innerHTML = currentDetailHTML();
+  // warp 视图里的 lane 条目可点击
+  document.getElementById('detail').querySelectorAll('.lanebox[data-lane]').forEach(b=>{
+    b.onclick=()=>{ selLane=+b.dataset.lane; renderDetail(); renderRegFile(); renderGrid();
+      const ls=document.getElementById('laneSel'); if(ls) ls.value=selLane; };
+  });
+}
+
+function renderSelectors(){
+  const m=curMaps;
+  const ws=document.getElementById('warpSel'), ls=document.getElementById('laneSel');
+  ws.innerHTML=''; for(let w=0;w<m.nW;w++) ws.add(new Option('warp '+w, w));
+  ls.innerHTML=''; for(let l=0;l<m.nL;l++) ls.add(new Option('lane '+l, l));
+  ws.value=selWarp; ls.value=selLane;
+  document.getElementById('selWrap').style.display = (level==="cta")?'none':'inline';
+  document.getElementById('laneWrap').style.display = (level==="warp")?'none':'inline';
+}
+
+function renderWhy(){
+  const v=isValid(curConv.ll);
+  const L=LAYOUTS[curIdx];
+  let h='';
+  if(v.valid && !v.warpAllZero){
+    h=`<p><span class="pill ok">合法 · 高效</span></p>
+    <p>前两个 reg_bases 是 <code>[1],[2]</code> → 寄存器 0,1,2,3 持有连续元素，满足 gather4「4 连续行进连续寄存器」。
+    lane_bases 全 <code>[0]</code> → warp 内广播。warp_bases 非零 → 不同 warp 处理不同数据，工作被均摊到所有 warp，
+    指令数最少。</p>`;
+  } else if(v.valid && v.warpAllZero){
+    h=`<p><span class="pill warn">合法 · 低效</span></p>
+    <p>reg/lane 条件都满足，所以合法。但 warp_bases 全 <code>[0]</code> 意味着所有 warp 拿到相同数据。
+    编译器只会让 <b>warp 0</b> 发射全部指令（BLOCK_X=256 时为 256/4 = 64 条 gather4），其余 warp 空转；
+    而高效写法把它分摊成每 warp 256/4/4 = 16 条。</p>`;
+  } else {
+    h=`<p><span class="pill bad">不合法</span></p>
+    <p>${!v.laneOK?'lane_bases 不全为 <code>[0]</code> → 同一 warp 内不同线程持有不同数据。':''}
+    ${!v.regOK?'前两个 reg_bases 不是 <code>[1],[2]</code> → 寄存器里不是连续 4 元素。':''}
+    gather4/scatter4 是 warp 级指令，要求一个 warp 协同搬运 4 个连续行，且 warp 内数据广播，因此该 layout 无法使用。</p>`;
+  }
+  document.getElementById('why').innerHTML=h;
+}
+
+function renderAll(){
+  curConv = convert(LAYOUTS[curIdx].layout, SHAPE);
+  curMaps = buildMaps(curConv.ll);
+  if(selWarp>=curMaps.nW) selWarp=0;
+  if(selLane>=curMaps.nL) selLane=0;
+  renderPicker(); renderSource(); renderResult(curConv); renderSteps(curConv);
+  renderLegend(); renderHWSummary(); renderSelectors();
+  renderGrid(); renderDetail(); renderRegFile(); renderWhy();
+}
+
+/* 事件 */
+document.getElementById('levelSeg').querySelectorAll('button').forEach(b=>{
+  b.onclick=()=>{
+    level=b.dataset.lv;
+    document.getElementById('levelSeg').querySelectorAll('button').forEach(x=>x.classList.toggle('active',x===b));
+    renderSelectors(); renderGrid(); renderDetail(); renderRegFile();
+  };
+});
+document.getElementById('warpSel').onchange=e=>{selWarp=+e.target.value; renderGrid(); renderDetail(); renderRegFile();};
+document.getElementById('laneSel').onchange=e=>{selLane=+(e.target.value||0); renderGrid(); renderDetail(); renderRegFile();};
+
+renderAll();
+</script>
+</body>
+</html>

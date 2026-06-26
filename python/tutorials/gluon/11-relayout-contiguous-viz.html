@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>优化 1 详解 · relayout_scales_contiguous（reshape → permute → contiguous）</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#ffffff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#5a8a00; --new:#ea580c;
+    --good:#16a34a; --bad:#dc2626; --view:#0891b2; --move:#db2777;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#ffffff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px;letter-spacing:.3px}
+  header h1 .g{color:var(--accent)}
+  .badge{font-size:11px;font-weight:600;color:#fff;background:var(--accent);
+    padding:3px 11px;border-radius:20px;white-space:nowrap}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:260px}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;
+    padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  .stepper{display:flex;align-items:center;gap:7px;margin-top:8px;flex-wrap:wrap}
+  .chip{display:flex;align-items:center;gap:7px;border:1px solid var(--line);background:#fff;
+    border-radius:9px;padding:5px 11px;cursor:pointer;transition:.15s}
+  .chip:hover{border-color:var(--accent)}
+  .chip.on{border-color:var(--accent);background:#f3f8e8;box-shadow:0 0 0 2px rgba(90,138,0,.12)}
+  .chip .num{width:20px;height:20px;border-radius:50%;background:var(--line);color:#445;
+    font-weight:800;font-size:11px;display:flex;align-items:center;justify-content:center}
+  .chip.on .num{background:var(--accent);color:#fff}
+  .chip .ct{display:flex;flex-direction:column;line-height:1.15}
+  .chip .ck{font-weight:700;font-size:12px}
+  .chip .cs{font-size:10px;color:var(--muted);font-family:Consolas,monospace}
+  .chevron{font-size:13px;color:#aebac8;font-weight:800}
+  .navbtns{margin-left:auto;display:flex;gap:6px}
+  .btn{border:1px solid var(--line);background:#fff;border-radius:7px;padding:4px 13px;
+    cursor:pointer;font-size:12px;font-weight:600;color:var(--txt)}
+  .btn:hover{border-color:var(--accent)}
+  .btn:disabled{opacity:.4;cursor:default}
+  .btn.primary{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+  main{flex:1;display:grid;gap:9px;padding:9px;min-height:0;
+    grid-template-columns:minmax(0,1fr) 360px;
+    grid-template-rows:minmax(0,1.15fr) minmax(0,0.85fr);
+    grid-template-areas:"logic code" "phys code";}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  #pLogic{grid-area:logic}
+  #pPhys{grid-area:phys}
+  #pCode{grid-area:code}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);
+    background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none}
+  .phead .tag{font-size:10.5px;font-weight:600;color:#fff;padding:1px 8px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:11px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:6px}
+  svg{display:block;width:100%;height:auto}
+  /* 让逻辑视图与物理内存条按高度自适应，互不挤占，同屏可见 */
+  #pLogic .pbody,#pPhys .pbody{display:flex;overflow:hidden}
+  #logicSvg,#physSvg{flex:1;min-width:0;min-height:0;display:flex;align-items:center;justify-content:center}
+  #logicSvg svg,#physSvg svg{width:100%;height:100%}
+
+  .note{padding:8px 14px;border-top:1px solid var(--line);background:#fbfdff;font-size:12px;flex:none}
+  .note b{color:#11305c}
+  .note code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;
+    padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  .kind{display:inline-block;font-weight:800;border-radius:6px;padding:1px 9px;margin-right:8px;font-size:11px}
+  .kind.view{color:#fff;background:var(--view)}
+  .kind.move{color:#fff;background:var(--move)}
+
+  .explain{padding:8px 12px;background:#eef6ff;border-bottom:1px solid var(--line);
+    font-size:12px;line-height:1.55;flex:none;max-height:230px;overflow:auto}
+  .explain b{color:#11305c}
+  .explain code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;
+    padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  pre{margin:0;font-family:"Cascadia Code",Consolas,Menlo,monospace;font-size:11.5px;line-height:1.65;padding:4px 0}
+  .cl{padding:1px 10px 1px 12px;white-space:pre-wrap;border-left:3px solid transparent;color:#33414f}
+  .cl.on{background:#fff3cd;font-weight:600;color:#1c2733;border-left-color:var(--new)}
+  .cmt{color:#8a98a8}
+  .legend{display:flex;gap:8px 14px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);
+    padding:5px 12px;border-top:1px solid var(--line);align-items:center}
+  .legend span{display:inline-flex;gap:4px;align-items:center}
+  .legend i{width:11px;height:11px;border-radius:3px;display:inline-block}
+  .symtab{display:flex;gap:6px 9px;flex-wrap:wrap;padding:6px 12px;border-top:1px solid var(--line);
+    background:#fbfdff;font-size:10.5px;align-items:center}
+  .symtab .lead{font-weight:700;color:#11305c}
+  .symtab .lead b{font-family:Consolas,monospace;color:#0550ae}
+  .symtab .it{display:inline-flex;gap:5px;align-items:baseline;border:1px solid #e3ebf3;
+    border-radius:7px;padding:2px 8px;background:#fff}
+  .symtab .it b{font-family:Consolas,monospace;color:#0550ae}
+  .symtab .it .v{font-weight:800;color:var(--new)}
+  .symtab .it .mean{color:#5b6b7d}
+  @media(max-width:1040px){
+    body{height:auto;overflow:auto}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto auto;grid-template-areas:"logic" "phys" "code"}
+    #pLogic,#pPhys{min-height:300px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>优化 1 详解 <span class="g">·</span> relayout_scales_contiguous</h1>
+    <span class="badge">reshape → permute → contiguous</span>
+    <div class="sub">小例子：<code>M=4, SCALE_K=4</code>，<code>BLOCK_M(BM)=2</code>，<code>BLOCK_K//VEC(SBK)=2</code>
+      → 切成 4 个 <b>2×2</b> 的 program 块（四色）。看它们如何从“跨距打散”一步步聚到连续。</div>
+  </div>
+  <div class="stepper" id="stepper"></div>
+</header>
+
+<main>
+  <div class="panel" id="pLogic">
+    <div class="phead"><span class="tag" id="logicTag">逻辑视图</span><span id="logicTitle"></span>
+      <span class="hint">同一颜色 = 同一个 program 块（[BM, SBK] = [2, 2]）</span></div>
+    <div class="pbody"><div id="logicSvg"></div></div>
+    <div class="symtab" id="symtab"></div>
+    <div class="legend" id="legend"></div>
+  </div>
+
+  <div class="panel" id="pPhys">
+    <div class="phead"><span class="tag" style="background:var(--gmem,#475569)">物理内存</span>字节顺序（global memory，地址 →）
+      <span class="hint" id="physKind"></span></div>
+    <div class="pbody"><div id="physSvg"></div></div>
+    <div class="note" id="note"></div>
+  </div>
+
+  <div class="panel" id="pCode">
+    <div class="phead"><span class="tag" style="background:#0550ae">代码 &amp; 讲解</span><span id="codeName"></span></div>
+    <div class="explain" id="explain"></div>
+    <div class="pbody"><pre id="codePanel"></pre></div>
+  </div>
+</main>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+
+/* ===== 小例子常量 ===== */
+const M=4, SK=4, BM=2, SBK=2, MB=M/BM, KB=SK/SBK; // 2,2
+const BCOL=['#2563eb','#0d9488','#d97706','#7c3aed']; // 4 个块的颜色
+const bidx=(m,k)=> Math.floor(m/BM)*KB + Math.floor(k/SBK);
+const bcol=(m,k)=> BCOL[bidx(m,k)];
+
+// 原始 row-major 物理顺序：(m,k) 按 m*SK+k
+const oldOrder=[]; for(let m=0;m<M;m++) for(let k=0;k<SK;k++) oldOrder.push({m,k});
+// permute(0,2,1,3)+contiguous 后的新顺序：e0=m块, e1=k块, e2=块内行, e3=块内列
+const newOrder=[];
+for(let e0=0;e0<MB;e0++)for(let e1=0;e1<KB;e1++)for(let e2=0;e2<BM;e2++)for(let e3=0;e3<SBK;e3++)
+  newOrder.push({m:e0*BM+e2, k:e1*SBK+e3});
+const oldPos=(m,k)=> oldOrder.findIndex(e=>e.m===m&&e.k===k);
+const newPos=(m,k)=> newOrder.findIndex(e=>e.m===m&&e.k===k);
+
+/* ===== 步骤定义 ===== */
+const STEPS=[
+ {tag:'原始', short:'[M, SCALE_K]', kind:'state',
+  logicTitle:'2D 张量 [M, SCALE_K]，row-major',
+  codeName:'输入', codeLine:0,
+  explain:`输入 <code>scales</code> 形状 <code>[M, SCALE_K] = [4, 4]</code>，按 row-major 存储。
+    每个 program 要的是 <code>[BM, SBK] = [2, 2]</code> 子块（一种颜色）。
+    看底部物理条：<b style="color:var(--bad)">四色交错</b> —— 同一块的 4 个元素被 SBK 的跨距打散。`,
+  note:`<b>问题：</b>蓝块的 4 个元素落在物理位置 <b>0,1,4,5</b>，中间夹着青块的 2,3。
+    一次 <code>gl.load</code> 只能抓到连续的一小截 → 非合并。`},
+
+ {tag:'reshape', short:'拆 4 维', kind:'view',
+  logicTitle:'reshape → [M//BM, BM, SCALE_K//SBK, SBK] = [2,2,2,2]',
+  codeName:'reshape（拆维）', codeLine:1,
+  explain:`<code>reshape</code> 把两条轴各劈成两段：<br>
+    · M 轴 → <b>(d0 = M//BM 个 m块, d1 = 块内第几行)</b><br>
+    · SCALE_K 轴 → <b>(d2 = SCALE_K//SBK 个 k块, d3 = 块内第几列)</b><br>
+    每个元素得到 4 维下标 <code>(d0,d1,d2,d3)</code>。<b style="color:var(--view)">纯重新编号，不搬数据</b> ——
+    物理条和上一步<b>一模一样</b>，只是头顶多了分组括号。`,
+  note:`<span class="kind view">视图 · 不搬数据</span>flat 下标 = d0·8 + d1·4 + d2·2 + d3。
+    即 <code>m = d0·BM + d1</code>，<code>k = d2·SBK + d3</code>。物理字节顺序完全没变。`},
+
+ {tag:'permute', short:'(0,2,1,3)', kind:'view',
+  logicTitle:'permute(0,2,1,3) → [M//BM, SCALE_K//SBK, BM, SBK]',
+  codeName:'permute（换维顺序）', codeLine:2,
+  explain:`<code>permute(0,2,1,3)</code> 把维顺序从 <code>(m块, 块内行, k块, 块内列)</code>
+    换成 <code>(m块, k块, 块内行, 块内列)</code> —— 即把 <b>d1（块内行）</b> 和 <b>d2（k块）</b> 对调。
+    于是一个 block 的两维 <b>(BM, SBK)</b> 落到了<b>最内、最连续</b>的位置。<br>
+    <b style="color:var(--view)">仍是视图</b>（只改 stride，不搬数据）：物理条没变，但<b>逻辑读取顺序</b>已是“块优先”。
+    沿编号 1→16 读，会在物理条上<b>跳来跳去</b> —— 这正是下一步要消除的。`,
+  note:`<span class="kind view">视图 · 不搬数据</span>逻辑上已按 block 聚拢，但物理 stride 不连续。
+    黄色路径 = 新维顺序下的逐元素读取轨迹，仍在旧物理条上跳跃。`},
+
+ {tag:'contiguous', short:'落盘', kind:'move',
+  logicTitle:'.contiguous() → 按新维顺序真正落盘',
+  codeName:'contiguous（落盘搬运）', codeLine:3,
+  explain:`<code>.contiguous()</code> 按上一步的逻辑顺序<b>真正把字节写到新内存</b>。
+    遍历顺序 = <code>m块 → k块 → 块内行 → 块内列</code>，于是同一 block 的 4 个元素被
+    <b style="color:var(--good)">逐个搬到一起、连续排列</b>（看箭头：每个元素从旧位置 → 新位置）。<br>
+    结果：每个 <code>[BM, SBK]</code> 块在 global memory 中<b>整块连续</b> → 一次 load 命中整块，合并、L2 友好。`,
+  note:`<span class="kind move">落盘 · 真搬数据</span>上=旧顺序（四色交错），下=新顺序（<b style="color:var(--good)">四色分段</b>）。
+    箭头就是 gather 的实际数据搬运。这是整个 relayout 唯一付出拷贝成本的一步。`},
+];
+
+let step=0;
+
+/* ===== stepper ===== */
+function buildStepper(){
+  let h='';
+  STEPS.forEach((s,i)=>{
+    if(i) h+=`<span class="chevron">›</span>`;
+    h+=`<div class="chip${i===step?' on':''}" data-i="${i}">
+      <span class="num">${i}</span><span class="ct"><span class="ck">${s.tag}</span><span class="cs">${s.short}</span></span></div>`;
+  });
+  h+=`<div class="navbtns">
+    <button class="btn" id="prev">◀</button>
+    <button class="btn primary" id="next">下一步 ▶</button></div>`;
+  $('stepper').innerHTML=h;
+  document.querySelectorAll('.chip').forEach(c=>c.onclick=()=>setStep(+c.dataset.i));
+  $('prev').onclick=()=>setStep(step-1);
+  $('next').onclick=()=>setStep(step+1);
+}
+function setStep(i){ step=Math.max(0,Math.min(STEPS.length-1,i)); render(); }
+
+/* ===== 符号表（值 / 怎么来 / 含义），常驻可见 ===== */
+function buildSymtab(){
+  const items=[
+   ['M//BM', `${M}//${BM}`, M/BM, 'm块个数 (d0·pid_m)'],
+   ['BM', 'BLOCK_M', BM, '块内行数 (d1)'],
+   ['SCALE_K//SBK', `${SK}//${SBK}`, SK/SBK, 'k块个数 (d2·每次K迭代)'],
+   ['SBK', 'BLOCK_K//VEC', SBK, '块内列数 (d3·最连续)'],
+  ];
+  $('symtab').innerHTML =
+    `<span class="lead">reshape 形状 [<b>M//BM, BM, SCALE_K//SBK, SBK</b>] = [${[M/BM,BM,SK/SBK,SBK].join(', ')}]：</span>`+
+    items.map(([s,d,v,m])=>`<span class="it"><b>${s}</b>=<span>${d}</span>=<span class="v">${v}</span><span class="mean">${m}</span></span>`).join('');
+}
+
+/* ===== 逻辑视图 ===== */
+function cell(x,y,w,h,m,k,opt={}){
+  const c=bcol(m,k);
+  let s=`<rect x="${x}" y="${y}" width="${w}" height="${h}" rx="4"
+    fill="${lighten(c,opt.faint?.12:.26)}" stroke="${c}" stroke-width="1.4"/>`;
+  s+=`<text x="${x+w/2}" y="${y+h/2+4}" text-anchor="middle" style="font-size:12px;font-weight:700" fill="${c}">${m},${k}</text>`;
+  return s;
+}
+function drawLogic(){
+  const s=STEPS[step];
+  let g=`<svg viewBox="0 0 600 270">`;
+  if(step<=1){
+    // 2D 网格 [M, SCALE_K]，两条轴都标注切块的“值/怎么来/含义”
+    const ox=210, oy=84, cw=72, chh=40;
+    const gw=SK*cw, gh=M*chh;
+    // 顶部 SCALE_K 轴标题（含值与推导）
+    g+=`<text x="${ox+gw/2}" y="22" text-anchor="middle" style="font-size:11px;font-weight:700" fill="#1c2733">SCALE_K 轴 = ${SK} 列  →  切成 SCALE_K//SBK = ${SK}//${SBK} = ${KB} 个 k块（每块 SBK=${SBK} 列）</text>`;
+    // 左侧 M 轴标题（旋转）
+    g+=`<text x="34" y="${oy+gh/2}" text-anchor="middle" transform="rotate(-90 34 ${oy+gh/2})" style="font-size:11px;font-weight:700" fill="#1c2733">M 轴 = ${M} 行 → M//BM = ${M}//${BM} = ${MB} 个 m块（每块 BM=${BM} 行）</text>`;
+    for(let m=0;m<M;m++)for(let k=0;k<SK;k++) g+=cell(ox+k*cw, oy+m*chh, cw-3, chh-3, m,k);
+    // 顶部：k块分组括号（d2 = SCALE_K//SBK 个，每个 SBK 列）
+    for(let kb=0;kb<KB;kb++){
+      const x1=ox+kb*SBK*cw, x2=x1+SBK*cw-3;
+      g+=`<path d="M${x1},${oy-6} L${x1},${oy-13} L${x2},${oy-13} L${x2},${oy-6}" fill="none" stroke="${BCOL[kb]}" stroke-width="1.4"/>`;
+      g+=`<text x="${(x1+x2)/2}" y="${oy-17}" text-anchor="middle" style="font-size:9.5px;font-weight:700" fill="#5b6b7d">k块${kb}${step===1?' (d2)':''} · ${SBK}列</text>`;
+    }
+    // 左侧：m块分组括号（d0 = M//BM 个，每个 BM 行）
+    for(let mb=0;mb<MB;mb++){
+      const y1=oy+mb*BM*chh, y2=y1+BM*chh-3;
+      g+=`<path d="M${ox-8},${y1} L${ox-15},${y1} L${ox-15},${y2} L${ox-8},${y2}" fill="none" stroke="#64748b" stroke-width="1.4"/>`;
+      g+=`<text x="${ox-19}" y="${(y1+y2)/2+3}" text-anchor="end" style="font-size:9.5px;font-weight:700" fill="#5b6b7d">m块${mb}${step===1?' (d0)':''}·${BM}行</text>`;
+    }
+    if(step===1){
+      g+=`<text x="${ox+gw/2}" y="${oy+gh+24}" text-anchor="middle" style="font-size:10px" fill="#7a8694">reshape 给每格新增 4 维下标 (d0,d1,d2,d3)=(m块, 块内行, k块, 块内列)　—— 字节没动，只是换了编号方式</text>`;
+    }else{
+      g+=`<text x="${ox+gw/2}" y="${oy+gh+24}" text-anchor="middle" style="font-size:10px" fill="#7a8694">每格标注其逻辑坐标 (m,k)；同色 = 同一个 [BM,SBK] 块</text>`;
+    }
+  } else {
+    // block-major：MB×KB 个块，每块 BM×SBK，外层维标注值
+    const ox=150, oy=70, cw=40, chh=34, tilegap=24;
+    const tileW=SBK*cw, tileH=BM*chh;
+    const tot=KB*tileW+(KB-1)*tilegap;
+    g+=`<text x="${ox+tot/2}" y="24" text-anchor="middle" style="font-size:11px;font-weight:700" fill="#1c2733">外层 e1 = k块 →（共 SCALE_K//SBK = ${KB} 个）</text>`;
+    g+=`<text x="36" y="${oy+(MB*tileH+(MB-1)*tilegap)/2}" text-anchor="middle" transform="rotate(-90 36 ${oy+(MB*tileH+(MB-1)*tilegap)/2})" style="font-size:11px;font-weight:700" fill="#1c2733">外层 e0 = m块 ↓（共 M//BM = ${MB} 个）</text>`;
+    for(let mb=0;mb<MB;mb++)for(let kb=0;kb<KB;kb++){
+      const tx=ox+kb*(tileW+tilegap), ty=oy+mb*(tileH+tilegap);
+      const bc=BCOL[mb*KB+kb];
+      g+=`<rect x="${tx-5}" y="${ty-5}" width="${tileW+10}" height="${tileH+10}" rx="7" fill="none" stroke="${bc}" stroke-width="2" stroke-dasharray="5 3"/>`;
+      for(let dm=0;dm<BM;dm++)for(let dk=0;dk<SBK;dk++) g+=cell(tx+dk*cw, ty+dm*chh, cw-3, chh-3, mb*BM+dm, kb*SBK+dk);
+      g+=`<text x="${tx+tileW/2}" y="${ty+tileH+15}" text-anchor="middle" style="font-size:9px;font-weight:700" fill="${bc}">block ${mb},${kb}</text>`;
+    }
+    g+=`<text x="${ox+tot/2}" y="${oy+MB*tileH+(MB-1)*tilegap+38}" text-anchor="middle" style="font-size:10px" fill="#7a8694">最内两维 (BM=${BM}, SBK=${SBK}) = 一个 block 的全部 ${BM*SBK} 个元素${step===3?' —— 现已连续落盘 ✓':'（此时仅逻辑聚拢，物理未动）'}</text>`;
+  }
+  g+=`</svg>`;
+  $('logicSvg').innerHTML=g;
+}
+
+/* ===== 物理内存条 ===== */
+function ribbon(order,y,cw,ch,x0,faint){
+  let s='';
+  order.forEach((e,i)=>{
+    const c=bcol(e.m,e.k), x=x0+i*cw;
+    s+=`<rect x="${x}" y="${y}" width="${cw-3}" height="${ch}" rx="3"
+      fill="${lighten(c,faint?.12:.28)}" stroke="${c}" stroke-width="${faint?1:1.3}" ${faint?'opacity="0.6"':''}/>`;
+    s+=`<text x="${x+(cw-3)/2}" y="${y+ch/2+4}" text-anchor="middle" style="font-size:10px;font-weight:700" fill="${c}" ${faint?'opacity="0.7"':''}>${e.m},${e.k}</text>`;
+  });
+  return s;
+}
+function drawPhys(){
+  const s=STEPS[step];
+  $('physKind').innerHTML = s.kind==='view'?'🔭 视图：与原始物理顺序相同'
+    : s.kind==='move'?'💾 落盘：字节被真正重排':'初始物理顺序';
+  const cw=54, ch=34, x0=24;
+  const W=24+16*cw+10;
+  const H = step===3 ? 190 : step===1 ? 196 : 130;
+  let g=`<svg viewBox="0 0 ${W} ${H}">`;
+  g+=`<defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#16a34a"/></marker></defs>`;
+
+  if(step<=2){
+    g+=`<text x="${x0}" y="16" style="font-size:10px;font-weight:700" fill="#5b6b7d">地址 0 → 15（每格 1 字节 scale，标注其逻辑 (m,k)）</text>`;
+  }
+
+  if(step===0){
+    const ribY=44;
+    g+=ribbon(oldOrder,ribY,cw,ch,x0,false);
+    [0,1,4,5].forEach(p=>{ const x=x0+p*cw; g+=`<rect x="${x}" y="${ribY}" width="${cw-3}" height="${ch}" rx="3" fill="none" stroke="${BCOL[0]}" stroke-width="2.4"/>`; });
+    g+=`<text x="${x0}" y="${ribY+ch+22}" style="font-size:10px" fill="#7a8694">蓝块(0,0) 散落在地址 0,1,4,5 —— 被青块的 2,3 隔开（同块被 SCALE_K 跨距打散）</text>`;
+  } else if(step===1){
+    // reshape：同样的字节，按 [M//BM, BM, SCALE_K//SBK, SBK] 解释成 4 层嵌套；逐层标注符号→字节组大小
+    const ribY=40;
+    g+=ribbon(oldOrder,ribY,cw,ch,x0,false);
+    const levels=[
+      {sz:8, col:'#475569', lbl:`d0 = M//BM = ${MB}（每组 BM×SCALE_K = ${BM*SK} 字节）`},
+      {sz:4, col:'#0d9488', lbl:`d1 = BM = ${BM}（每组 SCALE_K = ${SK} 字节）`},
+      {sz:2, col:'#d97706', lbl:`d2 = SCALE_K//SBK = ${KB}（每组 SBK = ${SBK} 字节）`},
+      {sz:1, col:'#7c3aed', lbl:`d3 = SBK = ${SBK}（每格 1 字节，最连续）`},
+    ];
+    let ly=ribY+ch+8;
+    levels.forEach(L=>{
+      for(let i=0;i<16;i+=L.sz){ const x1=x0+i*cw, x2=x0+(i+L.sz)*cw-3;
+        g+=`<path d="M${x1},${ly} L${x1},${ly+5} L${x2},${ly+5} L${x2},${ly}" fill="none" stroke="${L.col}" stroke-width="1.3"/>`; }
+      g+=`<text x="${x0}" y="${ly+16}" style="font-size:9.5px;font-weight:700" fill="${L.col}">${L.lbl}</text>`;
+      ly+=24;
+    });
+    g+=`<text x="${x0+360}" y="${ribY-1}" style="font-size:9.5px" fill="#94a3b8">flat = d0·8 + d1·4 + d2·2 + d3　（仅重新编号，字节顺序不变）</text>`;
+  } else if(step===2){
+    const ribY=44;
+    g+=ribbon(oldOrder,ribY,cw,ch,x0,false);
+    const circY=ribY+ch+12;
+    let pts=[];
+    newOrder.forEach((e,i)=>{ const p=oldPos(e.m,e.k); const cx=x0+p*cw+(cw-3)/2; pts.push([cx,circY]);
+      g+=`<circle cx="${cx}" cy="${circY}" r="8" fill="#fff" stroke="#ca8a04" stroke-width="1.4"/>`;
+      g+=`<text x="${cx}" y="${circY+3}" text-anchor="middle" style="font-size:8.5px;font-weight:800" fill="#ca8a04">${i+1}</text>`;});
+    g+=`<path d="M${pts.map(p=>p.join(',')).join(' L')}" fill="none" stroke="#ca8a04" stroke-width="1.6" stroke-dasharray="4 3" opacity="0.8"/>`;
+    g+=`<text x="${x0}" y="${circY+24}" style="font-size:10px" fill="#7a8694">黄色编号 = 新维顺序下的读取次序（1→16）；路径在物理条上<tspan fill="#ca8a04" font-weight="700"> 反复跳跃</tspan> → 此时物理仍不连续</text>`;
+  } else {
+    // step3：旧条(上,淡) → 新条(下) + gather 箭头
+    const oldY=30, newY=124;
+    g+=`<text x="${x0}" y="20" style="font-size:10px;font-weight:700" fill="#94a3b8">旧顺序（四色交错）</text>`;
+    g+=ribbon(oldOrder,oldY,cw,ch,x0,true);
+    g+=`<text x="${x0}" y="${newY-8}" style="font-size:10px;font-weight:700" fill="#16a34a">新顺序（四色分段，整块连续 ✓）</text>`;
+    g+=ribbon(newOrder,newY,cw,ch,x0,false);
+    oldOrder.forEach(e=>{
+      const op=oldPos(e.m,e.k), np=newPos(e.m,e.k);
+      const x1=x0+op*cw+(cw-3)/2, y1=oldY+ch+2, x2=x0+np*cw+(cw-3)/2, y2=newY-2;
+      const c=bcol(e.m,e.k);
+      g+=`<path d="M${x1},${y1} C${x1},${(y1+y2)/2} ${x2},${(y1+y2)/2} ${x2},${y2}" fill="none"
+        stroke="${c}" stroke-width="1.2" opacity="0.55" marker-end="url(#ar)"/>`;
+    });
+    for(let b=0;b<4;b++){ const x1=x0+b*4*cw, x2=x0+(b*4+4)*cw-3;
+      g+=`<path d="M${x1},${newY+ch+3} L${x1},${newY+ch+9} L${x2},${newY+ch+9} L${x2},${newY+ch+3}" fill="none" stroke="${BCOL[b]}" stroke-width="1.6"/>`;}
+  }
+  g+=`</svg>`;
+  $('physSvg').innerHTML=g;
+}
+
+/* ===== 代码 ===== */
+const CODE=[
+  ['def relayout_scales_contiguous(scales, BLOCK_MN, BLOCK_K, VEC_SIZE):',null],
+  ['    MN, SCALE_K = scales.shape          # [M, SCALE_K]',0],
+  ['    SBK = BLOCK_K // VEC_SIZE           # 块内列数',null],
+  ['    scales = scales.reshape(MN // BLOCK_MN, BLOCK_MN,',1],
+  ['                            SCALE_K // SBK, SBK)   # → 4D',1],
+  ['    scales = scales.permute(0, 2, 1, 3)            # 换维',2],
+  ['    return scales.contiguous()                     # 落盘',3],
+];
+function esc(t){return t.replace(/&/g,'&amp;').replace(/</g,'&lt;');}
+function drawCode(){
+  const s=STEPS[step];
+  $('codeName').textContent=s.codeName;
+  $('explain').innerHTML=s.explain;
+  let h='';
+  CODE.forEach(([txt,ln])=>{
+    const on=ln===s.codeLine;
+    const inner=esc(txt).replace(/(#.*)$/,'<span class="cmt">$1</span>');
+    h+=`<div class="cl${on?' on':''}">${inner}</div>`;
+  });
+  $('codePanel').innerHTML=h;
+}
+
+/* ===== render ===== */
+function render(){
+  const s=STEPS[step];
+  $('logicTag').textContent=`${step}·${s.tag}`;
+  $('logicTitle').textContent=s.logicTitle;
+  $('note').innerHTML=s.note;
+  $('legend').innerHTML=BCOL.map((c,i)=>`<span><i style="background:${lighten(c,.4)};border:1px solid ${c}"></i>block ${Math.floor(i/KB)},${i%KB}</span>`).join('');
+  document.querySelectorAll('.chip').forEach(c=>c.classList.toggle('on',+c.dataset.i===step));
+  $('prev').disabled=step===0; $('next').disabled=step===STEPS.length-1;
+  drawLogic(); drawPhys(); drawCode();
+}
+buildStepper(); buildSymtab(); render();
+window.addEventListener('keydown',e=>{
+  if(e.key==='ArrowRight'||e.key==='ArrowDown') setStep(step+1);
+  else if(e.key==='ArrowLeft'||e.key==='ArrowUp') setStep(step-1);
+});
+</script>
+</body>
+</html>

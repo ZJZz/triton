@@ -1,0 +1,366 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第四部分 · TMA 多播（get_cga_layout：A/B 的广播布局）</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#fff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#0891b2; --hl:#ea580c;
+    --A:#2563eb; --B:#d97706; --mc:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);background:linear-gradient(180deg,#fff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px}
+  header h1 .g{color:var(--accent)}
+  .badge{font-size:11px;font-weight:700;color:#fff;background:var(--accent);padding:3px 10px;border-radius:20px}
+  .badge.a{background:var(--A)} .badge.b{background:var(--B)} .badge.m{background:var(--mc)}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:300px}
+  .sub b{color:#11305c}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  main{flex:1;display:grid;gap:9px;padding:9px;min-height:0;
+    grid-template-columns:minmax(0,0.92fr) minmax(0,1.35fr) minmax(0,0.95fr);
+    grid-template-rows:minmax(0,1.18fr) minmax(0,0.74fr);
+    grid-template-areas:"derive grids l2" "kernel kernel kernel";}
+  #pDerive{grid-area:derive} #pGrids{grid-area:grids} #pL2{grid-area:l2} #pKernel{grid-area:kernel}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap}
+  .phead .tag{font-size:10.5px;font-weight:700;color:#fff;padding:1px 9px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:10.5px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;justify-content:center;align-items:flex-start}
+  .gridsvg{display:block;cursor:crosshair}
+
+  .btns{display:flex;gap:6px;flex-wrap:wrap}
+  .btns button{font-family:Consolas,monospace;font-size:11px;font-weight:700;cursor:pointer;border:1px solid #c3cedb;background:#fff;color:#33485e;border-radius:7px;padding:3px 9px}
+  .btns button.on{background:var(--mc);color:#fff;border-color:var(--mc)}
+
+  table.dv{border-collapse:collapse;font-family:Consolas,monospace;font-size:11.5px;width:100%}
+  table.dv th{font-size:10px;color:var(--muted);font-weight:700;padding:4px 6px;text-align:center;border-bottom:1px solid var(--line)}
+  table.dv td{padding:4px 6px;text-align:center;border-bottom:1px solid #eef2f7}
+  table.dv .z{color:#dc2626;font-weight:800}
+  table.dv .ca{color:var(--A);font-weight:700} table.dv .cb{color:var(--B);font-weight:700}
+  .note{font-size:10.5px;color:#5b6b7d;margin-top:8px;line-height:1.55}
+  .note b.a{color:var(--A)} .note b.b{color:var(--B)}
+
+  .sites{width:100%;font-size:11px}
+  .sites .s{border:1px solid #e2d6f5;background:#faf7ff;border-radius:8px;padding:6px 8px;margin-bottom:7px}
+  .sites code{font-family:Consolas,monospace;font-size:10.5px;color:#4b2e83;font-weight:700}
+  .sites b{color:var(--mc)}
+
+  footer{flex:none;border-top:1px solid var(--line);background:#fff;padding:8px 14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  .read{font-size:12px;line-height:1.55;flex:1;min-width:280px}
+  .read .lead{font-weight:800;color:var(--hl)}
+  .read code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  .legend{display:flex;gap:7px 12px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);align-items:center;max-width:320px}
+  .legend span{display:inline-flex;gap:4px;align-items:center}
+  .legend i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
+  @media(max-width:1100px){body{height:auto;overflow:auto}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto auto auto;grid-template-areas:"derive" "grids" "l2" "kernel"}
+    .pbody{min-height:240px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>第四部分 · <span class="g">TMA 多播</span>（<code style="font-family:Consolas">get_cga_layout</code>：A/B 的广播布局）</h1>
+    <span class="badge a">A 沿 M 切</span>
+    <span class="badge b">B 沿 N 切</span>
+    <span class="badge m">multicast</span>
+    <div class="sub">由 C 的 <code>cga_layout</code> 推出 A、B：<b>A 保留 M、清零 N</b>；<b>B 保留 N、清零 M</b>。
+      被清零的维度上，不同 CTA 加载的是<b>完全相同</b>的数据 → 用 <b>TMA multicast</b> 让它们共享一次 L2 取数。
+      切换 <code>cga_layout</code>、把鼠标移到 <b>中间分块图</b>（A 行块 / B 列块 / C-tile）→ 看各 CTA 分工，右侧③联动 L2 收益。</div>
+  </div>
+</header>
+
+<main>
+  <div class="panel" id="pDerive">
+    <div class="phead"><span class="tag" style="background:#475569">① get_cga_layout：从 C 推 A、B</span>
+      <div class="btns" id="presetBtns"></div></div>
+    <div class="pbody" style="align-items:stretch"><div style="width:100%" id="deriveBox"></div></div>
+  </div>
+
+  <div class="panel" id="pGrids">
+    <div class="phead"><span class="tag" style="background:var(--mc)">② matmul 全局分块：各 CTA 负责哪块 · 用哪部分 A/B</span>
+      <span class="hint">悬停 A 行块/B 列块/C-tile</span></div>
+    <div class="pbody" style="align-items:center"><div id="svgGrids"></div></div>
+  </div>
+
+  <div class="panel" id="pL2">
+    <div class="phead"><span class="tag" style="background:#0f766e">③ 为什么省：L2 多播</span>
+      <span class="hint">随②悬停联动 · 有/无对照</span></div>
+    <div class="pbody" style="flex-direction:column;align-items:stretch"><div id="svgL2"></div><div class="sites" id="sitesBox"></div></div>
+  </div>
+
+  <div class="panel" id="pKernel">
+    <div class="phead"><span class="tag" style="background:#0f766e">④ 最小示例 tma_multicast_copy_kernel（cga=[[0,0]]，两 CTA 收同一 tile）</span>
+      <span class="hint">非 2CTA → barrier 普通</span></div>
+    <div class="pbody" style="align-items:flex-start"><div id="svgKernel"></div></div>
+  </div>
+</main>
+
+<footer>
+  <div class="read" id="read"></div>
+  <div class="legend" id="legend"></div>
+</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+function setSvg(id, inner, W, H){ $(id).innerHTML=`<svg class="gridsvg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`; }
+const A='#2563eb', B='#d97706', MC='#7c3aed', HLC='#e5009a';
+// 同色系深浅：i=0 最浓，越大越浅 —— 用来区分同一网格内的各组
+function shadeFill(base,i,n){ const a=Math.max(0.1, 0.40 - 0.30*(n>1?i/(n-1):0)); return lighten(base,a); }
+
+/* presets：C 的 cga_layout */
+const PRESETS=[
+  {label:'[(1,0)]', C:[[1,0]]},
+  {label:'[(1,0),(0,1)]', C:[[1,0],[0,1]]},
+  {label:'[(1,0),(2,0),(0,1)]', C:[[1,0],[2,0],[0,1]]},
+];
+let curP=2;
+
+function solve(bases){
+  const nb=bases.length, num=1<<nb;
+  const coords=[]; let s0=1,s1=1;
+  for(let id=0;id<num;id++){ let r=0,c=0; for(let b=0;b<nb;b++) if((id>>b)&1){r+=bases[b][0];c+=bases[b][1];} coords.push([r,c]); s0=Math.max(s0,r+1); s1=Math.max(s1,c+1);}
+  const cellOf={}; coords.forEach((rc,id)=>cellOf[rc[0]+','+rc[1]]=id);
+  return {nb,num,coords,s0,s1,cellOf};
+}
+// get_cga_layout（非 2CTA）：A=清零 dim1，B=清零 dim0
+const deriveA=b=>[b[0],0];
+const deriveB=b=>[0,b[1]];
+
+/* ===== ① 推导表 ===== */
+function buildDerive(){
+  const C=PRESETS[curP].C;
+  let h=`<table class="dv"><thead><tr><th>基 #</th><th>C（累加器）</th><th class="ca">A = 清零 N</th><th class="cb">B = 清零 M</th></tr></thead><tbody>`;
+  C.forEach((b,i)=>{
+    const a=deriveA(b), bb=deriveB(b);
+    const fmtA=`(${b[0]},<span class="z">0</span>)`;
+    const fmtB=`(<span class="z">0</span>,${b[1]})`;
+    h+=`<tr><td>${i}</td><td>(${b[0]},${b[1]})</td><td class="ca">${fmtA}</td><td class="cb">${fmtB}</td></tr>`;
+  });
+  h+=`</tbody></table>`;
+  h+=`<div class="note">规则：<b class="a">A 保留 M(dim0)、把 N(dim1) 清零</b>；<b class="b">B 保留 N(dim1)、把 M(dim0) 清零</b>。`+
+     `<br>因为 <b>A[m,k] 与 n 无关、B[k,n] 与 m 无关</b>。基里被 <span class="z">清零</span> 的那一位 → 在该维上变化的 CTA 会拿到<b>同一份数据</b> → 可多播。</div>`;
+  $('deriveBox').innerHTML=h;
+}
+
+/* ===== ② matmul 全局分块：各 CTA 负责哪块、用哪部分 A/B（驱动③）===== */
+const GEO={ox:40, topB:52, Kh:50, gap:14, Kw:64, cw:86, ch:44};
+let gridsState=null;
+function buildTiling(){
+  const st=solve(PRESETS[curP].C);
+  const {ox,topB,Kh,gap,Kw,cw,ch}=GEO;
+  const Ay=topB+Kh+gap, Cy=Ay, Ax=ox, Cx=ox+Kw+gap, Bx=Cx, By=topB;
+  gridsState={st,Ax,Ay,Cx,Cy,Bx,By,Kw,Kh,cw,ch};
+  const W=Cx+st.s1*cw+30, H=Cy+st.s0*ch+34;
+  let g='';
+  g+=`<text x="${Ax+Kw/2}" y="${Ay-6}" text-anchor="middle" style="font-size:10.5px;font-weight:800" fill="${A}">A [M×K]</text>`;
+  g+=`<text x="${Bx}" y="${By-6}" text-anchor="start" style="font-size:10.5px;font-weight:800" fill="${B}">B [K×N]</text>`;
+  g+=`<text x="${Cx+st.s1*cw-2}" y="${Cy-6}" text-anchor="end" style="font-size:10.5px;font-weight:800" fill="${MC}">C = A@B [M×N]</text>`;
+  // A 行块（沿 M，蓝色系）
+  for(let r=0;r<st.s0;r++){ const y=Ay+r*ch;
+    g+=`<rect class="hb" data-t="a" data-r="${r}" x="${Ax}" y="${y}" width="${Kw}" height="${ch-2}" rx="5" fill="${shadeFill(A,r,st.s0)}" stroke="${A}" stroke-width="1.2"/>`;
+    g+=`<text x="${Ax+Kw/2}" y="${y+(ch-2)/2+4}" text-anchor="middle" style="font-size:11px;font-weight:800;pointer-events:none" fill="${A}">A#${r}</text>`; }
+  // B 列块（沿 N，橙色系）
+  for(let c=0;c<st.s1;c++){ const x=Bx+c*cw;
+    g+=`<rect class="hb" data-t="b" data-c="${c}" x="${x}" y="${By}" width="${cw-2}" height="${Kh}" rx="5" fill="${shadeFill(B,c,st.s1)}" stroke="${B}" stroke-width="1.2"/>`;
+    g+=`<text x="${x+(cw-2)/2}" y="${By+Kh/2+4}" text-anchor="middle" style="font-size:11px;font-weight:800;pointer-events:none" fill="${B}">B#${c}</text>`; }
+  // C tiles：每个一个 CTA；左条=A行色，上条=B列色
+  for(let id=0;id<st.num;id++){
+    const [r,c]=st.coords[id], x=Cx+c*cw, y=Cy+r*ch;
+    g+=`<rect class="hb" data-t="c" data-id="${id}" data-r="${r}" data-c="${c}" x="${x}" y="${y}" width="${cw-2}" height="${ch-2}" rx="5" fill="#f4f7fb" stroke="#bcc7d4" stroke-width="1"/>`;
+    g+=`<rect x="${x}" y="${y}" width="7" height="${ch-2}" rx="2" fill="${shadeFill(A,r,st.s0)}" pointer-events="none"/>`;
+    g+=`<rect x="${x}" y="${y}" width="${cw-2}" height="7" rx="2" fill="${shadeFill(B,c,st.s1)}" pointer-events="none"/>`;
+    g+=`<text x="${x+(cw-2)/2+2}" y="${y+(ch-2)/2}" text-anchor="middle" style="font-size:11px;font-weight:800;pointer-events:none" fill="#1c2733">CTA${id}</text>`;
+    g+=`<text x="${x+(cw-2)/2+2}" y="${y+(ch-2)/2+12}" text-anchor="middle" style="font-size:8px;pointer-events:none" fill="#5b6b7d">C(${r},${c})=A#${r}@B#${c}</text>`;
+  }
+  g+=`<text x="${Ax-12}" y="${Cy+st.s0*ch/2}" text-anchor="middle" transform="rotate(-90 ${Ax-12} ${Cy+st.s0*ch/2})" style="font-size:9px;font-weight:700" fill="#5b6b7d">M ↓（切 ${st.s0}）</text>`;
+  g+=`<text x="${Cx+st.s1*cw/2}" y="${Cy+st.s0*ch+20}" text-anchor="middle" style="font-size:9px;font-weight:700" fill="#5b6b7d">N →（切 ${st.s1}）· K 收缩维（A 宽=B 高，沿 K 累加）</text>`;
+  g+=`<g id="ovGrids"></g>`;
+  setSvg('svgGrids', g, W, H);
+  $('svgGrids').querySelectorAll('.hb').forEach(el=>el.addEventListener('pointerenter',()=>tileHover(el.dataset)));
+  $('svgGrids').addEventListener('pointerleave',clearHover);
+}
+function tileRect(x,y,w,h,col,sw){ return `<rect x="${x-2}" y="${y-2}" width="${w+2}" height="${h+2}" rx="6" fill="none" stroke="${col}" stroke-width="${sw||2.8}" pointer-events="none"/>`; }
+function tileHover(d){
+  const {st,Ax,Ay,Cx,Cy,Bx,By,Kw,Kh,cw,ch}=gridsState;
+  let ov='', txt='', l2grid='A', l2id=0;
+  if(d.t==='c'){
+    const id=+d.id, r=+d.r, c=+d.c;
+    ov+=tileRect(Cx+c*cw,Cy+r*ch,cw-2,ch-2,HLC);
+    ov+=tileRect(Ax,Ay+r*ch,Kw,ch-2,A);
+    ov+=tileRect(Bx+c*cw,By,cw-2,Kh,B);
+    l2grid='A'; l2id=id;
+    txt=`<span class="lead">CTA${id} 负责 C(${r},${c})</span> = <b style="color:${A}">A#${r}</b>（整份）@ <b style="color:${B}">B#${c}</b>（整份），沿 K 累加。`+
+        `A 与同行其它 CTA 共享、B 与同列其它 CTA 共享，但这个组合是它<b>独有</b>的 → 输出唯一。（右侧③显示 A#${r} 的多播组）`;
+  } else if(d.t==='a'){
+    const r=+d.r;
+    ov+=tileRect(Ax,Ay+r*ch,Kw,ch-2,HLC);
+    const ids=[]; for(let c=0;c<st.s1;c++){ ids.push(st.cellOf[r+','+c]); ov+=tileRect(Cx+c*cw,Cy+r*ch,cw-2,ch-2,A); }
+    l2grid='A'; l2id=st.cellOf[r+',0'];
+    txt=`<span class="lead">A#${r}</span>（A 的第 ${r} 个 M 行块）被 <b style="color:${A}">第 ${r} 行</b> 的 ${st.s1} 个 CTA 共享：${ids.map(i=>'CTA'+i).join(', ')}。`+
+        `它们都<b>整份</b>用 A#${r}，各自配不同 B 列块 → 同一批行、不同列的 C-tile。（A 多播组 = 这一行）`;
+  } else {
+    const c=+d.c;
+    ov+=tileRect(Bx+c*cw,By,cw-2,Kh,HLC);
+    const ids=[]; for(let r=0;r<st.s0;r++){ ids.push(st.cellOf[r+','+c]); ov+=tileRect(Cx+c*cw,Cy+r*ch,cw-2,ch-2,B); }
+    l2grid='B'; l2id=st.cellOf['0,'+c];
+    txt=`<span class="lead">B#${c}</span>（B 的第 ${c} 个 N 列块）被 <b style="color:${B}">第 ${c} 列</b> 的 ${st.s0} 个 CTA 共享：${ids.map(i=>'CTA'+i).join(', ')}。`+
+        `它们都<b>整份</b>用 B#${c}，各自配不同 A 行块 → 同一批列、不同行的 C-tile。（B 多播组 = 这一列）`;
+  }
+  if($('ovGrids')) $('ovGrids').innerHTML=ov;
+  drawL2(l2grid,l2id);
+  $('read').innerHTML=txt;
+}
+function clearHover(){
+  if($('ovGrids')) $('ovGrids').innerHTML='';
+  const st=solve(PRESETS[curP].C);
+  drawL2('A',0);
+  $('read').innerHTML=`<span class="lead">移到 A 行块 / B 列块 / C-tile 上 →</span> 看分工：`+
+    `${st.num} 个 CTA 排成 ${st.s0}×${st.s1}，每个独占一个 C-tile（左条=用的 A 行块，上条=用的 B 列块）；`+
+    `A 行块被一整行 CTA 共享、B 列块被一整列共享。右侧③联动「有/无 multicast」。`;
+}
+// 求某个 CTA 在某网格下的多播组成员
+function groupOf(grid,id){
+  const st=gridsState.st, [r,c]=st.coords[id];
+  const key=grid==='A'?0:1, val=grid==='A'?r:c;
+  const members=st.coords.map((rc,i)=>rc[key]===val?i:-1).filter(i=>i>=0);
+  return {members, r, c, idx:val};
+}
+
+/* ===== ③ L2 多播：由②的悬停驱动，聚焦某个组对照 有/无 multicast ===== */
+function buildSites(){
+  $('sitesBox').innerHTML=`
+   <div class="s"><b>① 加载</b> <code>tma.async_load(..., multicast=True)</code><br>把 tile 发给广播组里每个 CTA</div>
+   <div class="s"><b>② MMA</b> <code>tcgen05_mma(..., multicast=True)</code><br>多播它的 mbarrier 到达，防下一次 TMA 提前覆盖</div>
+   <div class="s"><b>③ 计数</b> <code>tcgen05_mma_barrier_count(..., multicast=True)</code><br>按广播组大小算 barrier 到达数</div>`;
+}
+function drawL2(grid,id){
+  if(!gridsState) return;
+  const isA=grid==='A', gp=groupOf(grid,id), members=gp.members, n=members.length;
+  const tileLabel=isA?`A 分片 #${gp.idx}`:`B 分片 #${gp.idx}`;
+  const tileTok  =isA?`A#${gp.idx}`:`B#${gp.idx}`;
+  const tileDesc =isA?`A 的第 ${gp.idx} 个 M 块（与 N 无关）`:`B 的第 ${gp.idx} 个 N 块（与 M 无关）`;
+  const mh=14, mg=5, rowH=mh+mg, memW=120, memX=192, hbmX=14, hbmW=42, l2X=92, l2W=38, W=330;
+  const blockH=n*rowH;
+  const fhY=14, s1Lab=34, y1=46, mid1=y1+blockH/2-mg/2;
+  const s2Lab=y1+blockH+18, y2=s2Lab+12, mid2=y2+blockH/2-mg/2, H=y2+blockH+40;
+  let g=`<defs>`+
+    `<marker id="mrR" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#c0656a"/></marker>`+
+    `<marker id="mrG" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="#94a3b8"/></marker>`+
+    `<marker id="mrP" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L7,3 L0,6 Z" fill="${MC}"/></marker></defs>`;
+  // 聚焦头
+  g+=`<text x="12" y="${fhY}" style="font-size:10.5px;font-weight:800" fill="${isA?A:B}">${tileLabel}　·　取自 ${tileDesc}</text>`;
+  // 场景1：无 multicast
+  g+=`<text x="12" y="${s1Lab}" style="font-size:10.5px;font-weight:800" fill="#b91c1c">✗ 无 multicast：组内 ${n} 个各取一次 → HBM 重复读 ${n}×</text>`;
+  g+=`<rect x="${hbmX}" y="${mid1-15}" width="${hbmW}" height="30" rx="6" fill="#fde8e8" stroke="#b91c1c" stroke-width="1.1"/><text x="${hbmX+hbmW/2}" y="${mid1+4}" text-anchor="middle" style="font-size:9.5px;font-weight:800" fill="#b91c1c">HBM</text>`;
+  members.forEach((m,i)=>{ const my=y1+i*rowH;
+    g+=`<line x1="${hbmX+hbmW}" y1="${mid1}" x2="${memX-2}" y2="${my+mh/2}" stroke="#c0656a" stroke-width="1.1" marker-end="url(#mrR)"/>`;
+    g+=`<rect x="${memX}" y="${my}" width="${memW}" height="${mh}" rx="3" fill="#fff" stroke="#d98a8a" stroke-width="0.8"/><text x="${memX+5}" y="${my+mh-3}" style="font-size:8.3px" fill="#9a3412">CTA${m} smem = ${tileTok}（自己取）</text>`;
+  });
+  // 场景2：有 multicast
+  g+=`<text x="12" y="${s2Lab}" style="font-size:10.5px;font-weight:800" fill="${MC}">✓ multicast：HBM 取 1 次 → L2 → 广播给这 ${n} 个</text>`;
+  g+=`<rect x="${hbmX}" y="${mid2-14}" width="${hbmW}" height="28" rx="6" fill="#fde8e8" stroke="#b91c1c" stroke-width="1"/><text x="${hbmX+hbmW/2}" y="${mid2+4}" text-anchor="middle" style="font-size:9px;font-weight:800" fill="#b91c1c">HBM</text>`;
+  g+=`<line x1="${hbmX+hbmW}" y1="${mid2}" x2="${l2X-2}" y2="${mid2}" stroke="#94a3b8" stroke-width="1.4" marker-end="url(#mrG)"/>`;
+  g+=`<rect x="${l2X}" y="${mid2-14}" width="${l2W}" height="28" rx="6" fill="#eafaf3" stroke="#0f9c7a" stroke-width="1.2"/><text x="${l2X+l2W/2}" y="${mid2+4}" text-anchor="middle" style="font-size:9px;font-weight:800" fill="#0f766e">L2</text>`;
+  members.forEach((m,i)=>{ const my=y2+i*rowH;
+    g+=`<path d="M${l2X+l2W},${mid2} C${memX-28},${mid2} ${memX-28},${my+mh/2} ${memX-2},${my+mh/2}" fill="none" stroke="${MC}" stroke-width="1.2" marker-end="url(#mrP)"/>`;
+    g+=`<rect x="${memX}" y="${my}" width="${memW}" height="${mh}" rx="3" fill="${lighten(MC,.12)}" stroke="${MC}" stroke-width="0.8"/><text x="${memX+5}" y="${my+mh-3}" style="font-size:8.3px" fill="#4b2e83">CTA${m} smem = ${tileTok}（广播来）</text>`;
+  });
+  // 澄清：两种方式 smem 内容相同，只差 HBM 读取次数
+  g+=`<text x="12" y="${y2+blockH+18}" style="font-size:9px;font-weight:700" fill="#0f766e">两种方式各 smem 内容【完全相同】，都是 ${tileTok}（${tileDesc}）</text>`;
+  g+=`<text x="12" y="${y2+blockH+31}" style="font-size:9px" fill="#7a8694">差别只在 HBM 读取次数：无 multicast = ${n}× ，有 multicast = 1×。</text>`;
+  setSvg('svgL2', g, W, H);
+}
+
+/* ===== ④ 最小 copy kernel · 流水线泳道（静态）===== */
+function buildKernel(){
+  const CT0='#2563eb', CT1='#0d9488';
+  const laneH=50, gapLane=16, labX=10;
+  const y0=64, y1=y0+laneH+gapLane, cy0=y0+laneH/2, cy1=y1+laneH/2;
+  const spanTop=y0, spanBot=y1+laneH, mcy=(spanTop+spanBot)/2;
+  // 列：HBM → TMA(multicast，跨两泳道) ⇒ smem ⇒ wait ⇒ copy
+  const hbmX=8, hbmW=46;
+  const tmaX=hbmX+hbmW+24, tmaW=126;
+  const smemX=tmaX+tmaW+58, perW=128;
+  const waitX=smemX+perW+22;
+  const copyX=waitX+perW+22;
+  const W=copyX+perW+18, H=spanBot+70;
+  let g=`<defs><marker id="ak" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#7a8694"/></marker>`+
+    `<marker id="akm" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="${MC}"/></marker></defs>`;
+  g+=`<text x="${tmaX}" y="22" style="font-size:11px;font-weight:800" fill="#0f766e">cga=[[0,0]]：一次 TMA 取数 → 同一 tile <tspan fill="${MC}" font-weight="800">多播(1→many)</tspan> 扇出到两个 CTA</text>`;
+
+  // 泳道底色 + 标签
+  [[y0,CT0,'CTA0'],[y1,CT1,'CTA1']].forEach(([y,col,nm])=>{
+    g+=`<rect x="${smemX-10}" y="${y}" width="${W-smemX+2}" height="${laneH}" rx="8" fill="${lighten(col,.07)}" stroke="${lighten(col,.25)}" stroke-width="1"/>`;
+    g+=`<text x="${labX}" y="${y+laneH/2+4}" style="font-size:11px;font-weight:800" fill="${col}">${nm}</text>`;
+  });
+
+  // HBM
+  g+=`<rect x="${hbmX}" y="${mcy-18}" width="${hbmW}" height="36" rx="6" fill="#fde8e8" stroke="#b91c1c" stroke-width="1.1"/>`;
+  g+=`<text x="${hbmX+hbmW/2}" y="${mcy+4}" text-anchor="middle" style="font-size:10px;font-weight:800" fill="#b91c1c">HBM</text>`;
+  g+=`<line x1="${hbmX+hbmW}" y1="${mcy}" x2="${tmaX-2}" y2="${mcy}" stroke="#7a8694" stroke-width="1.4" marker-end="url(#ak)"/>`;
+
+  // TMA multicast（跨两泳道一个大框）
+  g+=`<rect x="${tmaX}" y="${spanTop}" width="${tmaW}" height="${spanBot-spanTop}" rx="9" fill="${lighten(MC,.12)}" stroke="${MC}" stroke-width="1.8"/>`;
+  g+=`<text x="${tmaX+tmaW/2}" y="${mcy-14}" text-anchor="middle" style="font-size:11px;font-weight:800" fill="${MC}">TMA async_load ★</text>`;
+  g+=`<text x="${tmaX+tmaW/2}" y="${mcy+1}" text-anchor="middle" style="font-family:Consolas;font-size:9px" fill="#5b3aa0">multicast=True</text>`;
+  g+=`<text x="${tmaX+tmaW/2}" y="${mcy+15}" text-anchor="middle" style="font-size:8.5px" fill="#5b3aa0">一次取数 · 一份数据</text>`;
+
+  // smem / wait / copy（每泳道一份）
+  [[cy0,CT0,'0'],[cy1,CT1,'1']].forEach(([cy,col,i])=>{
+    // multicast 扇出：TMA → 该泳道 smem（数据+arrival 一起广播）
+    g+=`<path d="M${tmaX+tmaW},${mcy} C${smemX-30},${mcy} ${smemX-30},${cy} ${smemX-2},${cy}" fill="none" stroke="${MC}" stroke-width="1.5" marker-end="url(#akm)"/>`;
+    // smem
+    g+=perBox(smemX,cy,perW,col,`smem (CTA${i})`,['收到同一 tile','+ bar arrival(广播)']);
+    // wait
+    g+=perBox(waitX,cy,perW,col,`wait bar`,['per-CTA 普通 barrier','写法同普通 load']);
+    // copy
+    g+=perBox(copyX,cy,perW,col,`copy → global`,['async_copy_shared','_to_global']);
+    // 泳道内箭头
+    g+=`<line x1="${smemX+perW}" y1="${cy}" x2="${waitX-2}" y2="${cy}" stroke="#7a8694" stroke-width="1.3" marker-end="url(#ak)"/>`;
+    g+=`<line x1="${waitX+perW}" y1="${cy}" x2="${copyX-2}" y2="${cy}" stroke="#7a8694" stroke-width="1.3" marker-end="url(#ak)"/>`;
+  });
+  // 扇出标注
+  g+=`<text x="${smemX-30}" y="${mcy-3}" text-anchor="middle" style="font-size:8.5px;font-weight:700" fill="${MC}">广播 →</text>`;
+
+  // 底部说明
+  g+=`<text x="${tmaX}" y="${spanBot+24}" style="font-size:10px" fill="#0f766e"><tspan font-weight="800" fill="${MC}">★ multicast=True</tspan> 是唯一关键改动；TMA 把数据和 arrival 一起原子广播给全组，所以 wait 端写法和普通 load 完全一样。</text>`;
+  g+=`<text x="${tmaX}" y="${spanBot+40}" style="font-size:10px" fill="#7a8694">barrier 是普通 1D（非 2CTA），<tspan font-family="Consolas">expect</tspan> 仍按 per-CTA；目的 smem 用广播 cga_layout 保证两 CTA 收到同一块 tile。</text>`;
+  g+=`<text x="${tmaX}" y="${spanBot+56}" style="font-size:10px" fill="#b45309">对照 part3：这里是 1→many 扇出(broadcast)，而 two_ctas 的 tma_bar 是 many→1 汇聚(gather)。</text>`;
+  setSvg('svgKernel', g, W, H);
+}
+function perBox(x,cy,w,col,title,lines){
+  const y=cy-19;
+  let s=`<rect x="${x}" y="${y}" width="${w}" height="38" rx="7" fill="${lighten(col,.2)}" stroke="${col}" stroke-width="1.3"/>`;
+  s+=`<text x="${x+8}" y="${y+15}" style="font-size:10px;font-weight:800" fill="${col}">${title}</text>`;
+  (lines||[]).forEach((ln,i)=>{ s+=`<text x="${x+8}" y="${y+27+i*11}" style="font-family:Consolas;font-size:8px" fill="#445">${ln}</text>`; });
+  return s;
+}
+
+/* presets 按钮 */
+function buildBtns(){
+  $('presetBtns').innerHTML=PRESETS.map((p,i)=>`<button class="${i===curP?'on':''}" data-i="${i}">${p.label}</button>`).join('');
+  $('presetBtns').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{curP=+b.dataset.i; render();}));
+}
+function render(){ buildBtns(); buildDerive(); buildTiling(); clearHover(); }
+
+/* legend */
+$('legend').innerHTML =
+  `<span><i style="background:${lighten(A,.28)};border-color:${A}"></i>A 行块(沿 M)</span>`+
+  `<span><i style="background:${lighten(B,.28)};border-color:${B}"></i>B 列块(沿 N)</span>`+
+  `<span><i style="background:#f4f7fb;border-color:#bcc7d4"></i>C-tile = 1 个 CTA</span>`+
+  `<span><i style="background:${HLC}"></i>当前悬停</span>`;
+
+buildSites(); buildKernel(); render();
+</script>
+</body>
+</html>

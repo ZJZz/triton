@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>第二部分 · Multi-CTA 同步（mbarrier 的跨 CTA 语义）</title>
+<style>
+  :root{
+    --bg:#eef1f6; --panel:#fff; --panel2:#f1f5fa; --line:#d4dce6;
+    --txt:#1c2733; --muted:#5b6b7d; --accent:#0891b2; --hl:#ea580c;
+    --auto:#15803d; --manual:#b45309; --lead:#7c3aed;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--bg);color:var(--txt);
+    font-family:"Segoe UI",system-ui,-apple-system,"Microsoft YaHei",sans-serif;font-size:13px;line-height:1.5}
+  body{display:flex;flex-direction:column;height:100vh;overflow:hidden}
+  header{padding:9px 18px;border-bottom:1px solid var(--line);
+    background:linear-gradient(180deg,#fff,#e9eef5);flex:none}
+  .htop{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  header h1{margin:0;font-size:16px}
+  header h1 .g{color:var(--accent)}
+  .badge{font-size:11px;font-weight:700;color:#fff;background:var(--accent);padding:3px 10px;border-radius:20px}
+  .badge.a{background:var(--auto)} .badge.m{background:var(--manual)} .badge.l{background:var(--lead)}
+  .sub{font-size:11.5px;color:var(--muted);flex:1;min-width:300px}
+  .sub b{color:#11305c}
+  .sub code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+
+  main{flex:1;display:grid;gap:9px;padding:9px;min-height:0;
+    grid-template-columns:minmax(0,0.85fr) minmax(0,1.35fr) minmax(0,0.95fr);
+    grid-template-rows:minmax(0,1.25fr) minmax(0,0.72fr);
+    grid-template-areas:"auto barr group" "order order order";}
+  #pAuto{grid-area:auto} #pBarr{grid-area:barr} #pGroup{grid-area:group} #pOrder{grid-area:order}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:11px;
+    display:flex;flex-direction:column;min-height:0;overflow:hidden}
+  .phead{padding:7px 12px;font-size:12.5px;font-weight:700;border-bottom:1px solid var(--line);
+    background:var(--panel2);display:flex;align-items:center;gap:8px;flex:none;flex-wrap:wrap}
+  .phead .tag{font-size:10.5px;font-weight:700;color:#fff;padding:1px 9px;border-radius:20px}
+  .phead .hint{margin-left:auto;color:var(--muted);font-weight:400;font-size:10.5px}
+  .pbody{flex:1;min-height:0;overflow:auto;padding:8px;display:flex;justify-content:center;align-items:flex-start}
+  .gridsvg{display:block;cursor:crosshair}
+
+  .btns{display:flex;gap:6px;flex-wrap:wrap}
+  .btns button{font-family:Consolas,monospace;font-size:11px;font-weight:700;cursor:pointer;
+    border:1px solid #c3cedb;background:#fff;color:#33485e;border-radius:7px;padding:3px 9px}
+  .btns button.on{background:var(--lead);color:#fff;border-color:var(--lead)}
+
+  .cat{width:100%}
+  .cat .blk{border-radius:9px;padding:8px 10px;margin-bottom:10px;border:1px solid}
+  .cat .blk.a{background:#eafaf0;border-color:#bfe6cd}
+  .cat .blk.m{background:#fff6ea;border-color:#f0d8b0}
+  .cat .blk h4{margin:0 0 5px;font-size:12px;display:flex;align-items:center;gap:6px}
+  .cat .blk.a h4{color:var(--auto)} .cat .blk.m h4{color:var(--manual)}
+  .cat .op{display:inline-block;font-family:Consolas,monospace;font-size:11px;font-weight:700;
+    background:#fff;border:1px solid #d4dce6;border-radius:6px;padding:2px 7px;margin:2px 3px 0 0}
+  .cat .blk.a .op{color:var(--auto)} .cat .blk.m .op{color:var(--manual)}
+  .cat .desc{font-size:10.5px;color:#5b6b7d;margin-top:6px;line-height:1.5}
+
+  footer{flex:none;border-top:1px solid var(--line);background:#fff;padding:8px 14px;display:flex;gap:18px;align-items:center;flex-wrap:wrap}
+  .read{font-size:12px;line-height:1.55;flex:1;min-width:280px}
+  .read .lead{font-weight:800;color:var(--hl)}
+  .read code{font-family:Consolas,monospace;background:#fff3cd;color:#9a3412;padding:0 5px;border-radius:3px;font-size:11px;font-weight:600;border:1px solid #f1d48a}
+  .legend{display:flex;gap:7px 12px;flex-wrap:wrap;font-size:10.5px;color:var(--muted);align-items:center;max-width:360px}
+  .legend span{display:inline-flex;gap:4px;align-items:center}
+  .legend i{width:12px;height:12px;border-radius:3px;display:inline-block;border:1px solid rgba(0,0,0,.15)}
+  @media(max-width:1100px){
+    body{height:auto;overflow:auto}
+    main{grid-template-columns:1fr;grid-template-rows:auto auto auto auto;
+      grid-template-areas:"auto" "barr" "group" "order"}
+    .pbody{min-height:240px}
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="htop">
+    <h1>第二部分 · <span class="g">Multi-CTA 同步</span>（mbarrier 的跨 CTA 语义）</h1>
+    <span class="badge a">自动</span>
+    <span class="badge m">手动 mbarrier</span>
+    <span class="badge l">lead CTA</span>
+    <div class="sub">跨 CTA 同步比 CTA 内贵得多，Gluon 只对少数操作<b>自动</b>同步，其余靠你用 <b>mbarrier</b> 手动同步。
+      mbarrier 的 <code>cga_layout</code> 是一个 <b>CTA-id → barrier 索引</b> 的映射。
+      在 <b>中间面板</b>切换映射、把鼠标移到某个 CTA → 右侧看它所在 barrier 组的 <b>init/expect/arrive/wait</b> 计数。</div>
+  </div>
+</header>
+
+<main>
+  <div class="panel" id="pAuto">
+    <div class="phead"><span class="tag" style="background:#475569">① 谁自动、谁手动</span>
+      <span class="hint">只有 layout 类操作自动</span></div>
+    <div class="pbody" style="align-items:stretch"><div class="cat" id="catBox"></div></div>
+  </div>
+
+  <div class="panel" id="pBarr">
+    <div class="phead"><span class="tag" style="background:var(--lead)">② cga_layout 把 CTA 映射到 barrier</span>
+      <div class="btns" id="presetBtns"></div></div>
+    <div class="pbody" style="align-items:center"><div id="svgBarr"></div></div>
+  </div>
+
+  <div class="panel" id="pGroup">
+    <div class="phead"><span class="tag" style="background:var(--hl)">③ 选中组的 init/expect/arrive/wait</span>
+      <span class="hint">计数 × 组大小</span></div>
+    <div class="pbody" style="align-items:flex-start"><div id="svgGroup"></div></div>
+  </div>
+
+  <div class="panel" id="pOrder">
+    <div class="phead"><span class="tag" style="background:#0f766e">④ 排序规则 & 为什么 init 要放在 warp_specialize 之外</span>
+      <span class="hint">init → fence + cluster barrier → 使用</span></div>
+    <div class="pbody" style="align-items:flex-start"><div id="svgOrder"></div></div>
+  </div>
+</main>
+
+<footer>
+  <div class="read" id="read"></div>
+  <div class="legend" id="legend"></div>
+</footer>
+
+<script>
+const $=id=>document.getElementById(id);
+const lighten=(hex,a)=>{const n=parseInt(hex.slice(1),16);return `rgba(${n>>16},${(n>>8)&255},${n&255},${a})`;};
+function setSvg(id, inner, W, H){ $(id).innerHTML=`<svg class="gridsvg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">${inner}</svg>`; }
+const PAL=['#2563eb','#0d9488','#d97706','#db2777','#16a34a','#0891b2','#9333ea','#dc2626'];
+const bc=i=>PAL[i%PAL.length];          // barrier 配色
+const LEAD='#7c3aed';
+
+/* ===== ① 自动 vs 手动（静态）===== */
+function buildCat(){
+  $('catBox').innerHTML=`
+   <div class="blk a">
+     <h4>✓ 自动同步（编译器插 CGA barrier）</h4>
+     <span class="op">convert_layout</span><span class="op">reduce</span><span class="op">sum</span><span class="op">max</span>
+     <div class="desc">仅当<b>源 / 目标 layout 在 CTA 维度切分不同</b>时才跨 CTA，此时 Gluon 自动插同步原语。
+       第一部分的 multicta softmax 正是靠这一点，几乎不用手写同步。</div>
+   </div>
+   <div class="blk m">
+     <h4>✋ 需手动同步（你来管 mbarrier）</h4>
+     <span class="op">TMA</span><span class="op">WGMMA</span><span class="op">TCGen5MMA</span>
+     <div class="desc">和单 CTA kernel 一样，用 <b>mbarrier</b> 的 init / expect / arrive / wait 自己编排。
+       右边两个面板讲的就是这些 mbarrier 在多 CTA 下的语义。</div>
+   </div>`;
+}
+
+/* ===== presets：mbarrier 的 cga_layout（基按 bit0..）===== */
+const PRESETS=[
+  {label:'per-CTA · 4',  code:'allocate_mbarrier()', bases:[[1],[2]],
+   note:'cga_layout=[[1],[2]]（单位映射）→ 每个 CTA 独占一个 barrier，自己就是 lead'},
+  {label:'pair · 8',     code:'cga_layout=[[0],[1],[2]]', bases:[[0],[1],[2]],
+   note:'bit0 的基 = 0（广播）→ 只差 bit0 的两个 CTA 共享一个 barrier；偶数 id 是 lead'},
+  {label:'quad · 8',     code:'cga_layout=[[0],[0],[1]]', bases:[[0],[0],[1]],
+   note:'bit0、bit1 都广播 → 每 4 个 CTA 共享一个 barrier；CTA0、CTA4 是 lead'},
+];
+let curP=1, gsel=0;
+
+/* 计算 CTA→barrier 映射与分组 */
+function solve(bases){
+  const nb=bases.length, num=1<<nb;
+  const rawBar=[];
+  for(let id=0;id<num;id++){ let b=0; for(let i=0;i<nb;i++) if((id>>i)&1) b^=bases[i][0]; rawBar.push(b); }
+  const seen=[...new Set(rawBar)].sort((a,b)=>a-b);
+  const remap={}; seen.forEach((b,k)=>remap[b]=k);
+  const barOf=rawBar.map(b=>remap[b]);
+  const groups=seen.map((_,k)=>{
+    const members=barOf.map((b,id)=>b===k?id:-1).filter(id=>id>=0);
+    return {k, members, lead:members[0], size:members.length};
+  });
+  return {nb,num,barOf,groups};
+}
+
+/* ===== ② CTA → barrier 映射（交互）===== */
+const BR={ox:24, oy:70, bw:62, bh:58, gx:10};
+let barrGeom=null;
+function buildBarr(){
+  const P=PRESETS[curP], st=solve(P.bases);
+  barrGeom={st};
+  const {ox,oy,bw,bh,gx}=BR;
+  const W=ox+st.num*(bw+gx)+10, H=oy+bh+70;
+  let g='';
+  g+=`<text x="${ox}" y="22" style="font-family:Consolas;font-size:11px;font-weight:700" fill="${LEAD}">${P.code}</text>`;
+  g+=`<text x="${ox}" y="40" style="font-size:10px" fill="#7a8694">${st.num} 个 CTA  →  ${st.groups.length} 个 barrier（颜色 = barrier 索引；★ = 该组 lead CTA）</text>`;
+  // 组框
+  st.groups.forEach(grp=>{
+    const x0=ox+grp.members[0]*(bw+gx)-4;
+    const x1=ox+grp.members[grp.members.length-1]*(bw+gx)+bw+4;
+    const col=bc(grp.k);
+    g+=`<rect x="${x0}" y="${oy-12}" width="${x1-x0}" height="${bh+24}" rx="9" fill="none" stroke="${col}" stroke-width="1.4" stroke-dasharray="${grp.size>1?'5 3':'0'}"/>`;
+    g+=`<text x="${(x0+x1)/2}" y="${oy+bh+22}" text-anchor="middle" style="font-size:10px;font-weight:800" fill="${col}">bar ${grp.k}${grp.size>1?` · lead=CTA${grp.lead}`:''}</text>`;
+  });
+  // CTA 方块
+  for(let id=0;id<st.num;id++){
+    const k=st.barOf[id], col=bc(k), x=ox+id*(bw+gx), isLead=st.groups[k].lead===id;
+    g+=`<rect x="${x}" y="${oy}" width="${bw}" height="${bh}" rx="7" fill="${lighten(col,.28)}" stroke="${col}" stroke-width="${isLead?2.4:1.1}"/>`;
+    g+=`<text x="${x+bw/2}" y="${oy+bh/2-4}" text-anchor="middle" style="font-size:13px;font-weight:800" fill="${col}">CTA${id}</text>`;
+    g+=`<text x="${x+bw/2}" y="${oy+bh/2+11}" text-anchor="middle" style="font-family:Consolas;font-size:9px" fill="#5b6b7d">${id.toString(2).padStart(st.nb,'0')}b→b${k}</text>`;
+    if(isLead) g+=`<text x="${x+6}" y="${oy+15}" style="font-size:13px" fill="${LEAD}">★</text>`;
+  }
+  g+=`<g id="ovBarr"></g>`;
+  setSvg('svgBarr', g, W, H);
+}
+
+/* ===== ③ 选中 barrier 组的 init/expect/arrive/wait（交互）===== */
+function buildGroup(){
+  const P=PRESETS[curP], st=solve(P.bases);
+  if(gsel>=st.groups.length) gsel=0;
+  const grp=st.groups[gsel], col=bc(grp.k), sz=grp.size;
+  const W=346, leadX=24, leadY=70, leadW=116, leadH=70;
+  const memX=244, memY0=58, memH=30, memGap=10;
+  let g='';
+  // 标题独占一行
+  g+=`<text x="14" y="18" style="font-size:11px;font-weight:800" fill="${col}">barrier ${grp.k} · ${sz} 个 CTA 共享 · lead=CTA${grp.lead}</text>`;
+  // arrive 说明（与标题、方块都留出间距）
+  g+=`<text x="${(memX+leadX+leadW)/2}" y="42" text-anchor="middle" style="font-size:9.5px" fill="#7a8694">← arrive 汇入 lead</text>`;
+  // lead barrier 框
+  g+=`<rect x="${leadX}" y="${leadY}" width="${leadW}" height="${leadH}" rx="9" fill="${lighten(col,.2)}" stroke="${col}" stroke-width="2"/>`;
+  g+=`<text x="${leadX+leadW/2}" y="${leadY+24}" text-anchor="middle" style="font-size:12px;font-weight:800" fill="${col}">barrier ${grp.k}</text>`;
+  g+=`<text x="${leadX+leadW/2}" y="${leadY+42}" text-anchor="middle" style="font-size:10px" fill="#5b6b7d">驻留在</text>`;
+  g+=`<text x="${leadX+leadW/2}" y="${leadY+58}" text-anchor="middle" style="font-size:11px;font-weight:800" fill="${LEAD}">★ lead CTA${grp.lead}</text>`;
+  // 成员 + arrive 箭头
+  g+=`<defs><marker id="ar" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto">
+        <path d="M0,0 L7,3 L0,6 Z" fill="${col}"/></marker></defs>`;
+  grp.members.forEach((id,i)=>{
+    const y=memY0+i*(memH+memGap), isLead=id===grp.lead;
+    g+=`<rect x="${memX}" y="${y}" width="70" height="${memH}" rx="6" fill="${lighten(col,.28)}" stroke="${col}" stroke-width="${isLead?2.2:1}"/>`;
+    g+=`<text x="${memX+35}" y="${y+memH/2+4}" text-anchor="middle" style="font-size:11px;font-weight:800" fill="${col}">CTA${id}${isLead?' ★':''}</text>`;
+    // arrive 箭头：每个成员 → lead barrier
+    const sy=y+memH/2;
+    g+=`<path d="M${memX-3},${sy} C${memX-50},${sy} ${leadX+leadW+40},${leadY+leadH/2} ${leadX+leadW+3},${leadY+leadH/2}" fill="none" stroke="${col}" stroke-width="1.2" opacity="0.7" marker-end="url(#ar)"/>`;
+  });
+
+  // 语义文字：每行 = 关键字标签 + 倍数 + 说明，行距加大避免重叠
+  const diagBottom=Math.max(leadY+leadH, memY0+sz*(memH+memGap));
+  const lines=[
+    [`init`,   `count × ${sz}`,            `只在 lead 上初始化，计数 = base(1) × 组大小 = ${sz}`],
+    [`expect`, `size_per_cta × ${sz}`,     `只在 lead 上 expect；非 lead 的 ${sz-1} 个 CTA 各发 1 个 arrival`],
+    [`arrive`, `${sz} 个 arrival`,         `组内每个 CTA 都到 lead 的 barrier 上 arrive`],
+    [`wait`,   `仅 lead 等待`,             `只有 CTA${grp.lead} 调 wait；其余 CTA 不等`],
+  ];
+  let y=diagBottom+30;
+  lines.forEach(([op,mul,desc])=>{
+    g+=`<rect x="14" y="${y-13}" width="78" height="19" rx="5" fill="${lighten(col,.18)}" stroke="${col}" stroke-width="0.8"/>`;
+    g+=`<text x="20" y="${y+1}" style="font-family:Consolas;font-size:11px;font-weight:800" fill="${col}">${op}</text>`;
+    g+=`<text x="102" y="${y+1}" style="font-family:Consolas;font-size:10.5px;font-weight:700" fill="#33485e">${mul}</text>`;
+    g+=`<text x="14" y="${y+18}" style="font-size:9.5px" fill="#7a8694">${desc}</text>`;
+    y+=46;
+  });
+  if(sz===1) g+=`<text x="14" y="${y-6}" style="font-size:9.5px;font-style:italic" fill="#15803d">组大小=1 → 所有 ×1，退化成普通单 CTA barrier。</text>`;
+  setSvg('svgGroup', g, W, y+8);
+}
+
+/* ===== ④ 排序规则 / warp_specialize（静态时间线）===== */
+function buildOrder(){
+  const W=860, H=210;
+  const ox=24, lane=150, boxW=250, midX=ox+boxW+70;
+  let g='';
+  // 顶层
+  g+=`<rect x="${ox}" y="30" width="${boxW}" height="120" rx="10" fill="#eef6ff" stroke="#2563eb" stroke-width="1.4"/>`;
+  g+=`<text x="${ox+12}" y="50" style="font-size:11.5px;font-weight:800" fill="#2563eb">顶层 kernel（warp_specialize 之前）</text>`;
+  g+=`<text x="${ox+12}" y="72" style="font-family:Consolas;font-size:10.5px" fill="#33485e">allocate_mbarrier(...)　×全部</text>`;
+  g+=`<text x="${ox+12}" y="90" style="font-family:Consolas;font-size:10.5px" fill="#33485e">mbarrier.init(...)　×全部</text>`;
+  g+=`<text x="${ox+12}" y="116" style="font-size:9.5px" fill="#7a8694">所有 barrier 的 init 必须在任何 CTA 使用它之前完成，</text>`;
+  g+=`<text x="${ox+12}" y="130" style="font-size:9.5px" fill="#7a8694">跨 CTA / 被 multicast / 2CTA 用到的 barrier 尤其如此。</text>`;
+
+  // 编译器插入
+  g+=`<rect x="${midX}" y="46" width="240" height="88" rx="10" fill="#f3eefc" stroke="${LEAD}" stroke-width="1.4" stroke-dasharray="5 3"/>`;
+  g+=`<text x="${midX+12}" y="66" style="font-size:11px;font-weight:800" fill="${LEAD}">⚙ 编译器自动插入</text>`;
+  g+=`<text x="${midX+12}" y="86" style="font-family:Consolas;font-size:9.5px" fill="#5b3aa0">fence.mbarrier_init.release.cluster</text>`;
+  g+=`<text x="${midX+12}" y="104" style="font-family:Consolas;font-size:9.5px" fill="#5b3aa0">+ relaxed cluster barrier</text>`;
+  g+=`<text x="${midX+12}" y="124" style="font-size:9px" fill="#7a8694">保证 init 全部可见后，各 CTA 才开始用</text>`;
+
+  // warp_specialize
+  const wsX=midX+280;
+  g+=`<rect x="${wsX}" y="30" width="220" height="120" rx="10" fill="#fff6ea" stroke="${'#b45309'}" stroke-width="1.4"/>`;
+  g+=`<text x="${wsX+12}" y="50" style="font-size:11.5px;font-weight:800" fill="#b45309">gl.warp_specialize([...])</text>`;
+  g+=`<text x="${wsX+12}" y="72" style="font-size:10px" fill="#5b6b7d">各 partition 消费 barrier：</text>`;
+  g+=`<text x="${wsX+12}" y="90" style="font-family:Consolas;font-size:10px" fill="#33485e">expect / arrive / wait</text>`;
+  g+=`<text x="${wsX+12}" y="112" style="font-size:9px;font-weight:700" fill="#b91c1c">✗ 不能放这里：cluster.arrive/wait（CGA barrier）</text>`;
+  g+=`<text x="${wsX+12}" y="128" style="font-size:9px;font-weight:700" fill="#b91c1c">✗ 不能放这里：跨 CTA 的 convert_layout/reduce/sum/max</text>`;
+
+  // 箭头
+  g+=`<defs><marker id="ao" markerWidth="9" markerHeight="9" refX="7" refY="3" orient="auto"><path d="M0,0 L8,3 L0,6 Z" fill="#94a3b8"/></marker></defs>`;
+  g+=`<line x1="${ox+boxW}" y1="90" x2="${midX-4}" y2="90" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ao)"/>`;
+  g+=`<line x1="${midX+240}" y1="90" x2="${wsX-4}" y2="90" stroke="#94a3b8" stroke-width="1.6" marker-end="url(#ao)"/>`;
+
+  g+=`<text x="${ox}" y="178" style="font-size:10px" fill="#0f766e"><tspan font-weight="800">为什么 cluster barrier 不能进 warp_specialize：</tspan>它要求 kernel 里<b>所有线程</b>都执行，而 warp_specialize 把 warp 分成各干各的 partition，无法满足。</text>`;
+  g+=`<text x="${ox}" y="196" style="font-size:10px" fill="#0f766e">所以：把 allocate + init 全部留在顶层，那道强制的 cluster 同步自然就落在 warp_specialize 之外。</text>`;
+  setSvg('svgOrder', g, W, H);
+}
+
+/* ===== 联动 ===== */
+function selectGroup(k){
+  gsel=k; buildGroup();
+  const st=solve(PRESETS[curP].bases), grp=st.groups[k], col=bc(k);
+  // ② 高亮该组
+  const {ox,oy,bw,gx,bh}=BR;
+  let ov='';
+  grp.members.forEach(id=>{
+    const x=ox+id*(bw+gx);
+    ov+=`<rect x="${x-2}" y="${oy-2}" width="${bw+4}" height="${bh+4}" rx="8" fill="none" stroke="#ea580c" stroke-width="2.6"/>`;
+  });
+  if($('ovBarr')) $('ovBarr').innerHTML=ov;
+  $('read').innerHTML=
+    `<span class="lead">barrier ${grp.k}</span>：由 ${grp.size} 个 CTA（${grp.members.map(i=>'CTA'+i).join(', ')}）共享，`+
+    `lead = <b style="color:${LEAD}">CTA${grp.lead}</b>。`+
+    `init 计数 ×${grp.size}、expect 字节 ×${grp.size}（只在 lead），arrive 共 ${grp.size} 次，只有 lead wait。`;
+}
+function attachBarr(){
+  const svg=$('svgBarr').querySelector('svg');
+  svg.addEventListener('pointermove',e=>{
+    const st=barrGeom.st, {ox,oy,bw,gx,bh}=BR;
+    const r=svg.getBoundingClientRect();
+    const x=(e.clientX-r.left)*(svg.viewBox.baseVal.width/r.width);
+    const y=(e.clientY-r.top)*(svg.viewBox.baseVal.height/r.height);
+    if(y<oy-12||y>oy+bh+12){return;}
+    const id=Math.floor((x-ox)/(bw+gx));
+    if(id<0||id>=st.num) return;
+    if(x-ox-id*(bw+gx)>bw) return;
+    selectGroup(st.barOf[id]);
+  });
+}
+
+function buildBtns(){
+  $('presetBtns').innerHTML=PRESETS.map((p,i)=>`<button class="${i===curP?'on':''}" data-i="${i}">${p.label}</button>`).join('');
+  $('presetBtns').querySelectorAll('button').forEach(b=>b.addEventListener('click',()=>{ curP=+b.dataset.i; gsel=0; render(); }));
+}
+function render(){ buildBtns(); buildBarr(); attachBarr(); selectGroup(gsel); }
+
+/* legend */
+$('legend').innerHTML =
+  `<span><i style="background:${lighten('#2563eb',.3)};border-color:#2563eb"></i>barrier 0</span>`+
+  `<span><i style="background:${lighten('#0d9488',.3)};border-color:#0d9488"></i>barrier 1…</span>`+
+  `<span><i style="background:#fff;border-color:#7c3aed"></i>★ lead CTA</span>`+
+  `<span><i style="background:#ea580c"></i>当前选中组</span>`;
+
+buildCat(); buildOrder(); render();
+</script>
+</body>
+</html>
