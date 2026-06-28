@@ -1,0 +1,8 @@
+Traceback (most recent call last):
+  File "/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/tools/compile_driver.py", line 76, in <module>
+    main()
+  File "/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/tools/compile_driver.py", line 70, in main
+    options = backend.parse_options({"num_warps": num_warps, "num_stages": num_stages, "num_ctas": num_ctas})
+  File "/LocalRun/jiangzhe.zhao/my_repo/triton/python/triton/backends/nvidia/compiler.py", line 197, in parse_options
+    raise ValueError((f"num_ctas > 1 requires NVIDIA SM90+ (Hopper). "
+ValueError: num_ctas > 1 requires NVIDIA SM90+ (Hopper). Current target is sm_86. This configuration will fail. Please set num_ctas=1 or target an SM90+ GPU.
