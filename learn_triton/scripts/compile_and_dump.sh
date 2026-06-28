@@ -25,6 +25,7 @@ OUT=${5:?out subdir}
 ARCH=${TRITON_ARCH:-86}
 NUM_WARPS=${TRITON_NUM_WARPS:-4}
 NUM_STAGES=${TRITON_NUM_STAGES:-3}
+NUM_CTAS=${TRITON_NUM_CTAS:-1}
 DUMP_AFTER=${MLIR_DUMP_AFTER_PASS:-1}
 
 DUMP=$ROOT/learn_triton/dumps/$OUT
@@ -44,6 +45,7 @@ MLIR_DUMP_AFTER_PASS=$DUMP_AFTER \
   "$ARCH" \
   "$NUM_WARPS" \
   "$NUM_STAGES" \
+  "$NUM_CTAS" \
   > "$LOG" 2>&1
 
 "$PY" "$ROOT/learn_triton/tools/split_pass_dump.py" \

@@ -8,7 +8,7 @@ We only care about the IR dumps, so we just call triton.compile() and let the
 TRITON_KERNEL_DUMP / MLIR_ENABLE_DUMP env vars do the dumping.
 
 Usage:
-  python learn_triton/tools/compile_driver.py <file.py> <kernel> "<signature>" <arch> [num_warps] [num_stages]
+  python learn_triton/tools/compile_driver.py <file.py> <kernel> "<signature>" <arch> [num_warps] [num_stages] [num_ctas]
 
   <signature>  comma-separated, declaration order, same grammar as tools/compile.py:
                *fp16:16  -> 16-byte-aligned pointer to fp16
@@ -66,7 +66,8 @@ def main():
 
     target = GPUTarget("cuda", arch, 32)  # <-- arch is an int here (the bug fix)
     backend = triton.compiler.make_backend(target)
-    options = backend.parse_options({"num_warps": num_warps, "num_stages": num_stages})
+    num_ctas = int(sys.argv[7]) if len(sys.argv) > 7 else 1
+    options = backend.parse_options({"num_warps": num_warps, "num_stages": num_stages, "num_ctas": num_ctas})
     cc = triton.compile(src, target=target, options=options.__dict__)
     print(f"compiled {name} for sm_{arch}: {len(cc.asm)} stages -> {list(cc.asm.keys())}")
 
