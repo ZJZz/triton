@@ -1,7 +1,30 @@
 # Learning Triton's device-side (backend) compilation
 
-Goal: understand **what each compiler stage/pass does** (conceptually), using real dumps.
-We target the GPU in this box: **NVIDIA RTX 3080, Ampere, `sm_86`** (Triton "capability 86").
+Goal: understand **what each compiler decision does** using real dumps.
+
+For every important pass, we want to reconstruct this chain:
+
+```text
+Input IR
+  -> compiler decision
+  -> output IR
+  -> hardware / execution motivation
+  -> next-pass contract
+```
+
+A pass is the implementation unit. The learning target is the decision it makes and the
+contract it establishes for later passes.
+
+The target NVIDIA architectures for the current learning path are:
+
+| Architecture | Main dump target | Why we study it |
+|---|---:|---|
+| Ampere | `sm80` / `sm86` | `mma.sync`, Ampere-era tensor core path, useful baseline |
+| Hopper | `sm90` | `wgmma`, TMA, warp specialization, Hopper-era tensor memory path |
+| Blackwell | `sm100` | Blackwell-specific tensor core / TMEM / cluster features; `sm120` is a related consumer Blackwell variant when needed |
+
+The local GPU in this box is **NVIDIA RTX 3080, Ampere, `sm_86`**. For Hopper and
+Blackwell we use ahead-of-time compiler dumps; no GPU execution is required for the IR study.
 
 ## The 5 stages (the big picture)
 
@@ -41,10 +64,45 @@ Wiring is in `third_party/nvidia/backend/compiler.py` (`add_stages`,
 The two are "essentially the same content" — `.log` is for reading top-to-bottom,
 `.split` is for diffing pass N vs N+1.
 
+For the detailed pass-by-pass study method, use
+[IR_PASS_DIFF_LEARNING_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/IR_PASS_DIFF_LEARNING_GUIDE.md).
+
+The main question is not only "what changed?" but:
+
+- What compiler question is this pass answering?
+- Why is this decision made here in the pipeline?
+- What contract does the after-IR establish for later passes?
+- What invariants must remain unchanged?
+
 ## KEY passes to understand first (ignore the optimization passes)
 
 Read these in `make_ttgir` / `make_llir` order. The ones that change the *shape* of the
 program (not just clean it up) are the ones worth learning:
+
+Think of the early backend as a dependency graph, not just a flat list:
+
+```text
+TTIR tensor program
+  -> ConvertTritonToTritonGPU
+       establishes GPU layouts / encodings
+  -> Coalesce / layout-oriented passes
+       improve memory-facing layouts
+  -> PlanCTA
+       establishes CTA ownership / CGA layout when num_ctas > 1
+  -> RemoveLayoutConversions / OptimizeThreadLocality / OptimizeDotOperands
+       clean and refine layout contracts around compute and memory
+  -> AccelerateMatmul / MMA-WGMMA-oriented passes
+       establish tensor-core instruction contracts
+  -> Pipeline / ScheduleLoops / WarpSpecialize
+       establish execution ordering and latency-hiding contracts
+  -> Shared memory / TMEM / barrier / allocation passes
+       materialize hardware resources and synchronization
+  -> ConvertTritonGPUToLLVM
+       lowers the established contracts into LLVM/NVVM-level code
+```
+
+When studying a pass, always ask which previous contract it consumes and which later pass
+depends on its output.
 
 ### Front-end / TTIR (`make_ttir`)
 - **Inliner** — inline called `@triton.jit` functions into one body.
@@ -77,6 +135,9 @@ So if you only learn three passes, learn:
 
     ./scripts/compile_and_dump.sh <file.py> <kernel_name> "<signature>" "<grid>" <out_subdir>
 
+Current scope: dump compiler IR only. We do not run the kernel or validate numerical results
+at this stage.
+
 Example:
 
     ./scripts/compile_and_dump.sh kernels/vec_add.py add_kernel "*fp32:16, *fp32:16, *fp32:16, i32, 1024" "1024,1,1" vecadd
@@ -90,23 +151,41 @@ Env knobs it sets (worth memorizing):
 
 Four techniques, each with a tool in this folder:
 
-### 1. Dump the SAME kernel for different chips
+### 1. Dump the SAME kernel for different architectures
 `tl.dot` lowers to different tensor-core instructions per architecture. Run:
 
     ./scripts/dump_multi_chip.sh kernels/matmul.py matmul_kernel \
       "*fp16:16, *fp16:16, *fp16:16, i32, i32, i32, i32, i32, i32, i32, i32, i32, 64, 64, 32" \
       unused matmul 3
 
-What the dumps show for this matmul (`dumps/matmul/sm{75,80,86,90}/`):
+For the current learning path, compare the same kernel across:
+
+- Ampere: `dumps/<kernel>/sm80` or `dumps/<kernel>/sm86`
+- Hopper: `dumps/<kernel>/sm90`
+- Blackwell: `dumps/<kernel>/sm100`
+
+Current canonical matmul dumps use exact before/after pass snapshots:
+
+- `dumps/matmul/sm86_num_ctas1`
+- `dumps/matmul/sm90_num_ctas1`
+- `dumps/matmul/sm100_num_ctas1`
+- `dumps/matmul/sm90_num_ctas2`
+- `dumps/matmul/sm100_num_ctas2`
+
+What the canonical matmul dumps show:
+
 | chip | TTGIR `#mma` layout            | PTX tensor instr                         |
 |------|--------------------------------|------------------------------------------|
-| sm_75 Turing | (none) — fell back to FMA | 1024x `fma.rn` (CUDA cores)         |
-| sm_80 Ampere | `nvidia_mma v2, instrShape [16,8]` | `mma.sync.m16n8k16`            |
 | sm_86 Ampere | `nvidia_mma v2, instrShape [16,8]` | `mma.sync.m16n8k16`            |
 | sm_90 Hopper | `nvidia_mma v3, instrShape [16,64,16]` | `wgmma.mma_async.m64n64k16` + fences |
+| sm_100 Blackwell | Blackwell-specific MMA/TMEM-oriented layouts | Blackwell-specific tensor-core lowering |
 
 (NOTE: tools/compile.py's `--target` is buggy — it passes arch as a string and
 crashes on `arch >= 100`. Use `tools/compile_driver.py`, which builds `GPUTarget("cuda", <int>, 32)`.)
+
+For Blackwell dumps, use `TRITON_ARCH=100` with `compile_and_dump.sh`. PTX/cubin generation
+may require `ptxas-blackwell`; if that tool is unavailable, the earlier MLIR dumps are still
+useful for comparing compiler IR before final assembly.
 
 ### 2. Dump all passes at each stage
 `MLIR_ENABLE_DUMP=1` already prints every pass of every stage (ttir/ttgir/llir pass
