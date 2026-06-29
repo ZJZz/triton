@@ -1,0 +1,5 @@
+# Codegen artifacts from IR dumps — keep IR text (ttir/ttgir/llir/mlir) and logs,
+# drop compiled binaries and assembly which bloat the repo and add no study value.
+*.cubin
+*.sass
+*.ptx
