@@ -570,7 +570,81 @@ Next dependencies:
   TritonGPUPipeline, LowerLoops, async load/TMA/WGMMA/MMAv5/TMEM lowering
 ```
 
-## 16. Open Questions
+## 16. Is The Result Optimal?
+
+Short answer:
+
+```text
+不是。
+ScheduleLoops 产出的是一个可行的、偏启发式的 coarse schedule，
+不是对“总执行周期最小”之类目标的全局最优解。
+```
+
+Why:
+
+- `scheduleKeyOps` 只基于 latency anchor 和 def-use 图计算 stage，见 [ScheduleLoops.cpp:152](/LocalRun/jiangzhe.zhao/my_repo/triton/lib/Dialect/TritonGPU/Transforms/Pipeliner/ScheduleLoops.cpp:152)
+- 核心公式是 latency 加权最长路径，不是 ILP、DP 或完整 list scheduling：
+
+```text
+distance(op) = latency(op) + max(distance(user))
+stage(op) = maxDistance - distance(op)
+```
+
+- 后续 `scheduleDependencies` / `scheduleDistanceOneDependencies` / `scheduleRemainingToLastStage` 做的是 dependency closure 和合法化补全，见 [ScheduleLoops.cpp:351](/LocalRun/jiangzhe.zhao/my_repo/triton/lib/Dialect/TritonGPU/Transforms/Pipeliner/ScheduleLoops.cpp:351)，不是全局搜索。
+- pass 没有显式建模 occupancy、register pressure、shared-memory pressure、issue width、barrier cost 等完整硬件代价。
+
+So what does it optimize?
+
+```text
+它主要优化的是：
+先把长 latency 的关键 op 拉开 stage 距离，
+为后续 Pipeline 提供一个结构上正确、通常有收益的初始调度。
+```
+
+这也是为什么它适合作为中间 pass：
+算法便宜、稳定、可解释，但不声称给出全局最优流水排程。
+
+## 17. What Does "Only Assign Stage" Mean?
+
+这句话的准确含义是：
+
+```text
+ScheduleLoops 只决定“这个 op 属于哪个 pipeline stage，以及粗粒度顺序如何”，
+但它并不真正把 loop 改写成流水化后的控制流。
+```
+
+它写出的只是 metadata contract：
+
+- op 上的 `loop.stage`
+- op 上的 `loop.cluster`
+- loop 上的 `tt.scheduled_max_stage`
+
+真正写回 IR 的位置在 [Schedule.cpp:254](/LocalRun/jiangzhe.zhao/my_repo/triton/lib/Dialect/TritonGPU/Transforms/Pipeliner/Schedule.cpp:254) 和 [ScheduleLoops.cpp:384](/LocalRun/jiangzhe.zhao/my_repo/triton/lib/Dialect/TritonGPU/Transforms/Pipeliner/ScheduleLoops.cpp:384)。
+
+它没有做什么：
+
+- 不复制 loop body
+- 不生成 prologue / steady-state / epilogue
+- 不把某个 load 真正搬到前一轮 iteration 的代码位置
+- 不插入 async wait / barrier / multibuffer rotation
+
+这些工作留给后续 `TritonGPUPipeline` / `LowerLoops`。
+
+因此更准确的三段式理解是：
+
+```text
+AssignLatencies: 给关键 op 一个“应该拉开多远”的 latency hint
+ScheduleLoops:   把这个 hint 变成 stage / cluster 标注
+Pipeline:        真正按这些标注去展开 loop、重排 op、生成 overlap
+```
+
+所以“只是定 stage”本质上就是：
+
+```text
+它产出的是调度意图，不是已经流水化完成的最终程序形态。
+```
+
+## 18. Open Questions
 
 - canonical sm86/sm90 matmul 的 A/B loads 因 width=16 被 AssignLatencies drop；后续可以构造一个 contiguous/vectorized load dump，让 ScheduleLoops 在 Ampere/Hopper 上产生真正多 stage schedule。
 - Blackwell canonical sm100 这里只生成 `scheduled_max_stage = 0`；更复杂的 `pipeline-schedule-loop.mlir` 和 `loop-pipeline-blackwell.mlir` 能展示 `tc_gen5_mma` 与 `tmem_load/store` 跨 stage 的完整行为。
