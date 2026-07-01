@@ -1,5 +1,7 @@
 # IR Pass Diff Learning Guide
 
+本文是 `docs/ai/THINKING.md` 在 IR pass diff 学习中的具体执行模板。
+
 这份文档定义我们后面学习 Triton compiler pass 的固定方法。
 
 目标不是简单看 `diff`，而是通过一个 pass 的 `Before IR` 和 `After IR` 回答这些问题：
@@ -198,6 +200,26 @@ Cross-architecture before comparison:
 - Conclusion: same input / already diverged before this pass
 - If already diverged: likely caused by ...
 ```
+
+### 2.6. 写出 Goal / Constraint / Design Intent
+
+在解释源码细节之前，先回答这个 pass 存在的目标和约束。
+
+```text
+Goal:
+  这个 pass 想达到什么 compiler / hardware / performance 目标？
+
+Constraint:
+  哪些限制让更简单的方案不可行？
+  可能来自 correctness、layout legality、MMA/WGMMA contract、memory hierarchy、
+  synchronization、pipeline order、compile time 或 hardware capability。
+
+Design intent:
+  当前机制为什么适合这个目标和约束？
+  它引入了什么新的 IR 表达、layout contract 或 lowering 前置条件？
+```
+
+注意：这一节可以先写成基于 pass 名字、pipeline 位置和 IR 变化的初步判断；后面要用源码、IR evidence 或官方文档修正。
 
 ### 3. 再把 IR 变化映射到 pass 源码
 
@@ -506,6 +528,12 @@ Compiler pipeline:
 
 这个 pass 在本例中主要做了：...
 
+### Goal / Constraint / Design Intent
+
+- Goal: ...
+- Constraint: ...
+- Design intent: ...
+
 ### Compiler Decision
 
 - Compiler question: ...
@@ -797,14 +825,17 @@ K = 32
 numCTAs = 2
 ```
 
-`getCTATiling` 当前实现：
+`getCTATiling` 当前实现（每个常量/公式都锚定到源码行，源码变了要回来核对）：
 
 ```text
-chunk_m = 128
-splitM = clamp(M / chunk_m, 1, numCTAs)
-splitN = numCTAs / splitM
-要求 N / splitN >= 64
+chunk_m = 128                          // PlanCTA.cpp:217 初值，循环里 chunk_m /= 2，见 PlanCTA.cpp:220
+isLegal(chunk) := chunk >= 64          // PlanCTA.cpp:218 合法阈值
+splitM = clamp(M / chunk_m, 1, numCTAs)// PlanCTA.cpp:221
+splitN = numCTAs / splitM              // PlanCTA.cpp:222
+要求 isLegal(N / splitN) 才 break      // PlanCTA.cpp:223
 ```
+
+以上常量出自 [PlanCTA.cpp](/LocalRun/jiangzhe.zhao/my_repo/triton/lib/Dialect/TritonNvidiaGPU/Transforms/PlanCTA.cpp:214) 的 `getCTATiling` lambda（`128` 与 `64` 是硬编码字面量，源码注释也标了 `TODO: naive implementation`，随时可能变）。
 
 第一次：
 

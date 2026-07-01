@@ -1,11 +1,3 @@
-# Working on Triton
-
-## Shared AI Assistant Instructions
-- `docs/ai/THINKING.md` is the canonical source for the thinking guidelines.
-- The section below is generated from `docs/ai/THINKING.md` by `scripts/sync-ai-instructions.sh` so Codex receives the full instructions in context without relying on file-reference indirection.
-- After editing `docs/ai/THINKING.md`, run `scripts/sync-ai-instructions.sh`.
-
-<!-- BEGIN: docs/ai/THINKING.md -->
 # Thinking Guidelines
 
 These guidelines apply when answering questions about Triton compilation, CUDA Programming Guide, MLIR, GPU architecture, compiler passes, performance behavior, or code implementation.
@@ -91,13 +83,3 @@ Scale the depth of analysis to the question. Stay concise for small tactical que
 - Prefer current repository code, generated IR, compiler output, and official documentation over recollection.
 - For Triton/CUDA topics, connect Python APIs, MLIR passes, LLVM/NVVM/PTX lowering, CUDA execution model, and hardware behavior when relevant.
 - If code changes are needed, explain the mechanism and risk behind the change, then implement and verify it.
-<!-- END: docs/ai/THINKING.md -->
-
-## Build and Testing Guidelines
-- Before running tests for native/compiler changes, run `make` in the triton directory to rebuild triton. DO NOT RUN `make` if you only changed Python code or code in `python/triton_kernels`.
-- For compiler changes, add tests in `python/test/` (pytest) or test (lit). Keep GPU-only tests in `python/test/unit/` or `python/test/gluon/`, name them `test_<feature>_<condition>`, and avoid creating new test files unless requested.
-- Run pytest with `-s --tb=short`. Run a single test with `pytest file.py::test_name`.
-- The build dir is given by `BUILD_DIR := $(shell PYTHONPATH="./python" python3 -c 'from build_helpers import get_cmake_dir; print(get_cmake_dir())')`
-- Run lit from the build dir:  `cd BUILD_DIR; ninja triton-opt; lit -v test/<path>.mlir` (example: `lit -v test/TritonNvidiaGPU/tmem_layouts.mlir`).
-- Lit tests can be run locally (no GPU required).
-- Compiler crashes sometimes print an MLIR reproducer (external_resources / mlir_reproducer). Save the full MLIR + {-# ... #-} metadata to `/tmp/<file>.mlir`, then run `triton-opt /tmp/<file>.mlir --run-reproducer` to reproduce locally.
