@@ -1,5 +1,10 @@
 # Working on Triton
 
+## Commentary Discipline
+- Keep commentary concise and task-relevant.
+- Do not add optional narration, motivational text, or speculative filler.
+- Use commentary only for meaningful progress updates, file-edit intent, blockers, permission requests, and verification results.
+
 ## Shared AI Assistant Instructions
 - `docs/ai/THINKING.md` is the canonical source for the thinking guidelines.
 - The section below is generated from `docs/ai/THINKING.md` by `scripts/sync-ai-instructions.sh` so Codex receives the full instructions in context without relying on file-reference indirection.

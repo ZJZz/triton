@@ -1,0 +1,596 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Aref vs TMEM Handoff Visual</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --surface-2: #eef3f8;
+      --line: #d6deea;
+      --ink: #172033;
+      --muted: #5a6a82;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --green: #0f8a5f;
+      --green-soft: #dcfce7;
+      --amber: #b7791f;
+      --amber-soft: #fff4d6;
+      --purple: #6d4aff;
+      --purple-soft: #ebe7ff;
+      --red: #b42318;
+      --red-soft: #fee4e2;
+      --shadow: 0 16px 42px rgba(30, 48, 74, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1280px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    header {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 22px;
+    }
+
+    h1 {
+      font-size: clamp(30px, 4vw, 50px);
+      line-height: 1.04;
+      letter-spacing: 0;
+      max-width: 980px;
+    }
+
+    .subtitle {
+      max-width: 900px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: var(--shadow);
+    }
+
+    .pill strong { color: var(--ink); }
+
+    section {
+      margin-top: 18px;
+      padding: 22px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    section > p {
+      color: var(--muted);
+      margin-top: 8px;
+      max-width: 940px;
+    }
+
+    h2 {
+      font-size: 23px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .compare-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 16px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .panel h3 {
+      font-size: 18px;
+      letter-spacing: 0;
+    }
+
+    .panel p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .badge-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 24px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .badge.blue { background: var(--blue-soft); color: var(--blue); }
+    .badge.green { background: var(--green-soft); color: var(--green); }
+    .badge.amber { background: var(--amber-soft); color: var(--amber); }
+    .badge.purple { background: var(--purple-soft); color: var(--purple); }
+    .badge.red { background: var(--red-soft); color: var(--red); }
+
+    .flow {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .step {
+      position: relative;
+      min-height: 150px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      padding: 12px;
+      display: grid;
+      align-content: start;
+      gap: 8px;
+    }
+
+    .step strong {
+      font-size: 14px;
+      line-height: 1.2;
+    }
+
+    .step p {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .step::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -11px;
+      width: 12px;
+      border-top: 2px solid #a9b7ca;
+      transform: translateY(-50%);
+    }
+
+    .step::before {
+      content: "";
+      position: absolute;
+      top: calc(50% - 4px);
+      right: -11px;
+      border-left: 8px solid #a9b7ca;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+    }
+
+    .step.last::after,
+    .step.last::before {
+      display: none;
+    }
+
+    .step.code {
+      background: #fbfcff;
+    }
+
+    code {
+      font-family: "SFMono-Regular", Consolas, "Liberation Mono", Menlo, monospace;
+      background: #edf2f7;
+      color: #1d4ed8;
+      padding: 1px 4px;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+
+    .diagram {
+      display: grid;
+      grid-template-columns: 132px 1fr 132px;
+      gap: 12px;
+      align-items: center;
+      margin-top: 4px;
+    }
+
+    .node {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-height: 96px;
+      padding: 12px;
+      background: var(--surface);
+      display: grid;
+      align-content: start;
+      gap: 6px;
+    }
+
+    .node.center {
+      min-height: 132px;
+      background: #fbfcff;
+    }
+
+    .node strong {
+      font-size: 14px;
+    }
+
+    .node p {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .arrow-stack {
+      display: grid;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .arrow {
+      position: relative;
+      min-height: 48px;
+      border-radius: 8px;
+      border: 1px dashed #b7c5d7;
+      background: #f9fbfe;
+      display: grid;
+      place-items: center;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      text-align: center;
+      padding: 8px;
+    }
+
+    .arrow::after {
+      content: "";
+      position: absolute;
+      right: -10px;
+      top: calc(50% - 5px);
+      border-left: 8px solid #a9b7ca;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+    }
+
+    .arrow.left::after {
+      right: auto;
+      left: -10px;
+      border-left: none;
+      border-right: 8px solid #a9b7ca;
+    }
+
+    .table {
+      margin-top: 18px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .table-head,
+    .table-row {
+      display: grid;
+      grid-template-columns: 180px repeat(2, minmax(0, 1fr));
+    }
+
+    .table-head div {
+      padding: 12px 14px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--line);
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--muted);
+    }
+
+    .table-row div {
+      padding: 13px 14px;
+      border-top: 1px solid var(--line);
+      background: var(--surface);
+      font-size: 13px;
+    }
+
+    .table-row div:first-child {
+      background: #fbfcff;
+      color: var(--ink);
+      font-weight: 700;
+    }
+
+    .notes {
+      display: grid;
+      gap: 8px;
+      margin-top: 18px;
+    }
+
+    .note {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 12px 14px;
+      background: var(--surface-2);
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    .note strong { color: var(--ink); }
+
+    @media (max-width: 980px) {
+      .compare-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .flow {
+        grid-template-columns: 1fr;
+      }
+
+      .step::after,
+      .step::before {
+        display: none;
+      }
+
+      .diagram {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow-stack {
+        grid-template-columns: 1fr;
+      }
+
+      .arrow::after,
+      .arrow.left::after {
+        display: none;
+      }
+
+      .table-head,
+      .table-row {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>`NVWSInsertAref` 和 TMEM Ownership Handoff 的差异</h1>
+      <p class="subtitle">
+        两者都在做 partition 之间的 handoff，但 handoff 的“对象”和“协议重点”不一样。
+        `NVWSInsertAref` 主要处理 value / SMEM buffer availability；`InsertTmemAref`
+        处理的是 TMEM mutable state 的 active ownership transfer。
+      </p>
+      <div class="meta">
+        <span class="pill"><strong>Aref</strong>&nbsp;value handoff</span>
+        <span class="pill"><strong>TMEM</strong>&nbsp;ownership handoff</span>
+        <span class="pill"><strong>共同点</strong>&nbsp;都用 aref + put/get + barrier lowering</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>并排看：差别到底大不大？</h2>
+      <p>
+        不算“完全不同机制”，因为两者最终都走 aref enter/exit + barrier lowering。
+        但差别也不小：普通 `InsertAref` 的核心问题是“把跨 partition 的 SSA/value 交给对方”；
+        TMEM 路径的核心问题是“把一块可变状态和它的使用权交给对方”。
+      </p>
+
+      <div class="compare-grid">
+        <div class="panel">
+          <h3>`NVWSInsertAref`</h3>
+          <div class="badge-row">
+            <span class="badge blue">tensor / scalar / SMEM</span>
+            <span class="badge amber">value availability</span>
+            <span class="badge green">producer -> consumer</span>
+          </div>
+          <p>
+            它把“跨 partition 的直接 SSA/use-def 边”改写成“producer 把值写进 aref backing buffer，
+            consumer 再从这个 buffer 读出来”。
+          </p>
+
+          <div class="flow">
+            <div class="step code">
+              <span class="badge blue">before</span>
+              <strong>直接跨 partition use</strong>
+              <p>原来是 producer 结果直接被另一个 partition 的 use 消费。</p>
+            </div>
+            <div class="step">
+              <span class="badge green">producer</span>
+              <strong><code>aref.put.enter</code></strong>
+              <p>选一个 aref buffer 视图，producer 在这里写入 value。</p>
+            </div>
+            <div class="step">
+              <span class="badge purple">buffer</span>
+              <strong>SMEM backing buffer</strong>
+              <p>值落到共享可访问的 buffer，而不是继续停留在 producer SSA/register。</p>
+            </div>
+            <div class="step">
+              <span class="badge amber">consumer</span>
+              <strong><code>aref.get.enter</code></strong>
+              <p>consumer 通过 indirection 取到 data buffer，再 local_load / unsplat / memdesc view。</p>
+            </div>
+            <div class="step last">
+              <span class="badge green">after</span>
+              <strong>value becomes locally consumable</strong>
+              <p>consumer 拿到的是“重新物化”的可消费 value，而不是共享 ownership。</p>
+            </div>
+          </div>
+
+          <div class="diagram">
+            <div class="node">
+              <strong>Partition A</strong>
+              <p>produce tensor / scalar / descriptor-load result</p>
+            </div>
+            <div class="arrow-stack">
+              <div class="arrow">put into aref buffer</div>
+              <div class="arrow">post full / later wait</div>
+            </div>
+            <div class="node center">
+              <strong>Aref buffer (SMEM)</strong>
+              <p>本质上是一个共享可见的中转存储槽位。</p>
+              <p>重点是：让另一个 partition 看到并读到这份值。</p>
+            </div>
+            <div class="node">
+              <strong>Partition B</strong>
+              <p>get buffer, local_load / use rewritten value</p>
+            </div>
+            <div class="arrow-stack">
+              <div class="arrow left">get from indirection</div>
+              <div class="arrow left">release empty later</div>
+            </div>
+            <div class="node">
+              <strong>Consumer View</strong>
+              <p>关键是 data availability，不是长期占有这块状态。</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>`InsertTmemAref` / TMEM Ownership Handoff</h3>
+          <div class="badge-row">
+            <span class="badge purple">TMEM state</span>
+            <span class="badge red">mutable ownership</span>
+            <span class="badge green">ping-pong between two groups</span>
+          </div>
+          <p>
+            它不是简单地“把值给 consumer”。它处理的是一块 TMEM mutable state：
+            谁现在有资格继续读/写这块状态、什么时候把 baton 交给另一个 partition。
+          </p>
+
+          <div class="flow">
+            <div class="step code">
+              <span class="badge purple">before</span>
+              <strong>same TMEM used across partitions</strong>
+              <p>不同 partition 会继续在同一块 TMEM 上做 store / load / mma。</p>
+            </div>
+            <div class="step">
+              <span class="badge green">owner A</span>
+              <strong><code>acquire</code> / <code>put.enter</code></strong>
+              <p>A 先拿到这块 TMEM 的 active ownership，推进状态。</p>
+            </div>
+            <div class="step">
+              <span class="badge red">handoff</span>
+              <strong><code>put.exit -> full</code></strong>
+              <p>不是仅仅说“数据好了”，而是 ownership baton 被交给 B。</p>
+            </div>
+            <div class="step">
+              <span class="badge amber">owner B</span>
+              <strong><code>get.enter</code></strong>
+              <p>B 在 wait full 成功后，成为这块 TMEM 的合法 active user。</p>
+            </div>
+            <div class="step last">
+              <span class="badge green">return</span>
+              <strong><code>get.exit -> empty</code></strong>
+              <p>B 用完后归还 slot，之后 A 才能继续复用或重占。</p>
+            </div>
+          </div>
+
+          <div class="diagram">
+            <div class="node">
+              <strong>Partition A</strong>
+              <p>producer owner / accumulator setup / TMEM write</p>
+            </div>
+            <div class="arrow-stack">
+              <div class="arrow">handoff ownership</div>
+              <div class="arrow">full signals B may proceed</div>
+            </div>
+            <div class="node center">
+              <strong>Same TMEM mutable state</strong>
+              <p>传递的不是独立复制值，而是“谁现在能继续操作这块状态”。</p>
+              <p>重点是 active ownership，不只是 visibility。</p>
+            </div>
+            <div class="node">
+              <strong>Partition B</strong>
+              <p>consumer owner / mma consume / TMEM read</p>
+            </div>
+            <div class="arrow-stack">
+              <div class="arrow left">return ownership</div>
+              <div class="arrow left">empty re-enables reuse</div>
+            </div>
+            <div class="node">
+              <strong>Ring Reuse</strong>
+              <p>后续 slot 复用取决于 ownership 被显式归还到 empty。</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="table">
+        <div class="table-head">
+          <div>维度</div>
+          <div>`NVWSInsertAref`</div>
+          <div>`InsertTmemAref`</div>
+        </div>
+        <div class="table-row">
+          <div>交接对象</div>
+          <div>tensor / scalar / memdesc 对应的“值”或 value-backed buffer</div>
+          <div>同一块 TMEM mutable state 及其 active ownership</div>
+        </div>
+        <div class="table-row">
+          <div>核心问题</div>
+          <div>另一个 partition 怎么拿到这份值</div>
+          <div>另一个 partition 什么时候有资格继续操作这块 TMEM</div>
+        </div>
+        <div class="table-row">
+          <div>consumer 看到的东西</div>
+          <div>通过 get indirection 重新读出来的 value / memdesc view</div>
+          <div>同一个 TMEM slot 的继续使用权</div>
+        </div>
+        <div class="table-row">
+          <div>协议重点</div>
+          <div>availability / synchronization around value handoff</div>
+          <div>ownership transfer / ping-pong baton passing</div>
+        </div>
+        <div class="table-row">
+          <div>为什么更复杂</div>
+          <div>通常是 producer 写、consumer 读，模型更接近 mailbox</div>
+          <div>是 mutable state machine，模型更接近 single-owner baton</div>
+        </div>
+      </div>
+
+      <div class="notes">
+        <div class="note">
+          <strong>共同点：</strong>两者最后都依赖 <code>aref.put/get.enter/exit</code> 和
+          `NVWSLowerAref` 生成的 barrier/wait/fence/arrive 体系。
+        </div>
+        <div class="note">
+          <strong>最大差异：</strong>`NVWSInsertAref` 的默认心智模型是 “move value availability”；
+          `InsertTmemAref` 的默认心智模型是 “move mutable-state ownership”。
+        </div>
+        <div class="note">
+          <strong>因此：</strong>可以做可视化，而且很适合做成对照页。看完这个页面，再看
+          `learn_triton/visuals/tmem_ownership_handoff_visual.html`，你会更容易区分“值交接”和“状态所有权交接”。
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

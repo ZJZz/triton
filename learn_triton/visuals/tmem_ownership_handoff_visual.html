@@ -1,0 +1,1078 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TMEM Ownership Handoff Visual</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --surface-2: #eef3f8;
+      --line: #d6deea;
+      --ink: #172033;
+      --muted: #5a6a82;
+      --producer: #2563eb;
+      --producer-soft: #dbeafe;
+      --consumer: #0f8a5f;
+      --consumer-soft: #dcfce7;
+      --sync: #b7791f;
+      --sync-soft: #fff4d6;
+      --state: #6d4aff;
+      --state-soft: #ebe7ff;
+      --danger: #b42318;
+      --danger-soft: #fee4e2;
+      --shadow: 0 16px 42px rgba(30, 48, 74, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.5;
+    }
+
+    main {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 56px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    header {
+      display: grid;
+      gap: 14px;
+      margin-bottom: 24px;
+    }
+
+    h1 {
+      font-size: clamp(30px, 4vw, 50px);
+      line-height: 1.04;
+      letter-spacing: 0;
+      max-width: 980px;
+    }
+
+    .subtitle {
+      max-width: 860px;
+      color: var(--muted);
+      font-size: 16px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      box-shadow: var(--shadow);
+    }
+
+    .pill strong { color: var(--ink); }
+
+    section {
+      margin-top: 18px;
+      padding: 22px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    section > p {
+      color: var(--muted);
+      margin-top: 8px;
+      max-width: 900px;
+    }
+
+    h2 {
+      font-size: 23px;
+      line-height: 1.15;
+      letter-spacing: 0;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 16px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 7px;
+    }
+
+    .dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+      display: inline-block;
+      border: 1px solid rgba(23, 32, 51, 0.08);
+    }
+
+    .dot.producer { background: var(--producer-soft); }
+    .dot.consumer { background: var(--consumer-soft); }
+    .dot.sync { background: var(--sync-soft); }
+    .dot.state { background: var(--state-soft); }
+    .dot.alert { background: var(--danger-soft); }
+
+    .protocol-grid {
+      display: grid;
+      grid-template-columns: 170px repeat(7, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 18px;
+      align-items: stretch;
+    }
+
+    .head,
+    .lane-label,
+    .cell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      min-height: 78px;
+      padding: 10px;
+    }
+
+    .head {
+      min-height: 62px;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .lane-label {
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      background: var(--surface);
+      min-height: 92px;
+    }
+
+    .lane-label strong {
+      font-size: 14px;
+      color: var(--ink);
+    }
+
+    .lane-label small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .cell {
+      position: relative;
+      display: grid;
+      align-content: start;
+      gap: 6px;
+      background: #f8fbff;
+      min-height: 92px;
+    }
+
+    .cell.empty {
+      background: #fbfcfe;
+    }
+
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 24px;
+      width: fit-content;
+      max-width: 100%;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+      white-space: nowrap;
+    }
+
+    .tag.producer { background: var(--producer-soft); color: var(--producer); }
+    .tag.consumer { background: var(--consumer-soft); color: var(--consumer); }
+    .tag.sync { background: var(--sync-soft); color: var(--sync); }
+    .tag.state { background: var(--state-soft); color: var(--state); }
+    .tag.alert { background: var(--danger-soft); color: var(--danger); }
+
+    .cell strong {
+      font-size: 13px;
+      line-height: 1.2;
+    }
+
+    .cell p {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .cell::after {
+      content: "";
+      position: absolute;
+      top: 50%;
+      right: -11px;
+      width: 12px;
+      border-top: 2px solid #a9b7ca;
+      transform: translateY(-50%);
+      z-index: 2;
+    }
+
+    .cell::before {
+      content: "";
+      position: absolute;
+      top: calc(50% - 4px);
+      right: -11px;
+      border-left: 8px solid #a9b7ca;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+      z-index: 2;
+    }
+
+    .cell.last::after,
+    .cell.last::before {
+      display: none;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: auto minmax(180px, 1fr) auto auto;
+      gap: 12px;
+      align-items: center;
+      margin-top: 18px;
+      padding: 14px;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+    }
+
+    button,
+    select,
+    input[type="range"] {
+      font: inherit;
+    }
+
+    button {
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 8px;
+      border: 1px solid #bfd0e3;
+      background: var(--surface);
+      color: var(--ink);
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:hover { border-color: #94a8c0; }
+
+    button.primary {
+      background: var(--producer);
+      border-color: var(--producer);
+      color: #fff;
+    }
+
+    .range-wrap {
+      display: grid;
+      gap: 6px;
+    }
+
+    .range-wrap label {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    input[type="range"] {
+      width: 100%;
+      accent-color: var(--producer);
+    }
+
+    .frame-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 38px;
+      min-width: 118px;
+      padding: 0 12px;
+      border-radius: 8px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .stage-grid {
+      display: grid;
+      grid-template-columns: 160px repeat(6, minmax(120px, 1fr));
+      gap: 10px;
+      margin-top: 18px;
+      align-items: stretch;
+    }
+
+    .stage-cell {
+      min-height: 86px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      padding: 10px;
+      background: #fbfcff;
+      display: grid;
+      align-content: start;
+      gap: 6px;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease, background 0.16s ease;
+    }
+
+    .stage-cell.active {
+      border-color: var(--producer);
+      box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.12);
+      background: #f3f8ff;
+    }
+
+    .stage-cell.dim {
+      opacity: 0.52;
+    }
+
+    .buffer-board {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 18px;
+    }
+
+    .buffer-panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .buffer-panel h3 {
+      font-size: 16px;
+      letter-spacing: 0;
+    }
+
+    .buffer-stack {
+      display: grid;
+      gap: 8px;
+    }
+
+    .buffer-row {
+      display: grid;
+      gap: 8px;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      min-height: 118px;
+      transition: border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+
+    .buffer-row.active {
+      border-color: var(--state);
+      box-shadow: 0 0 0 2px rgba(109, 74, 255, 0.10);
+    }
+
+    .buffer-row small {
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .buffer-row strong {
+      font-size: 14px;
+    }
+
+    .owner-a { color: var(--producer); }
+    .owner-b { color: var(--consumer); }
+    .owner-free { color: var(--muted); }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: minmax(0, 1.15fr) minmax(300px, 0.85fr);
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .summary-box,
+    .notes-box {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 16px;
+      background: var(--surface-2);
+    }
+
+    .summary-box h3,
+    .notes-box h3 {
+      font-size: 16px;
+      margin-bottom: 10px;
+    }
+
+    .summary-box p,
+    .notes-box p {
+      color: var(--muted);
+      font-size: 13px;
+      margin-top: 6px;
+    }
+
+    .kv {
+      display: grid;
+      grid-template-columns: 116px minmax(0, 1fr);
+      gap: 10px 12px;
+      margin-top: 12px;
+      align-items: start;
+      font-size: 13px;
+    }
+
+    .kv dt {
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .kv dd {
+      margin: 0;
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    .note-list {
+      display: grid;
+      gap: 8px;
+      margin-top: 10px;
+    }
+
+    .note {
+      padding: 10px 12px;
+      border-radius: 8px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    .note strong { color: var(--ink); }
+
+    @media (max-width: 1120px) {
+      .protocol-grid,
+      .stage-grid {
+        grid-template-columns: 140px repeat(7, minmax(110px, 1fr));
+        overflow-x: auto;
+      }
+
+      .summary-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+
+    @media (max-width: 860px) {
+      main {
+        width: min(100%, calc(100% - 20px));
+        padding: 20px 0 42px;
+      }
+
+      section { padding: 16px; }
+
+      .controls {
+        grid-template-columns: 1fr;
+      }
+
+      .buffer-board {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>TMEM Ownership Handoff 可视化</h1>
+      <p class="subtitle">
+        这一页把两个模型放在一起看：先看单个 buffer 的 ownership handoff，再看 `loop stage + multi-buffer`
+        下 ownership 如何沿着 `buffer[0] / buffer[1] / buffer[2]` 轮转。
+      </p>
+      <div class="meta">
+        <span class="pill"><strong>模型 1</strong>&nbsp;单 slot handoff</span>
+        <span class="pill"><strong>模型 2</strong>&nbsp;3-stage ring rotation</span>
+        <span class="pill"><strong>核心</strong>&nbsp;barrier 驱动交接，fence 只在部分场景补充可见性</span>
+      </div>
+    </header>
+
+    <section>
+      <h2>基础交接时序</h2>
+      <p>
+        这里把单个 TMEM/aref slot 的 ownership handoff 展平成一条时间线。A 先拿到 slot 做 producer，
+        通过 `put.exit -> full` 把 baton 交给 B；B 消费完成后，通过 `get.exit -> empty` 把 slot 归还。
+      </p>
+
+      <div class="legend">
+        <span><i class="dot producer"></i>Producer A 行为</span>
+        <span><i class="dot consumer"></i>Consumer B 行为</span>
+        <span><i class="dot sync"></i>Wait / Arrive / Commit</span>
+        <span><i class="dot state"></i>共享状态变化</span>
+        <span><i class="dot alert"></i>可选 fence</span>
+      </div>
+
+      <div class="protocol-grid">
+        <div class="head"></div>
+        <div class="head">T0<br>Acquire</div>
+        <div class="head">T1<br>Wait Empty</div>
+        <div class="head">T2<br>Produce</div>
+        <div class="head">T3<br>Handoff to Full</div>
+        <div class="head">T4<br>Wait Full</div>
+        <div class="head">T5<br>Consume</div>
+        <div class="head">T6<br>Return Empty</div>
+
+        <div class="lane-label">
+          <strong>Partition A</strong>
+          <small>current owner / producer</small>
+        </div>
+        <div class="cell">
+          <span class="tag producer">A owns</span>
+          <strong>`aref.put.enter`</strong>
+          <p>A 拿到这一轮的 TMEM slot。</p>
+        </div>
+        <div class="cell">
+          <span class="tag sync">wait</span>
+          <strong>`WaitBarrier(empty)`</strong>
+          <p>只有 slot 空闲才能开始写。</p>
+        </div>
+        <div class="cell">
+          <span class="tag producer">produce</span>
+          <strong>write / store / mma</strong>
+          <p>Producer 在当前 owner 侧推进 TMEM 状态。</p>
+        </div>
+        <div class="cell">
+          <span class="tag alert">optional</span>
+          <strong>`FenceAsyncShared`</strong>
+          <p>仅在跨 proxy 可见性需要时插入。</p>
+        </div>
+        <div class="cell empty"></div>
+        <div class="cell empty"></div>
+        <div class="cell empty last"></div>
+
+        <div class="lane-label">
+          <strong>Shared State</strong>
+          <small>buffer + barrier state</small>
+        </div>
+        <div class="cell">
+          <span class="tag state">slot selected</span>
+          <strong>buffer slot chosen</strong>
+          <p>这一轮只允许一个 owner 使用它。</p>
+        </div>
+        <div class="cell">
+          <span class="tag state">empty</span>
+          <strong>slot is free</strong>
+          <p>empty 允许 producer 进入。</p>
+        </div>
+        <div class="cell">
+          <span class="tag state">mutable state</span>
+          <strong>TMEM changes in place</strong>
+          <p>这里传递的是可变状态，不是普通 SSA 值。</p>
+        </div>
+        <div class="cell">
+          <span class="tag sync">arrive / commit</span>
+          <strong>`put.exit -> full`</strong>
+          <p>slot 从 empty 切到 full，ownership 交给 consumer。</p>
+        </div>
+        <div class="cell">
+          <span class="tag state">full</span>
+          <strong>slot is ready</strong>
+          <p>full 表示消费者现在可以接手。</p>
+        </div>
+        <div class="cell">
+          <span class="tag state">owned by B</span>
+          <strong>B is active user</strong>
+          <p>当前合法 active user 已经变成 B。</p>
+        </div>
+        <div class="cell last">
+          <span class="tag sync">arrive / commit</span>
+          <strong>`get.exit -> empty`</strong>
+          <p>slot 释放，回到 empty，下一轮 producer 可复用。</p>
+        </div>
+
+        <div class="lane-label">
+          <strong>Partition B</strong>
+          <small>next owner / consumer</small>
+        </div>
+        <div class="cell empty"></div>
+        <div class="cell empty"></div>
+        <div class="cell empty"></div>
+        <div class="cell">
+          <span class="tag consumer">handoff point</span>
+          <strong>wait for baton</strong>
+          <p>B 只有在 full 到达后才能继续。</p>
+        </div>
+        <div class="cell">
+          <span class="tag sync">wait</span>
+          <strong>`WaitBarrier(full)`</strong>
+          <p>B 等 producer 完成并正式交接。</p>
+        </div>
+        <div class="cell">
+          <span class="tag consumer">consume</span>
+          <strong>`aref.get.enter` + use</strong>
+          <p>B 读取/消耗这块 TMEM 状态。</p>
+        </div>
+        <div class="cell last">
+          <span class="tag consumer">return</span>
+          <strong>`aref.get.exit`</strong>
+          <p>Consumer 用完后归还 slot。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>带 Loop Stage 的 Ownership Rotation</h2>
+      <p>
+        这一部分把 `numStages = 3` 的多缓冲 ring 展开。Producer A 和 Consumer B 在不同 iteration 上并行，
+        每个 buffer slot 的 ownership 会随着 `empty -> full -> empty` 的状态变化轮转。拖动下面的滑块可以逐帧看。
+      </p>
+
+      <div class="controls">
+        <button id="playBtn" class="primary" type="button">播放</button>
+        <div class="range-wrap">
+          <label for="frameRange">时间帧</label>
+          <input id="frameRange" type="range" min="0" max="5" step="1" value="0">
+        </div>
+        <div id="frameChip" class="frame-chip">Frame 0 / 5</div>
+        <button id="resetBtn" type="button">回到起点</button>
+      </div>
+
+      <div id="stageGrid" class="stage-grid"></div>
+      <div id="bufferBoard" class="buffer-board"></div>
+
+      <div class="summary-grid">
+        <div class="summary-box">
+          <h3>当前帧摘要</h3>
+          <p id="frameSummary">
+            A 先拿到 `buffer[0]`，等待 empty 后开始写。此时还没有 consumer overlap。
+          </p>
+          <dl class="kv">
+            <dt>A 当前动作</dt>
+            <dd id="aAction"></dd>
+            <dt>B 当前动作</dt>
+            <dd id="bAction"></dd>
+            <dt>主 owner</dt>
+            <dd id="ownerNow"></dd>
+            <dt>正被 handoff 的 slot</dt>
+            <dd id="handoffNow"></dd>
+          </dl>
+        </div>
+
+        <div class="notes-box">
+          <h3>这一帧想看什么</h3>
+          <div id="notes" class="note-list"></div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const frames = [
+      {
+        label: "F0",
+        title: "Warm-up: A acquires buffer[0]",
+        summary: "A 拿到 buffer[0] 并等待 empty。ring 里还没有 overlap，B 还没接手任何 slot。",
+        aAction: "buffer[0] 上 `put.enter` -> wait empty -> start produce(iter0)",
+        bAction: "idle / no ownership yet",
+        ownerNow: "A owns buffer[0]",
+        handoffNow: "none",
+        notes: [
+          "这一刻只有 producer owner，没有 consumer overlap。",
+          "single slot 视角里，这是 `aref.put.enter` 之后、`put.exit` 之前。",
+          "multi-buffer 视角里，ring 只激活了第一个 slot。"
+        ],
+        timeline: {
+          a: ["put.enter", "wait empty", "produce i0", "", "", ""],
+          b0: ["A owns", "empty->use", "iter0 data", "", "", ""],
+          b1: ["free", "", "", "", "", ""],
+          b2: ["free", "", "", "", "", ""],
+          b: ["idle", "", "", "", "", ""]
+        },
+        activeCols: [0, 1, 2],
+        buffers: [
+          { id: 0, state: "producer-active", owner: "A", detail: "iter0 in progress", barrier: "empty satisfied, full not posted" },
+          { id: 1, state: "free", owner: "free", detail: "not used yet", barrier: "empty" },
+          { id: 2, state: "free", owner: "free", detail: "not used yet", barrier: "empty" }
+        ]
+      },
+      {
+        label: "F1",
+        title: "A posts full on buffer[0]",
+        summary: "A 在 buffer[0] 上完成 iter0 的 producer 工作，并通过 `put.exit -> full` 把 baton 交给 B。",
+        aAction: "optional fence, then `put.exit` on buffer[0]",
+        bAction: "prepare to wait full on buffer[0]",
+        ownerNow: "handoff A -> B on buffer[0]",
+        handoffNow: "buffer[0]",
+        notes: [
+          "这里的完成标志是 full barrier，不是 fence 本身。",
+          "fence 只在部分代理可见性场景出现；交接协议核心仍是 barrier。",
+          "single slot 视角下，baton 刚刚从 A 侧移出。"
+        ],
+        timeline: {
+          a: ["put.enter", "wait empty", "produce i0", "put.exit/full", "", ""],
+          b0: ["A owns", "empty->use", "iter0 data", "full posted", "", ""],
+          b1: ["free", "", "", "", "", ""],
+          b2: ["free", "", "", "", "", ""],
+          b: ["idle", "", "", "wait baton", "", ""]
+        },
+        activeCols: [0, 1, 2, 3],
+        buffers: [
+          { id: 0, state: "handoff", owner: "A -> B", detail: "iter0 ready for consume", barrier: "full" },
+          { id: 1, state: "free", owner: "free", detail: "not used yet", barrier: "empty" },
+          { id: 2, state: "free", owner: "free", detail: "not used yet", barrier: "empty" }
+        ]
+      },
+      {
+        label: "F2",
+        title: "Overlap begins: A uses buffer[1], B consumes buffer[0]",
+        summary: "B 通过 `get.enter` 接手 buffer[0] 消费 iter0；与此同时，A 已经切到 buffer[1] 生产 iter1。",
+        aAction: "buffer[1] 上 produce(iter1)",
+        bAction: "buffer[0] 上 `get.enter` -> wait full -> consume(iter0)",
+        ownerNow: "A owns buffer[1], B owns buffer[0]",
+        handoffNow: "none, overlap active",
+        notes: [
+          "这是 multi-buffer 的关键：producer 和 consumer 不再争同一个 slot。",
+          "ownership 不是全局唯一，而是按 slot 划分：不同 slot 可被不同 partition 同时合法使用。",
+          "如果只有一个 slot，这里就没法 overlap。"
+        ],
+        timeline: {
+          a: ["put.enter", "wait empty", "produce i0", "put.exit/full", "produce i1", ""],
+          b0: ["A owns", "empty->use", "iter0 data", "full posted", "B consumes", ""],
+          b1: ["free", "", "", "", "A owns i1", ""],
+          b2: ["free", "", "", "", "", ""],
+          b: ["idle", "", "", "wait full", "consume i0", ""]
+        },
+        activeCols: [2, 4],
+        buffers: [
+          { id: 0, state: "consumer-active", owner: "B", detail: "consuming iter0", barrier: "full satisfied" },
+          { id: 1, state: "producer-active", owner: "A", detail: "producing iter1", barrier: "empty satisfied" },
+          { id: 2, state: "free", owner: "free", detail: "next spare slot", barrier: "empty" }
+        ]
+      },
+      {
+        label: "F3",
+        title: "buffer[0] returns empty, buffer[1] becomes full",
+        summary: "B 用完 buffer[0]，通过 `get.exit -> empty` 归还；同时 A 在 buffer[1] 上完成 iter1，并把 full 交给 B。",
+        aAction: "buffer[1] 上 `put.exit`",
+        bAction: "buffer[0] 上 `get.exit` -> empty",
+        ownerNow: "buffer[0] returned, buffer[1] handed to B",
+        handoffNow: "buffer[1], while buffer[0] becomes reusable",
+        notes: [
+          "这一帧同时发生两个状态转换：一个 slot 归还，一个 slot 交接。",
+          "ring 开始进入稳态：旧 slot 回收，新 slot 继续前推。",
+          "slot 的 empty/full 状态本质上就是 ownership 可达性的编码。"
+        ],
+        timeline: {
+          a: ["put.enter", "wait empty", "produce i0", "put.exit/full", "produce i1", "put.exit/full"],
+          b0: ["A owns", "empty->use", "iter0 data", "full posted", "B consumes", "empty returned"],
+          b1: ["free", "", "", "", "A owns i1", "full posted"],
+          b2: ["free", "", "", "", "", ""],
+          b: ["idle", "", "", "wait full", "consume i0", "return i0"]
+        },
+        activeCols: [5],
+        buffers: [
+          { id: 0, state: "free", owner: "free", detail: "iter0 done, slot reusable", barrier: "empty" },
+          { id: 1, state: "handoff", owner: "A -> B", detail: "iter1 ready for consume", barrier: "full" },
+          { id: 2, state: "free", owner: "free", detail: "still spare", barrier: "empty" }
+        ]
+      },
+      {
+        label: "F4",
+        title: "Steady state: B uses buffer[1], A uses buffer[2]",
+        summary: "B 正在 buffer[1] 上消费 iter1；A 已经推进到 buffer[2] 生产 iter2。三个 slot 里有两个在活跃轮转。",
+        aAction: "buffer[2] 上 produce(iter2)",
+        bAction: "buffer[1] 上 consume(iter1)",
+        ownerNow: "A owns buffer[2], B owns buffer[1]",
+        handoffNow: "none, steady overlap",
+        notes: [
+          "这就是 `numStages = 3` 带来的空间：producer 可以继续往前占一个新 slot。",
+          "如果 consumer 更慢，ring 里 full 的 slot 会堆积；如果 producer 更慢，empty slot 会更多。",
+          "pass 做 multi-buffer，本质是在为这种重叠提供足够的物理槽位。"
+        ],
+        timeline: {
+          a: ["put.enter", "wait empty", "produce i0", "put.exit/full", "produce i1", "produce i2"],
+          b0: ["A owns", "empty->use", "iter0 data", "full posted", "B consumes", "empty returned"],
+          b1: ["free", "", "", "", "A owns i1", "B consumes i1"],
+          b2: ["free", "", "", "", "", "A owns i2"],
+          b: ["idle", "", "", "wait full", "consume i0", "consume i1"]
+        },
+        activeCols: [4, 5],
+        buffers: [
+          { id: 0, state: "free", owner: "free", detail: "available for next reuse", barrier: "empty" },
+          { id: 1, state: "consumer-active", owner: "B", detail: "consuming iter1", barrier: "full satisfied" },
+          { id: 2, state: "producer-active", owner: "A", detail: "producing iter2", barrier: "empty satisfied" }
+        ]
+      },
+      {
+        label: "F5",
+        title: "Ring reuse: A can come back to buffer[0]",
+        summary: "buffer[0] 已经回到 empty，因此下一轮 A 可以把 iter3 放回 buffer[0]。ring reuse 正式闭环。",
+        aAction: "next step will reuse buffer[0] for iter3",
+        bAction: "consume iter2 after buffer[2] becomes full",
+        ownerNow: "buffer[0] is free again; ring closed",
+        handoffNow: "next A reuse will target buffer[0]",
+        notes: [
+          "这里最值得记住的是：multi-buffer 不是多存几份数据，而是让 ownership handoff 可以在环上流动。",
+          "slot 被复用的前提不是时间过去了，而是它已经被显式归还到 empty。",
+          "这也是为什么 barrier 状态比简单 fence 更像协议本体。"
+        ],
+        timeline: {
+          a: ["put.enter", "wait empty", "produce i0", "put.exit/full", "produce i1", "reuse b0 next"],
+          b0: ["A owns", "empty->use", "iter0 data", "full posted", "B consumes", "empty / reusable"],
+          b1: ["free", "", "", "", "A owns i1", "B consumes i1"],
+          b2: ["free", "", "", "", "", "A owns i2 -> next full"],
+          b: ["idle", "", "", "wait full", "consume i0", "steady consume"]
+        },
+        activeCols: [5],
+        buffers: [
+          { id: 0, state: "free", owner: "free", detail: "ready for iter3 reuse", barrier: "empty" },
+          { id: 1, state: "consumer-active", owner: "B", detail: "tail of iter1 consume", barrier: "full satisfied" },
+          { id: 2, state: "producer-active", owner: "A", detail: "iter2 nearing handoff", barrier: "full pending" }
+        ]
+      }
+    ];
+
+    const rowMeta = [
+      { key: "a", label: "Partition A", sub: "producer lane" },
+      { key: "b0", label: "buffer[0]", sub: "slot state" },
+      { key: "b1", label: "buffer[1]", sub: "slot state" },
+      { key: "b2", label: "buffer[2]", sub: "slot state" },
+      { key: "b", label: "Partition B", sub: "consumer lane" }
+    ];
+
+    const stateTag = {
+      "producer-active": ["producer", "A owns"],
+      "consumer-active": ["consumer", "B owns"],
+      "handoff": ["sync", "handoff"],
+      "free": ["state", "empty"]
+    };
+
+    const stageGrid = document.getElementById("stageGrid");
+    const bufferBoard = document.getElementById("bufferBoard");
+    const frameRange = document.getElementById("frameRange");
+    const frameChip = document.getElementById("frameChip");
+    const frameSummary = document.getElementById("frameSummary");
+    const aAction = document.getElementById("aAction");
+    const bAction = document.getElementById("bAction");
+    const ownerNow = document.getElementById("ownerNow");
+    const handoffNow = document.getElementById("handoffNow");
+    const notes = document.getElementById("notes");
+    const playBtn = document.getElementById("playBtn");
+    const resetBtn = document.getElementById("resetBtn");
+
+    let currentFrame = 0;
+    let timer = null;
+
+    function renderTimeline(frame) {
+      stageGrid.innerHTML = "";
+
+      const emptyHead = document.createElement("div");
+      emptyHead.className = "head";
+      emptyHead.textContent = "";
+      stageGrid.appendChild(emptyHead);
+
+      const headers = ["T0", "T1", "T2", "T3", "T4", "T5"];
+      headers.forEach((head, idx) => {
+        const el = document.createElement("div");
+        el.className = "head";
+        el.innerHTML = `${head}<br>${idx === currentFrame ? "<strong>selected</strong>" : "timeline"}`;
+        if (idx === currentFrame) {
+          el.style.borderColor = "var(--producer)";
+          el.style.boxShadow = "0 0 0 2px rgba(37,99,235,0.10)";
+          el.style.background = "#f3f8ff";
+        }
+        stageGrid.appendChild(el);
+      });
+
+      rowMeta.forEach(row => {
+        const label = document.createElement("div");
+        label.className = "lane-label";
+        label.innerHTML = `<strong>${row.label}</strong><small>${row.sub}</small>`;
+        stageGrid.appendChild(label);
+
+        frame.timeline[row.key].forEach((text, idx) => {
+          const cell = document.createElement("div");
+          cell.className = "stage-cell";
+          if (!text) {
+            cell.classList.add("dim");
+          }
+          if (idx === currentFrame) {
+            cell.classList.add("active");
+          } else if (!frame.activeCols.includes(idx)) {
+            cell.classList.add("dim");
+          }
+          if (text) {
+            const isA = row.key === "a";
+            const isB = row.key === "b";
+            const isBuffer = row.key.startsWith("b") && row.key.length === 2;
+            let tagClass = "state";
+            if (isA) tagClass = "producer";
+            else if (isB) tagClass = "consumer";
+            else if (text.includes("full") || text.includes("empty")) tagClass = "sync";
+            else if (text.includes("A owns")) tagClass = "producer";
+            else if (text.includes("B consumes")) tagClass = "consumer";
+            cell.innerHTML = `<span class="tag ${tagClass}">${headers[idx]}</span><strong>${text}</strong>${isBuffer ? "<p>slot-local ownership / barrier view</p>" : "<p>lane-local action</p>"}`;
+          }
+          stageGrid.appendChild(cell);
+        });
+      });
+    }
+
+    function renderBuffers(frame) {
+      bufferBoard.innerHTML = "";
+
+      const columns = [
+        {
+          title: "Buffer Ring",
+          rows: frame.buffers
+        },
+        {
+          title: "Ownership View",
+          rows: frame.buffers.map(buf => ({
+            id: buf.id,
+            state: buf.state,
+            owner: buf.owner,
+            detail: buf.owner === "A" ? "producer currently has the baton"
+              : buf.owner === "B" ? "consumer currently has the baton"
+              : buf.owner === "A -> B" ? "handoff in progress"
+              : "no active owner",
+            barrier: buf.barrier
+          }))
+        },
+        {
+          title: "Barrier View",
+          rows: frame.buffers.map(buf => ({
+            id: buf.id,
+            state: buf.state,
+            owner: buf.owner,
+            detail: buf.barrier === "empty" ? "producer may enter when chosen"
+              : buf.barrier === "full" ? "consumer may enter"
+              : buf.barrier,
+            barrier: buf.barrier
+          }))
+        }
+      ];
+
+      columns.forEach(column => {
+        const panel = document.createElement("div");
+        panel.className = "buffer-panel";
+        panel.innerHTML = `<h3>${column.title}</h3>`;
+
+        const stack = document.createElement("div");
+        stack.className = "buffer-stack";
+
+        column.rows.forEach(buf => {
+          const row = document.createElement("div");
+          row.className = "buffer-row";
+          if (buf.state !== "free") row.classList.add("active");
+          const [tagClass, tagText] = stateTag[buf.state];
+          const ownerClass = buf.owner === "A" ? "owner-a"
+            : buf.owner === "B" ? "owner-b"
+            : buf.owner === "A -> B" ? "owner-b"
+            : "owner-free";
+          row.innerHTML = `
+            <small>buffer[${buf.id}]</small>
+            <span class="tag ${tagClass}">${tagText}</span>
+            <strong class="${ownerClass}">${buf.owner}</strong>
+            <div>${buf.detail}</div>
+            <small>barrier: ${buf.barrier}</small>
+          `;
+          stack.appendChild(row);
+        });
+
+        panel.appendChild(stack);
+        bufferBoard.appendChild(panel);
+      });
+    }
+
+    function renderNotes(frame) {
+      notes.innerHTML = "";
+      frame.notes.forEach(text => {
+        const item = document.createElement("div");
+        item.className = "note";
+        item.innerHTML = `<strong>${frame.title}</strong><br>${text}`;
+        notes.appendChild(item);
+      });
+    }
+
+    function renderFrame(index) {
+      currentFrame = index;
+      const frame = frames[index];
+
+      frameRange.value = String(index);
+      frameChip.textContent = `Frame ${index} / ${frames.length - 1}`;
+      frameSummary.textContent = frame.summary;
+      aAction.textContent = frame.aAction;
+      bAction.textContent = frame.bAction;
+      ownerNow.textContent = frame.ownerNow;
+      handoffNow.textContent = frame.handoffNow;
+
+      renderTimeline(frame);
+      renderBuffers(frame);
+      renderNotes(frame);
+    }
+
+    function stopPlayback() {
+      if (timer !== null) {
+        window.clearInterval(timer);
+        timer = null;
+      }
+      playBtn.textContent = "播放";
+    }
+
+    function startPlayback() {
+      stopPlayback();
+      playBtn.textContent = "暂停";
+      timer = window.setInterval(() => {
+        if (currentFrame >= frames.length - 1) {
+          stopPlayback();
+          return;
+        }
+        renderFrame(currentFrame + 1);
+      }, 1400);
+    }
+
+    frameRange.addEventListener("input", (event) => {
+      stopPlayback();
+      renderFrame(Number(event.target.value));
+    });
+
+    playBtn.addEventListener("click", () => {
+      if (timer !== null) {
+        stopPlayback();
+        return;
+      }
+      if (currentFrame >= frames.length - 1) {
+        renderFrame(0);
+      }
+      startPlayback();
+    });
+
+    resetBtn.addEventListener("click", () => {
+      stopPlayback();
+      renderFrame(0);
+    });
+
+    renderFrame(0);
+  </script>
+</body>
+</html>

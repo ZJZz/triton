@@ -101,6 +101,156 @@ IR 定义见 [TritonGPUOps.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/tr
 它表达的是多个 warp groups 的并发执行域，每个分区有自己的 warp 数和隔离的 SSA/layout 域。
 ```
 
+## Part A1. Guide-Aligned Pass Card
+
+### 3.1 Why This Note Needs A Feature-Level Template
+
+更新后的 `IR_PASS_DIFF_LEARNING_GUIDE.md` 默认按“一个 pass 一节”组织。
+
+`WarpSpecialize` 这里需要先做一个适配：
+
+```text
+学习目标仍然是 compiler decision + contract；
+但分析单位不是单个源码文件，而是
+AutomaticWarpSpecialization orchestration pipeline
++ OptimizePartitionWarps
++ 后续消费它的 Pipeline / ConvertWarpSpecializeToLLVM。
+```
+
+所以这篇笔记的做法是：
+
+```text
+先给整个 feature 一张 pass card，
+再分别拆 PartitionScheduling / NVWS helper passes / PartitionLoops /
+OptimizePartitionWarps 这些子决策。
+```
+
+### 3.2 Files
+
+这一篇实际用了两类证据：
+
+- feature-active lit tests：
+  [automatic-warp-specialization.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/test/TritonGPU/automatic-warp-specialization.mlir:1),
+  [partition-scheduling.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/test/TritonGPU/partition-scheduling.mlir:1),
+  [partition-loops.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/test/TritonGPU/partition-loops.mlir:1),
+  [optimize-partition-warps.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/test/TritonGPU/optimize-partition-warps.mlir:1)
+- canonical dump 中的真实 pass snapshot：
+  Before: [060_Before_TritonGPUAutomaticWarpSpecialization.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/060_Before_TritonGPUAutomaticWarpSpecialization.mlir:1)
+  After: [083_After_TritonGPUAutomaticWarpSpecialization.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/083_After_TritonGPUAutomaticWarpSpecialization.mlir:1)
+- orchestration source:
+  [AutomaticWarpSpecialization.cpp](/LocalRun/jiangzhe.zhao/my_repo/triton/lib/Dialect/TritonGPU/Transforms/WarpSpecialization/AutomaticWarpSpecialization.cpp:95)
+
+这里要明确一点：
+
+```text
+本篇关于“feature 生效后的形态”主要靠 lit tests；
+canonical matmul dump 提供的是“真实 pipeline 中这个 pass 可能 no-op”的反例证据。
+```
+
+### 3.3 Architecture Matrix
+
+| Arch | Before | After | Changed? | Main before feature | Main after feature |
+|---|---|---|---|---|---|
+| Ampere `sm80/sm86` | 本篇没有可复用的 automatic dump | pending | pending | automatic path 不具现实意义 | 同左 |
+| Hopper `sm90` | 本篇没有主打 automatic dump | pending | pending | 更常见是显式 `ttg.warp_specialize` lowering 相关路径 | automatic path 不是本篇主样本 |
+| Blackwell `sm100` | [060_Before_TritonGPUAutomaticWarpSpecialization.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/060_Before_TritonGPUAutomaticWarpSpecialization.mlir:1) | [083_After_TritonGPUAutomaticWarpSpecialization.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/083_After_TritonGPUAutomaticWarpSpecialization.mlir:1) | partially effective / no partition formed | 普通 scheduled `scf.for` + TMEM MMA loop | 仍未形成 `ttg.warp_specialize`，但 loop-carried accumulator init 被改写 |
+
+补充说明：
+
+```text
+Blackwell 上“feature active”的主证据不是上面这份 canonical dump，
+而是 automatic-warp-specialization / partition-* / optimize-partition-warps
+这些专门 lit tests。
+```
+
+### 3.4 Cross-Architecture Before Comparison
+
+- Ampere before：
+  自动路径在当前仓库学习路径里不构成主样本；更合理的结论是“不值得强行做 automatic before/after 对比”。
+- Hopper before：
+  进入 warp-specialize 相关 lowering 的 IR 更常见，但 automatic loop partitioning 不是本篇主证据。
+- Blackwell before：
+  如果 loop 没有 `tt.warp_specialize` 或不满足 simple matmul-like 结构，即使 pipeline 里跑到了 `TritonGPUAutomaticWarpSpecialization`，它也可能不形成 `ttg.warp_specialize`；上面的 `sm100_num_ctas1` dump 就是这个例子，而且它还展示了“内部 helper pass 仍可能改写 IR”。
+
+结论：
+
+```text
+WarpSpecialize 这一题最重要的 cross-architecture 结论
+不是“三代 after 长什么样”，
+而是“automatic path 本身就主要是 Blackwell-centric，
+因此三代并排 before/after 并不是最有信息量的学习组织”。
+```
+
+### 3.5 One-line Summary
+
+这个 feature 在本例中主要做了：
+
+```text
+把一个原本所有 warps 大体对称执行的 loop，
+改写成多个 warp-groups 分工协作的并发程序，
+并建立跨 partition 通信、warp 预算、以及后续 pipeline/lowering 可依赖的 IR contract。
+```
+
+### 3.6 Goal / Constraint / Design Intent
+
+- Goal:
+  让 Blackwell matmul-like hot loop 不只做时间维的软件流水，还能做空间维的 warp-group 分工。
+- Constraint:
+  普通 SSA 不能直接穿过 partition 边界；TMEM/TMA 路径还有 ownership、token、barrier、stage 的额外约束。
+- Design intent:
+  先用内部 attrs 和 NVWS 中间语义把“谁生产、谁消费、怎么交接”表达清楚，再落成 `ttg.warp_specialize` 这个可长期保留的 IR contract。
+
+### 3.7 Compiler Decision
+
+- Compiler question:
+  一个 loop 是否值得拆成多个并发 warp-group partitions；如果值得，谁归哪个 partition、怎么通信、各分区分多少 warps。
+- Decision made here:
+  `PartitionScheduling` 决定角色划分，NVWS passes 决定交接协议，`PartitionLoops` 决定结构拆分，`OptimizePartitionWarps` 决定每个 partition 的 warp 预算。
+- Why here in the pipeline:
+  这一步必须发生在 matmul/TMEM/TMA 相关结构已经显式化之后、但 LLVM lowering 之前，因为它消费的是高层 TTGIR/NVWS 语义，输出的是后续 Pipeline / ConvertWarpSpecializeToLLVM 要吃的执行组织 contract。
+
+### 3.8 Compiler Contract
+
+- Input contract:
+  loop 已带 `tt.warp_specialize` 或等价触发条件；更早的 layout / matmul / schedule 信息已经建立。
+- Output contract:
+  durable contract 是 `ttg.warp_specialize`、每个 partition 的 `num_warps`、以及合法的 cross-partition communication 结构。
+- Next pass relies on:
+  `ScheduleLoops`、`Pipeline`、`ConvertWarpSpecializeToLLVM`、以及可选的 `OptimizePartitionWarps`。
+- Deferred work:
+  它不负责最终 LLVM/NVVM lowering，不负责最终寄存器分配，也不负责所有 barrier/resource materialization；这些留给后续 passes。
+
+### 3.9 Invariant
+
+- Tensor shape:
+  不因 warp specialization 而改变。
+- Element type:
+  不以 partitioning 为目的改变。
+- Program semantics:
+  数学结果、循环迭代语义、producer/consumer 依赖语义不变。
+- Changed only:
+  执行角色划分、跨 partition 交接方式、控制流结构、warp 数预算、以及后续 pipeline 可见的同步/并发组织。
+
+### 3.10 Effective Or No-op
+
+- Result:
+  在 [060_Before_TritonGPUAutomaticWarpSpecialization.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/060_Before_TritonGPUAutomaticWarpSpecialization.mlir:1)
+  到
+  [083_After_TritonGPUAutomaticWarpSpecialization.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/083_After_TritonGPUAutomaticWarpSpecialization.mlir:1)
+  这份 canonical `sm100` matmul dump 里，更准确的判定是 `partially effective / no partition formed`，不是严格 no-op。
+- Evidence:
+  before/after 都仍保留同一个普通 `scf.for` TMEM MMA loop，没有出现 `ttg.warp_specialize`、`nvws.warp_group`、或 partition attrs。
+  但 loop-carried accumulator iter-args 确实变了：
+  Before 是 [060_Before_TritonGPUAutomaticWarpSpecialization.mlir:74](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/060_Before_TritonGPUAutomaticWarpSpecialization.mlir:74)
+  的 `iter_args(..., %acc_52 = %acc, %acc_53 = %acc_38)`，
+  After 是 [083_After_TritonGPUAutomaticWarpSpecialization.mlir:74](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/083_After_TritonGPUAutomaticWarpSpecialization.mlir:74)
+  的 `iter_args(..., %acc_51 = %false, %acc_52 = %acc_37)`。
+- Interpretation:
+  这说明两件事：
+  1. 这次没有形成 partition / `ttg.warp_specialize` 结构；
+  2. orchestration pass 即使没有产出目标结构，内部 helper pass 仍可能实质改写 IR。
+  这里的改写与前面 `NVWSHoistTmemStore` 讨论的 accumulator initialization / `tmem_store` fold 语义是一致的。
+
 ## Part B. Where It Sits In The Pipeline
 
 ### 4. Pass Chain Inside `AutomaticWarpSpecialization`
@@ -484,6 +634,40 @@ WarpSpecialize 解决“由谁做这件事”的空间分工。
 3. Warp budget allocation
    每个 partition 的 num_warps 不是固定等于整个 kernel 的 num_warps
 ```
+
+### 6.1 Decision Tree
+
+把整条 feature 链压成决策树，大致是：
+
+```text
+if loop 没有 tt.warp_specialize / 不满足 automatic path 前提:
+  no-op
+else:
+  run PartitionScheduling
+  if 没有得到有价值的 partitions:
+    no-op or clear temporary attrs
+  else:
+    run NVWS helper passes
+      - normalize TMEM ownership
+      - rewrite cross-partition SSA/value ownership into aref/TMEM protocol
+    run PartitionLoops
+      - structurally split loop into per-partition regions
+    run NVWSLowerWarpGroup
+      - lower NVWS container into ttg.warp_specialize
+    run ScheduleLoops again
+      - rebuild schedule contract on partitioned loop
+    optionally run OptimizePartitionWarps
+      - shrink num_warps where register/TMEM/TMA constraints still fit
+```
+
+### 6.2 Alternative Design
+
+- Alternative:
+  完全不做 warp specialization，只保留对称 loop，再靠普通 software pipelining 做时间维 overlap。
+- Why not here:
+  这种设计无法稳定表达 producer warp-group、MMA warp-group、consumer/epilogue warp-group 的空间分工，也无法把 TMEM/TMA ownership transfer 编进 IR contract。
+- Cost of the alternative:
+  Blackwell matmul 路径只能吃到时间 overlap，吃不到“空间分工 + 时间 overlap”的组合收益。
 
 ## Part D. Internal Contracts
 
@@ -941,6 +1125,19 @@ cross-partition dependencies 已经被合法重写
 每个 partition 的 num_warps 已经定下或进一步优化过
 ```
 
+#### 20.3 Deferred Work
+
+这一步刻意不解决的事也要单独记：
+
+- 最终 async 指令序列、prologue/epilogue 展开：
+  主要留给 `Pipeline`
+- `ttg.warp_specialize` 到 LLVM/NVVM-level control-flow / barrier / capture frame 的 lowering：
+  留给 `ConvertWarpSpecializeToLLVM`
+- 最终机器级寄存器分配：
+  `OptimizePartitionWarps` 只能做 heuristic estimate，不是 PTXAS 实测分配
+- 更晚阶段的 resource/barrier materialization：
+  留给后面的 TMEM/barrier/allocation 相关 passes
+
 ### 21. Invariants
 
 无论怎么 partition，下面这些语义不能变：
@@ -1024,6 +1221,38 @@ warp-specialized loop:
   一部分 warps 偏 tensor-core consumer/compute
   一部分 warps 偏 epilogue / scalar work
   编译器负责把它们的并发执行、通信和资源预算安排清楚
+```
+
+### 23.1 Knowledge Card
+
+```text
+Pass / Feature:
+  AutomaticWarpSpecialization (+ optional OptimizePartitionWarps)
+
+Purpose:
+  把 loop 变成多 warp-group 协作程序
+
+Compiler decision:
+  谁归哪个 partition、怎么交接、每个 partition 分多少 warps
+
+Main IR attribute/op:
+  temporary: ttg.partition / ttg.partition.outputs / ttg.partition.stages / ttg.warp_specialize.tag
+  durable:   ttg.warp_specialize
+
+Input contract:
+  loop 已有 warp_specialize trigger，且更早的 layout/matmul/schedule 信息已就位
+
+Output contract:
+  partitioned warp-group execution domains + legal cross-partition communication + per-partition num_warps
+
+Invariant:
+  数学语义、迭代语义、tensor shape/type 不因 partitioning 而改变
+
+Hardware reason:
+  为 Blackwell-centric TMA / TMEM / TCGen5 matmul 路径建立空间分工 contract
+
+Next dependencies:
+  ScheduleLoops / Pipeline / OptimizePartitionWarps / ConvertWarpSpecializeToLLVM
 ```
 
 ## Part M. Open Questions
