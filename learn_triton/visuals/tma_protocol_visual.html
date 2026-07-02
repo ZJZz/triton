@@ -1,0 +1,1024 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TMA Protocol Visual</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fa;
+      --surface: #ffffff;
+      --surface-2: #eef3f7;
+      --line: #d5dde7;
+      --ink: #182230;
+      --muted: #5e6c80;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --green: #0f8a5f;
+      --green-soft: #dcfce7;
+      --amber: #b7791f;
+      --amber-soft: #fff4d6;
+      --rose: #b42318;
+      --rose-soft: #fee4e2;
+      --slate: #64748b;
+      --slate-soft: #eef2f7;
+      --shadow: 0 16px 38px rgba(31, 41, 55, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1280px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 52px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    .hero,
+    section {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.9fr);
+      gap: 18px;
+      padding: 24px;
+    }
+
+    .hero-copy {
+      display: grid;
+      gap: 14px;
+    }
+
+    h1 {
+      font-size: clamp(30px, 4.2vw, 50px);
+      line-height: 1.02;
+      letter-spacing: 0;
+      max-width: 860px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 820px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    .hero-side {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .summary-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 14px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .summary-card strong {
+      font-size: 13px;
+    }
+
+    .summary-card p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    section {
+      margin-top: 18px;
+      padding: 20px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .seg-btn {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      border-radius: 999px;
+      min-height: 34px;
+      padding: 6px 12px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .seg-btn.active {
+      background: var(--blue-soft);
+      color: var(--blue);
+      border-color: rgba(37, 99, 235, 0.24);
+    }
+
+    .protocol-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.9fr);
+      gap: 18px;
+      margin-top: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 16px;
+    }
+
+    .panel h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .panel p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .lane-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+      overflow-x: auto;
+      padding-bottom: 4px;
+    }
+
+    .lane-row {
+      display: grid;
+      grid-template-columns: 170px repeat(var(--cols), minmax(132px, 1fr));
+      gap: 10px;
+      min-width: 1080px;
+    }
+
+    .lane-head,
+    .lane-label,
+    .cell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      background: var(--surface);
+      min-height: 82px;
+    }
+
+    .lane-head {
+      display: grid;
+      gap: 4px;
+      align-content: center;
+      justify-items: center;
+      min-height: 62px;
+      background: #f8fbff;
+    }
+
+    .lane-head strong {
+      font-size: 12px;
+    }
+
+    .lane-head small {
+      color: var(--muted);
+      font-size: 11px;
+      text-align: center;
+    }
+
+    .lane-label {
+      background: var(--surface);
+      display: grid;
+      gap: 4px;
+      align-content: center;
+    }
+
+    .lane-label strong {
+      font-size: 13px;
+    }
+
+    .lane-label small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .cell {
+      display: grid;
+      align-content: start;
+      gap: 6px;
+      cursor: pointer;
+      background: #fbfcfe;
+    }
+
+    .cell.empty {
+      cursor: default;
+      background: #fcfdff;
+    }
+
+    .cell.active {
+      outline: 2px solid rgba(37, 99, 235, 0.2);
+      border-color: rgba(37, 99, 235, 0.26);
+      background: #f5f9ff;
+    }
+
+    .tag {
+      display: inline-flex;
+      width: fit-content;
+      min-height: 24px;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .tag.blue { background: var(--blue-soft); color: var(--blue); }
+    .tag.green { background: var(--green-soft); color: var(--green); }
+    .tag.amber { background: var(--amber-soft); color: var(--amber); }
+    .tag.rose { background: var(--rose-soft); color: var(--rose); }
+    .tag.slate { background: var(--slate-soft); color: var(--slate); }
+
+    .cell strong {
+      font-size: 13px;
+      line-height: 1.2;
+    }
+
+    .cell p {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .detail-stack {
+      display: grid;
+      gap: 12px;
+      margin-top: 12px;
+    }
+
+    .detail-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface);
+      padding: 14px;
+      display: grid;
+      gap: 7px;
+    }
+
+    .detail-card strong {
+      font-size: 14px;
+    }
+
+    .detail-card p,
+    .detail-card li {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .detail-card ul {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-x: auto;
+    }
+
+    .concept-grid,
+    .source-list {
+      display: grid;
+      gap: 14px;
+    }
+
+    .concept-grid {
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-top: 16px;
+    }
+
+    .concept {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--surface-2);
+      display: grid;
+      gap: 8px;
+    }
+
+    .concept strong {
+      font-size: 14px;
+    }
+
+    .concept p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .source-list a {
+      color: var(--blue);
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .source-list p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    @media (max-width: 980px) {
+      .hero,
+      .protocol-shell,
+      .concept-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div class="hero-copy">
+        <div class="meta">
+          <span class="pill">Theme: <strong>TMA protocol</strong></span>
+          <span class="pill">Pass focus: <strong>TMALowering / ProxyFenceInsertion</strong></span>
+          <span class="pill">Architectures: <strong>sm90+</strong></span>
+        </div>
+        <h1>TMA 不是一条 copy 指令，而是一套 transport + barrier + proxy contract</h1>
+        <p class="subtitle">
+          这个页面不把注意力放在 pass 名字列表，而是把 <code>tt.descriptor_*</code>
+          为什么会 lower 成一串 op 画成协议时间线。重点是三件事：shared 目的地先建立、mbarrier 完成关系显式化、generic/async proxy 可见性单独补齐。
+        </p>
+      </div>
+      <div class="hero-side">
+        <div class="summary-card">
+          <strong>你真正要记的 invariant</strong>
+          <p>descriptor op 不直接“产出 tensor”。load 路径先把 tile 异步写到 shared，再通过 barrier 和 local_load 把它变成寄存器值。</p>
+        </div>
+        <div class="summary-card">
+          <strong>为什么 store 也不只是 store</strong>
+          <p>shared 上的 generic write 必须先经过 <code>fence_async_shared</code>，async TMA store engine 才能把这块 shared 看成合法输入。</p>
+        </div>
+        <div class="summary-card">
+          <strong>为什么还有 proxy fence</strong>
+          <p><code>wait_barrier</code> 管 completion，不自动解决 generic proxy 和 async proxy 的跨域可见性；这部分由 <code>ProxyFenceInsertion</code> 单独负责。</p>
+        </div>
+      </div>
+    </header>
+
+    <section>
+      <h2>协议视图</h2>
+      <p class="subtitle">切换不同 descriptor 语义，观察它在 lowering 后分别建立了哪类 contract。</p>
+      <div class="toolbar" id="scenarioTabs"></div>
+      <div class="protocol-shell">
+        <div class="panel">
+          <h3 id="scenarioTitle"></h3>
+          <p id="scenarioIntro"></p>
+          <div class="lane-grid" id="laneGrid"></div>
+        </div>
+        <aside class="panel">
+          <h3 id="detailHeading"></h3>
+          <p id="detailSummary"></p>
+          <div class="detail-stack">
+            <div class="detail-card">
+              <strong>选中阶段的设计目的</strong>
+              <p id="detailInvariant"></p>
+            </div>
+            <div class="detail-card">
+              <strong>常见误解</strong>
+              <p id="detailMisread"></p>
+            </div>
+            <div class="detail-card">
+              <strong>源码 / 测试里的锚点</strong>
+              <ul id="detailEvidence"></ul>
+            </div>
+            <div class="detail-card">
+              <strong>最小 IR 片段</strong>
+              <pre id="detailCode"></pre>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section>
+      <h2>四个最容易混淆的点</h2>
+      <div class="concept-grid">
+        <div class="concept">
+          <strong>Barrier 管 completion</strong>
+          <p>load / gather 路径里的 <code>wait_barrier</code> 只说明 async copy 已经完成到 shared，可供本域继续读。</p>
+        </div>
+        <div class="concept">
+          <strong>Proxy fence 管跨域可见性</strong>
+          <p><code>TMALoadLikeOpInterface</code> / <code>CLCTryCancelOp</code> 是 async proxy write；<code>WarpGroupDotOp</code>、<code>MMAv5OpInterface</code>、<code>TMEMCopyOp</code>、<code>TMAStoreLikeOpInterface</code> 是 async proxy read。</p>
+        </div>
+        <div class="concept">
+          <strong>Descriptor create 也是协议的一部分</strong>
+          <p><code>tt.make_tensor_descriptor</code> 会 lower 成 scratch alloc + <code>tensormap_create</code> + <code>fenceproxy_acquire</code>，不是一个纯 metadata no-op。</p>
+        </div>
+        <div class="concept">
+          <strong>TMA 典型终点是 shared</strong>
+          <p>TMA 负责的是 <code>global &lt;-&gt; shared</code> transport；如果后面还要进 TMEM，那是另一条 contract，在 <code>PromoteLHSToTMem</code> 之后才开始分叉。</p>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>证据入口</h2>
+      <div class="source-list">
+        <p><a href="../notes/2026-07-01-tma-pass-learning.md">TMA 学习笔记</a>：把 pipeline 位置、约束、模板和 contract 逐条写清楚。</p>
+        <p><a href="../test/TritonNvidiaGPU/tma_lowering.mlir">test/TritonNvidiaGPU/tma_lowering.mlir</a>：这个页面里 load / store / descriptor-create 的最小 IR 片段都来自这里。</p>
+        <p><a href="../../third_party/nvidia/backend/compiler.py">third_party/nvidia/backend/compiler.py</a>：`sm90+` 走 <code>tma_lowering</code>，`make_llir` 再走 <code>proxy_fence_insertion</code>。</p>
+        <p><a href="../../lib/Dialect/TritonNvidiaGPU/Transforms/ProxyFenceInsertion.cpp">ProxyFenceInsertion.cpp</a>：async proxy read/write 分类的直接来源。</p>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const scenarios = {
+      load: {
+        label: "descriptor_load",
+        title: "Load / Gather: async write to shared, then local_load to registers",
+        intro: "这里最重要的认识是：load 路径的真实产物先是 shared memdesc，不是寄存器 tensor。寄存器值只是协议尾部的 materialization。",
+        lanes: [
+          { key: "tensor", name: "Descriptor / Global", desc: "抽象来源与 async engine" },
+          { key: "shared", name: "Shared Buffer", desc: "真实落点" },
+          { key: "barrier", name: "mbarrier", desc: "完成协议" },
+          { key: "regs", name: "Registers", desc: "最终 consumer 看到的值" },
+          { key: "proxy", name: "Proxy View", desc: "generic / async 域" }
+        ],
+        columns: [
+          {
+            head: "0",
+            sub: "abstract op",
+            focus: {
+              title: "输入还是 descriptor-level 语义",
+              summary: "IR 还没承诺任何具体 shared 槽位、barrier 状态或寄存器 materialization。",
+              invariant: "在 lowering 之前，`tt.descriptor_load` 只表达“从这个 tensordesc 取一个 tile”，没有把 transport protocol 摊开。",
+              misread: "不要把它理解成“等价于一个同步 load 指令”。后面会展开成多条协议步骤。",
+              evidence: [
+                "tma_lowering.mlir: `tt.descriptor_load %arg0[%arg1, %arg1]`",
+                "TMALowering.cpp: lowerTMALoad 模板"
+              ],
+              code: "%l = tt.descriptor_load %arg0[%arg1, %arg1]\n  : !tt.tensordesc<128x64xf16, #nvmma_128>\n -> tensor<128x64xf16, #blocked>"
+            },
+            cells: {
+              tensor: { tag: "abstract", tone: "slate", title: "tt.descriptor_load", body: "还只是抽象访存语义。" }
+            }
+          },
+          {
+            head: "1",
+            sub: "dest alloc",
+            focus: {
+              title: "先给 async engine 一个 shared 落点",
+              summary: "TMA load 不是直接往寄存器写；第一件事是生成结果 memdesc。",
+              invariant: "async engine 的目的地必须是一个已知的 shared memdesc。",
+              misread: "这不是 user-level `local_alloc %tensor`，而是 lowering 建立的协议缓冲区。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttg.local_alloc : ()`",
+                "TMALowering.cpp: 结果 shared memdesc 先创建"
+              ],
+              code: "%result = ttg.local_alloc : ()\n  -> !ttg.memdesc<128x64xf16, #nvmma_128, #smem, mutable>"
+            },
+            cells: {
+              shared: { tag: "shared", tone: "green", title: "ttg.local_alloc", body: "建立结果 shared tile。" }
+            }
+          },
+          {
+            head: "2",
+            sub: "barrier alloc",
+            focus: {
+              title: "barrier 自己也要有物理存储",
+              summary: "completion protocol 不是隐式状态，barrier 对象同样有 shared 载体。",
+              invariant: "wait / inval 之前，barrier memdesc 必须存在并可寻址。",
+              misread: "不要把 barrier 想成“编译器记在脑子里”的抽象 token；这里是显式对象。",
+              evidence: [
+                "tma_lowering.mlir CHECK: 第二个 `ttg.local_alloc : ()`",
+                "TMALowering.cpp: barrier alloc -> init_barrier -> barrier_expect"
+              ],
+              code: "%bar = ttg.local_alloc : ()\n  -> !ttg.memdesc<1xi64, #shared, #smem, mutable>"
+            },
+            cells: {
+              barrier: { tag: "sync", tone: "amber", title: "barrier alloc", body: "shared 上的 barrier 槽位。" }
+            }
+          },
+          {
+            head: "3",
+            sub: "arm protocol",
+            focus: {
+              title: "barrier 需要 init，再声明 expected arrival",
+              summary: "这一步把“将有一个 async producer 完成写入”显式化。",
+              invariant: "wait 只对已经初始化、已经 armed 的 barrier 有意义。",
+              misread: "这不是数据搬运本身，而是 completion contract 的搭建。",
+              evidence: [
+                "TMALowering.cpp: `init_barrier` + `barrier_expect`",
+                "TMA load 模板第 3-4 步"
+              ],
+              code: "ttng.init_barrier %bar, 1\n  : !ttg.memdesc<1xi64, #shared, #smem, mutable>\nttng.barrier_expect %bar, %c_bytes"
+            },
+            cells: {
+              barrier: { tag: "sync", tone: "amber", title: "init + expect", body: "barrier 从“存在”变成“已 armed”。" }
+            }
+          },
+          {
+            head: "4",
+            sub: "async launch",
+            focus: {
+              title: "真正的 transport 发生在 async_tma_*",
+              summary: "descriptor、坐标、结果 shared memdesc、barrier 现在被绑在一起，异步 copy engine 开始工作。",
+              invariant: "此刻 producer 属于 async proxy；结果 shared 还不能被 consumer 当成已完成值。",
+              misread: "launch 不是 completion。发出 async op 后，consumer 还不能直接读结果 shared。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttng.async_tma_copy_global_to_local`",
+                "gather 路径对应 `ttng.async_tma_gather`"
+              ],
+              code: "ttng.async_tma_copy_global_to_local %arg0[%arg1, %arg1]\n  %result, %bar, %predicate"
+            },
+            cells: {
+              tensor: { tag: "async", tone: "blue", title: "async_tma_*", body: "async engine 从 global / descriptor 侧发起传输。" },
+              shared: { tag: "write", tone: "green", title: "shared 目的地", body: "tile 正在被异步写入。" },
+              proxy: { tag: "domain", tone: "rose", title: "async proxy", body: "producer 位于 async 域。" }
+            }
+          },
+          {
+            head: "5",
+            sub: "wait",
+            focus: {
+              title: "wait_barrier 把 completion 暴露给 consumer",
+              summary: "consumer 到这里才开始把 shared tile 看成完整结果。",
+              invariant: "没有 wait，就没有“这个 shared tile 已经 ready”的 contract。",
+              misread: "wait 解决的是完成时序，不是 generic/async proxy 的所有跨域问题。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttng.wait_barrier`",
+                "TMALowering.cpp: wait 后才发 `local_load`"
+              ],
+              code: "ttng.wait_barrier %bar\n  : !ttg.memdesc<1xi64, #shared, #smem, mutable>"
+            },
+            cells: {
+              barrier: { tag: "sync", tone: "amber", title: "wait_barrier", body: "consumer 等待 async completion。" },
+              regs: { tag: "ready", tone: "slate", title: "still empty", body: "寄存器 materialization 还没发生。" }
+            }
+          },
+          {
+            head: "6",
+            sub: "retire barrier",
+            focus: {
+              title: "barrier 失效化，协议周期收尾",
+              summary: "结果 shared 继续存在，但当前 completion token 已经完成生命周期。",
+              invariant: "barrier 生命周期和 shared tile 生命周期不是同一个对象。",
+              misread: "inval 不是把 shared tile 清空，它只是把 barrier 状态退役。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttng.inval_barrier`",
+                "TMALowering.cpp: wait -> inval -> local_load"
+              ],
+              code: "ttng.inval_barrier %bar\n  : !ttg.memdesc<1xi64, #shared, #smem, mutable>"
+            },
+            cells: {
+              barrier: { tag: "retire", tone: "amber", title: "inval_barrier", body: "barrier 协议完成并退役。" }
+            }
+          },
+          {
+            head: "7",
+            sub: "materialize",
+            focus: {
+              title: "最后一步才是 registers 看到 tensor",
+              summary: "shared memdesc 通过 `ttg.local_load` 变成 tensor SSA value。",
+              invariant: "register tensor 是协议尾部产物，不是 async copy 的直接目标。",
+              misread: "如果先把这个记对，TMA lowering 中那两个 `local_alloc`、一个 barrier 的存在就都不奇怪了。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttg.local_load`",
+                "load/gather 模板最后一步"
+              ],
+              code: "%out = ttg.local_load %result\n  : !ttg.memdesc<128x64xf16, #nvmma_128, #smem, mutable>\n -> tensor<128x64xf16, #blocked>"
+            },
+            cells: {
+              regs: { tag: "regs", tone: "slate", title: "ttg.local_load", body: "最终 tensor SSA value 才出现。" }
+            }
+          }
+        ]
+      },
+      store: {
+        label: "descriptor_store",
+        title: "Store / Reduce / Scatter: generic proxy 先写 shared，再让 async TMA engine 读取",
+        intro: "store 类路径和 load 正好反过来：先把源 tensor materialize 到 shared，再用 `fence_async_shared` 把它暴露给 async proxy。",
+        lanes: [
+          { key: "regs", name: "Registers", desc: "输入 tensor" },
+          { key: "shared", name: "Shared Buffer", desc: "TMA store 的源" },
+          { key: "proxy", name: "Proxy View", desc: "从 generic 域转到 async 域" },
+          { key: "tensor", name: "Descriptor / Global", desc: "最终写回位置" }
+        ],
+        columns: [
+          {
+            head: "0",
+            sub: "input tensor",
+            focus: {
+              title: "输入先是寄存器 tensor",
+              summary: "此时还没有 shared memdesc，async store engine 还没有可读源。",
+              invariant: "store 类 TMA op 的源不是寄存器本身，而是后面 materialize 出来的 shared memdesc。",
+              misread: "不要把 `descriptor_store` 想成“直接把寄存器发给 TMA”。",
+              evidence: [
+                "tma_lowering.mlir: `tt.descriptor_store ... %arg2`",
+                "TMALowering.cpp: store 路径先 local_alloc"
+              ],
+              code: "tt.descriptor_store %arg0[%arg1, %arg1], %arg2\n  : !tt.tensordesc<128x256xf32, #nvmma_128>, tensor<128x256xf32, #blocked>"
+            },
+            cells: {
+              regs: { tag: "input", tone: "slate", title: "register tensor", body: "source 还是 SSA tensor。" }
+            }
+          },
+          {
+            head: "1",
+            sub: "shared source",
+            focus: {
+              title: "先把 tensor 放进 shared",
+              summary: "这一步把 register tensor 变成 TMA store 能消费的 memdesc。",
+              invariant: "后续 async store / reduce / scatter 都以 shared memdesc 作为真正输入。",
+              misread: "这不是优化噪音，而是抽象 tensor 向 transport 协议的落地。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttg.local_alloc %arg2`",
+                "TMALowering.cpp: store/reduce/scatter 模板第 1 步"
+              ],
+              code: "%src = ttg.local_alloc %arg2\n  : (tensor<128x256xf32, #blocked>)\n -> !ttg.memdesc<128x256xf32, #shared, #smem>"
+            },
+            cells: {
+              shared: { tag: "shared", tone: "green", title: "ttg.local_alloc", body: "先得到 shared source。" }
+            }
+          },
+          {
+            head: "2",
+            sub: "visibility",
+            focus: {
+              title: "fence_async_shared 把 generic shared write 交给 async 域",
+              summary: "这一条正是 store 路径和 load 路径的关键差异。",
+              invariant: "generic proxy 完成的 shared 写，不会自动成为 async proxy 可见源。",
+              misread: "这不是性能 hint；去掉它会破坏跨 proxy 域的可见性假设。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttng.fence_async_shared {bCluster = false}`",
+                "TMALowering.cpp: store/reduce/scatter 模板第 2 步"
+              ],
+              code: "ttng.fence_async_shared {bCluster = false}"
+            },
+            cells: {
+              proxy: { tag: "bridge", tone: "rose", title: "fence_async_shared", body: "generic -> async 可见性桥。" }
+            }
+          },
+          {
+            head: "3",
+            sub: "async store",
+            focus: {
+              title: "async_tma_* 才真正消费 shared source",
+              summary: "这里 engine 从 shared 读，再写 global / reduce / scatter 目标。",
+              invariant: "store 类 TMA 的 async 部分是“shared -> global”，不是“register -> global”。",
+              misread: "如果把 shared 当成中间噪音层，这一步就会读不懂。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttng.async_tma_copy_local_to_global`",
+                "`ttng.async_tma_reduce` / `ttng.async_tma_scatter` 走同样套路"
+              ],
+              code: "ttng.async_tma_copy_local_to_global %arg0[%arg1, %arg1] %src"
+            },
+            cells: {
+              shared: { tag: "read", tone: "green", title: "shared source ready", body: "async engine 从这里读。" },
+              tensor: { tag: "async", tone: "blue", title: "async_tma_*", body: "global 侧异步写回 / 规约 / scatter。" },
+              proxy: { tag: "domain", tone: "rose", title: "async proxy", body: "现在读 shared 的是 async 域。" }
+            }
+          },
+          {
+            head: "4",
+            sub: "wait store",
+            focus: {
+              title: "store 也有自己的 completion 点",
+              summary: "页面上没有把所有 wait 画得很长，但协议尾部仍然会显式等待 pendings。",
+              invariant: "load 关注何时可以读；store 关注何时可以确认异步写回已经提交完成。",
+              misread: "有 async_tma_store 并不意味着函数返回前不需要 completion point。",
+              evidence: [
+                "TMALowering.cpp: `TMAStoreWait`",
+                "tma_lowering.mlir CHECK: `ttng.async_tma_store_wait {pendings = 0 : i32}`"
+              ],
+              code: "ttng.async_tma_store_wait {pendings = 0 : i32}"
+            },
+            cells: {
+              tensor: { tag: "complete", tone: "blue", title: "store_wait", body: "等待 async store/reduce/scatter 完成。" }
+            }
+          }
+        ]
+      },
+      descriptor: {
+        label: "make_tensor_descriptor",
+        title: "Descriptor creation: tensormap 本身也是 runtime object",
+        intro: "很多人把 descriptor create 误会成纯 metadata。当前 backend 不是这样：它会在 device 侧构造 tensormap 对象，并在 acquire 后重新解释为 tensor descriptor。",
+        lanes: [
+          { key: "tensor", name: "Global Scratch", desc: "tensormap object 的物理落点" },
+          { key: "proxy", name: "Proxy / Visibility", desc: "fenceproxy acquire" },
+          { key: "regs", name: "Descriptor Handle", desc: "重新解释后的高层句柄" }
+        ],
+        columns: [
+          {
+            head: "0",
+            sub: "alloc scratch",
+            focus: {
+              title: "先给 tensormap 一个 scratch 地址",
+              summary: "`tt.make_tensor_descriptor` lower 后第一步是 `ttg.global_scratch_alloc`。",
+              invariant: "设备侧 tensormap 不是悬空概念对象，而是需要真实存储。",
+              misread: "不要把这个阶段看成编译期常量折叠；这是 runtime construct。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttg.global_scratch_alloc {alignment = 128, nbytes = 128}`",
+                "TMALowering.cpp: make_tensor_descriptor 模板第 1 步"
+              ],
+              code: "%scratch = ttg.global_scratch_alloc {alignment = 128 : i32, nbytes = 128 : i32} : !tt.ptr<i8>"
+            },
+            cells: {
+              tensor: { tag: "alloc", tone: "green", title: "global_scratch_alloc", body: "为 tensormap object 预留物理空间。" }
+            }
+          },
+          {
+            head: "1",
+            sub: "tensormap create",
+            focus: {
+              title: "把 shape / stride / swizzle 编进 tensormap",
+              summary: "swizzle、elem type、tile shape 这些信息在这里变成 device 可消费对象。",
+              invariant: "descriptor shared layout contract 要在这个阶段落到稳定语义。",
+              misread: "如果上游 shared encoding 还没被 `OptimizeDescriptorEncoding` 规范化，这里就没有稳定的 swizzle contract。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttng.tensormap_create ... {swizzle_mode = 1}`",
+                "TMAUtilities.cpp: 读取 swizzle / block shape / elem type"
+              ],
+              code: "ttng.tensormap_create %scratch, %base, [tile], [shape], [stride], [one, one]\n  {elem_type = 0 : i32, swizzle_mode = 1 : i32}"
+            },
+            cells: {
+              tensor: { tag: "encode", tone: "blue", title: "tensormap_create", body: "把 descriptor contract 编进 object。" }
+            }
+          },
+          {
+            head: "2",
+            sub: "acquire",
+            focus: {
+              title: "fenceproxy_acquire 把 tensormap 暴露给后续使用者",
+              summary: "这一步强调的仍然是可见性，不是 shape 数学本身。",
+              invariant: "descriptor object 建好之后，还要经过 acquire 才成为后续 TMA 使用的稳定句柄。",
+              misread: "不要把 `fenceproxy_acquire` 误读成 barrier wait；这里是 descriptor object 可见性的 acquire。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttng.tensormap_fenceproxy_acquire %1`",
+                "TMALowering.cpp: make_tensor_descriptor 模板第 3 步"
+              ],
+              code: "ttng.tensormap_fenceproxy_acquire %scratch : !tt.ptr<i8>"
+            },
+            cells: {
+              proxy: { tag: "acquire", tone: "rose", title: "fenceproxy_acquire", body: "descriptor object 的可见性确认。" }
+            }
+          },
+          {
+            head: "3",
+            sub: "reinterpret",
+            focus: {
+              title: "最后才重新解释回高层 descriptor 句柄",
+              summary: "前面三步建立的是 runtime object；这一刻才重新变回 `!tt.tensordesc<...>` 类型。",
+              invariant: "高层 descriptor handle 只是 runtime tensormap object 的 typed view。",
+              misread: "如果忽略前面的 object construction，这个 `reinterpret` 看起来会像魔法。",
+              evidence: [
+                "tma_lowering.mlir CHECK: `ttng.reinterpret_tensor_descriptor %1`",
+                "TMALowering.cpp: make_tensor_descriptor 模板第 4 步"
+              ],
+              code: "%desc = ttng.reinterpret_tensor_descriptor %scratch\n  : !tt.ptr<i8> to !tt.tensordesc<8x32xi8, #shared>"
+            },
+            cells: {
+              regs: { tag: "handle", tone: "slate", title: "reinterpret_tensor_descriptor", body: "返回 typed descriptor handle。" }
+            }
+          }
+        ]
+      },
+      proxy: {
+        label: "proxy visibility",
+        title: "ProxyFenceInsertion: completion 之外，还要补 async/generic 的可见性桥",
+        intro: "这一页不是再画一次 copy，而是把为什么还需要 proxy fence 单独拆开。它回答的不是“数据什么时候到”，而是“另一个 proxy 域什么时候能合法看见它”。",
+        lanes: [
+          { key: "shared", name: "Shared Allocation", desc: "被多个域共享的物理对象" },
+          { key: "proxy", name: "Async Proxy Write", desc: "TMALoadLikeOp / CLCTryCancelOp" },
+          { key: "tensor", name: "Proxy Fence", desc: "跨域桥接" },
+          { key: "regs", name: "Async Proxy Read", desc: "WarpGroupDot / MMAv5 / TMEMCopy / TMAStore" }
+        ],
+        columns: [
+          {
+            head: "0",
+            sub: "writer class",
+            focus: {
+              title: "先把 async proxy write 的集合分清",
+              summary: "当前实现把 `TMALoadLikeOpInterface` 和 `CLCTryCancelOp` 看成 async proxy write。",
+              invariant: "ProxyFenceInsertion 不靠名字猜；它先对 op 分类，再按 shared allocation 做分析。",
+              misread: "别把它想成“只处理 TMA load”。CLCTryCancelOp 也属于 async write 集合。",
+              evidence: [
+                "ProxyFenceInsertion.cpp: `isAsyncProxyWrite`",
+                "源码行: `TMALoadLikeOpInterface`, `CLCTryCancelOp`"
+              ],
+              code: "bool isAsyncProxyWrite(Operation *op) {\n  return isa<TMALoadLikeOpInterface, CLCTryCancelOp>(op);\n}"
+            },
+            cells: {
+              proxy: { tag: "write", tone: "rose", title: "async proxy write", body: "producer 集合先被精确定义。" }
+            }
+          },
+          {
+            head: "1",
+            sub: "shared object",
+            focus: {
+              title: "分析的对象是 shared allocation，不是抽象 value 名字",
+              summary: "pass 会问：这个 shared memdesc 是否既被 async writer 写，又被另一类 op 作为 async read source 读。",
+              invariant: "桥接是围绕同一块 shared 物理对象建立的。",
+              misread: "这不是 SSA use-count 规则，而是 allocation / alias 规则。",
+              evidence: [
+                "ProxyFenceInsertion.cpp: `getSmemDest` / allocation-based analysis",
+                "make_llir: 先 allocate_shared_memory，再 proxy_fence_insertion"
+              ],
+              code: "Value getSmemDest(Operation *op) {\n  if (auto tmaLoad = dyn_cast<TMALoadLikeOpInterface>(op))\n    return tmaLoad.getResult();\n}"
+            },
+            cells: {
+              shared: { tag: "alloc", tone: "green", title: "shared allocation", body: "被 writer / reader 共同别名到的对象。" }
+            }
+          },
+          {
+            head: "2",
+            sub: "reader class",
+            focus: {
+              title: "async proxy read 的集合更宽",
+              summary: "`WarpGroupDotOp`、`MMAv5OpInterface`、`TMEMCopyOp`、`TMAStoreLikeOpInterface` 都会被当作 async proxy read。",
+              invariant: "只要它们从 shared 读，就可能需要一条桥，哪怕它们不是 TMA load/store 本身。",
+              misread: "很多人只盯住 TMAStoreLikeOpInterface，会漏掉 `WarpGroupDotOp` 和 `TMEMCopyOp`。",
+              evidence: [
+                "ProxyFenceInsertion.cpp: `isAsyncProxyRead`",
+                "用户刚核对过：这里包含 `WarpGroupDotOp`"
+              ],
+              code: "bool isAsyncProxyRead(Operation *op) {\n  return isa<WarpGroupDotOp, MMAv5OpInterface,\n             TMEMCopyOp, TMAStoreLikeOpInterface>(op);\n}"
+            },
+            cells: {
+              regs: { tag: "read", tone: "slate", title: "async proxy read", body: "consumer 集合同样是源码枚举出来的。" }
+            }
+          },
+          {
+            head: "3",
+            sub: "bridge",
+            focus: {
+              title: "proxy fence 补的是跨域 visibility contract",
+              summary: "这个桥的作用不是替代 barrier completion，而是让不同 proxy 域对同一块 shared 的访问顺序合法化。",
+              invariant: "completion 和 visibility 是两个不同 contract，必须分开记。",
+              misread: "如果把 wait_barrier 和 proxy fence 混成一类，你会看不懂为什么 pipeline 里两个 pass 都存在。",
+              evidence: [
+                "compiler.py: make_ttgir 里先 `fence_insertion`，make_llir 里后 `proxy_fence_insertion`",
+                "ProxyFenceInsertion.cpp: ignore/filter 只针对 proxy 相关 op"
+              ],
+              code: "nvidia.passes.ttnvgpuir.add_proxy_fence_insertion(pm, capability)\n// runs in make_llir, after shared/tmem allocation"
+            },
+            cells: {
+              tensor: { tag: "bridge", tone: "blue", title: "proxy fence", body: "把 completion 之外的 visibility 补齐。" }
+            }
+          },
+          {
+            head: "4",
+            sub: "consumer legal",
+            focus: {
+              title: "桥接完成后，consumer 才能把 shared 当成已知可见输入",
+              summary: "这一刻 async reader 才有稳定依据去消耗 shared allocation。",
+              invariant: "这个 pass 的输出不是新数据路径，而是更保守但正确的跨域顺序。",
+              misread: "它不是性能 pass；它解决的是 memory model 的 correctness contract。",
+              evidence: [
+                "ProxyFenceInsertion.cpp: 基于 shared allocation 的依赖分析",
+                "学习笔记 §6.3 / 索引篇 §2"
+              ],
+              code: "shared alloc\n  -> async proxy write\n  -> proxy fence\n  -> async proxy read"
+            },
+            cells: {
+              regs: { tag: "legal", tone: "slate", title: "consumer now legal", body: "跨域可见性成立后才安全读取。" }
+            }
+          }
+        ]
+      }
+    };
+
+    const scenarioTabs = document.getElementById("scenarioTabs");
+    const laneGrid = document.getElementById("laneGrid");
+    const scenarioTitle = document.getElementById("scenarioTitle");
+    const scenarioIntro = document.getElementById("scenarioIntro");
+    const detailHeading = document.getElementById("detailHeading");
+    const detailSummary = document.getElementById("detailSummary");
+    const detailInvariant = document.getElementById("detailInvariant");
+    const detailMisread = document.getElementById("detailMisread");
+    const detailEvidence = document.getElementById("detailEvidence");
+    const detailCode = document.getElementById("detailCode");
+
+    let currentScenario = "load";
+    let currentColumn = 0;
+
+    function makeTag(cell) {
+      return `<span class="tag ${cell.tone}">${cell.tag}</span>`;
+    }
+
+    function setDetail(column) {
+      const focus = scenarios[currentScenario].columns[column].focus;
+      detailHeading.textContent = focus.title;
+      detailSummary.textContent = focus.summary;
+      detailInvariant.textContent = focus.invariant;
+      detailMisread.textContent = focus.misread;
+      detailEvidence.innerHTML = focus.evidence.map(item => `<li>${item}</li>`).join("");
+      detailCode.textContent = focus.code;
+    }
+
+    function renderScenarioTabs() {
+      scenarioTabs.innerHTML = "";
+      Object.entries(scenarios).forEach(([key, scenario]) => {
+        const btn = document.createElement("button");
+        btn.className = "seg-btn" + (key === currentScenario ? " active" : "");
+        btn.textContent = scenario.label;
+        btn.addEventListener("click", () => {
+          currentScenario = key;
+          currentColumn = 0;
+          render();
+        });
+        scenarioTabs.appendChild(btn);
+      });
+    }
+
+    function renderGrid() {
+      const scenario = scenarios[currentScenario];
+      laneGrid.innerHTML = "";
+      laneGrid.style.setProperty("--cols", scenario.columns.length);
+
+      const headRow = document.createElement("div");
+      headRow.className = "lane-row";
+      headRow.innerHTML = `<div class="lane-head"><strong>Lane</strong><small>谁在这一列承担主要责任</small></div>` +
+        scenario.columns.map((col, idx) =>
+          `<div class="lane-head${idx === currentColumn ? " active" : ""}"><strong>${col.head}</strong><small>${col.sub}</small></div>`
+        ).join("");
+      laneGrid.appendChild(headRow);
+
+      scenario.lanes.forEach((lane) => {
+        const row = document.createElement("div");
+        row.className = "lane-row";
+        const label = document.createElement("div");
+        label.className = "lane-label";
+        label.innerHTML = `<strong>${lane.name}</strong><small>${lane.desc}</small>`;
+        row.appendChild(label);
+
+        scenario.columns.forEach((col, colIdx) => {
+          const cellData = col.cells[lane.key];
+          const cell = document.createElement("div");
+          cell.className = "cell" + (cellData ? "" : " empty") + (colIdx === currentColumn && cellData ? " active" : "");
+          if (cellData) {
+            cell.innerHTML = `${makeTag(cellData)}<strong>${cellData.title}</strong><p>${cellData.body}</p>`;
+            cell.addEventListener("click", () => {
+              currentColumn = colIdx;
+              renderGrid();
+              setDetail(colIdx);
+            });
+          }
+          row.appendChild(cell);
+        });
+        laneGrid.appendChild(row);
+      });
+    }
+
+    function render() {
+      const scenario = scenarios[currentScenario];
+      scenarioTitle.textContent = scenario.title;
+      scenarioIntro.textContent = scenario.intro;
+      renderScenarioTabs();
+      renderGrid();
+      setDetail(currentColumn);
+    }
+
+    render();
+  </script>
+</body>
+</html>

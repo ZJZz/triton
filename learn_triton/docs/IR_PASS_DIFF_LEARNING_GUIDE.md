@@ -201,22 +201,63 @@ Cross-architecture before comparison:
 - If already diverged: likely caused by ...
 ```
 
-### 2.6. 写出 Goal / Constraint / Design Intent
+### 2.6. 先写出 Problem / Goal / Constraint / Design Intent / Decision
 
-在解释源码细节之前，先回答这个 pass 存在的目标和约束。
+在解释源码细节之前，先不要把 pass 当成“已经给定的目标函数”。
+
+先回答：到底是什么问题把这个 pass 逼出来的？
+
+推荐固定按下面顺序写：
 
 ```text
+Problem:
+  1) 缺口：before IR / 当前 pipeline 状态里，具体缺了什么？
+     是 correctness 缺口、layout 不合法、硬件 contract 未建立，
+     还是性能路径根本还没被表达出来？
+  2) 边界：为什么这个 pass 正好是问题从“上游还能继续抽象”
+     变成“这里必须显式处理”的位置？如果不处理，
+     后续哪个 pass / lowering / hardware 路径会出问题？
+
 Goal:
   这个 pass 想达到什么 compiler / hardware / performance 目标？
 
 Constraint:
-  哪些限制让更简单的方案不可行？
-  可能来自 correctness、layout legality、MMA/WGMMA contract、memory hierarchy、
-  synchronization、pipeline order、compile time 或 hardware capability。
+  source:
+    这些限制是怎么制造出来的？描述的是“求解边界”来自哪里，
+    不是重复“问题是什么”。可能来自硬件 memory hierarchy、
+    指令格式、execution model，或更早 pass 已经做出的
+    layout / ownership / scheduling decision。
+  manifestation:
+    这些限制在当前 pass 里具体表现为什么规则？
+    可涉及 correctness、layout legality、MMA/WGMMA contract、
+    memory hierarchy、synchronization、pipeline order、
+    compile time 或 hardware capability。
 
 Design intent:
-  当前机制为什么适合这个目标和约束？
+  当前机制为什么适合这个问题、目标和约束？
   它引入了什么新的 IR 表达、layout contract 或 lowering 前置条件？
+
+Decision:
+  这个 pass 在这里实际做了什么 compiler decision？
+  它回答的 compiler question 是什么？
+```
+
+`Problem` 和 `Constraint.source` 常引用同一个硬件事实，但视角必须不同，否则会写重复：
+
+- `Problem`：因此当前 IR 还缺了什么事实，以及为什么这个 pass 是暴露该缺口的边界。
+- `Constraint.source`：因此当前 pass 不能随便选更简单的方案。
+
+合并字段后要按新视角重写，不要把旧的 `Problem` / `Motivation` / `Constraint source` 机械拼接。
+
+这里最重要的不是把字段填满，而是把因果链写出来：
+
+```text
+Earlier decision / hardware fact
+  -> creates a problem in current IR
+  -> current pass sets a goal
+  -> constraints limit available designs
+  -> pass chooses one mechanism
+  -> after IR establishes a new contract
 ```
 
 注意：这一节可以先写成基于 pass 名字、pipeline 位置和 IR 变化的初步判断；后面要用源码、IR evidence 或官方文档修正。
@@ -528,17 +569,17 @@ Compiler pipeline:
 
 这个 pass 在本例中主要做了：...
 
-### Goal / Constraint / Design Intent
+### Problem / Goal / Constraint / Design Intent / Decision
 
+- Problem:
+  - 缺口: ...
+  - 边界: why this pass is where the issue must be made explicit
 - Goal: ...
-- Constraint: ...
+- Constraint:
+  - source: ...
+  - manifestation: ...
 - Design intent: ...
-
-### Compiler Decision
-
-- Compiler question: ...
-- Decision made here: ...
-- Why here in the pipeline: ...
+- Decision: ...
 
 ### Compiler Contract
 

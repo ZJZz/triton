@@ -1,0 +1,873 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TMEM Path Visual</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f8fb;
+      --surface: #ffffff;
+      --surface-2: #eef3f8;
+      --line: #d6deea;
+      --ink: #172033;
+      --muted: #5a6a82;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --green: #0f8a5f;
+      --green-soft: #dcfce7;
+      --amber: #b7791f;
+      --amber-soft: #fff4d6;
+      --purple: #7c3aed;
+      --purple-soft: #ede9fe;
+      --red: #b42318;
+      --red-soft: #fee4e2;
+      --slate: #64748b;
+      --slate-soft: #eef2f7;
+      --shadow: 0 16px 38px rgba(30, 48, 74, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1280px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 52px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    .hero,
+    section {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.9fr);
+      gap: 18px;
+      padding: 24px;
+    }
+
+    .hero-copy {
+      display: grid;
+      gap: 14px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    h1 {
+      font-size: clamp(30px, 4.1vw, 50px);
+      line-height: 1.02;
+      letter-spacing: 0;
+      max-width: 860px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 840px;
+    }
+
+    .hero-side {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .mini-card,
+    .panel,
+    .view-panel,
+    .source-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+    }
+
+    .mini-card {
+      padding: 14px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .mini-card strong {
+      font-size: 13px;
+    }
+
+    .mini-card p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    section {
+      margin-top: 18px;
+      padding: 20px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .seg-btn {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      border-radius: 999px;
+      min-height: 34px;
+      padding: 6px 12px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .seg-btn.active {
+      background: var(--purple-soft);
+      color: var(--purple);
+      border-color: rgba(124, 58, 237, 0.24);
+    }
+
+    .view-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.5fr) minmax(320px, 0.9fr);
+      gap: 18px;
+      margin-top: 18px;
+      align-items: start;
+    }
+
+    .view-panel {
+      padding: 16px;
+    }
+
+    .view-panel h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .view-panel p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .decision-flow {
+      display: grid;
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .decision-node {
+      position: relative;
+      padding: 14px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .decision-node::after {
+      content: "";
+      position: absolute;
+      left: 22px;
+      bottom: -13px;
+      width: 2px;
+      height: 12px;
+      background: #b8c3d2;
+    }
+
+    .decision-node.last::after {
+      display: none;
+    }
+
+    .decision-node strong {
+      font-size: 14px;
+    }
+
+    .decision-node p {
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .tag {
+      display: inline-flex;
+      width: fit-content;
+      min-height: 24px;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .tag.blue { background: var(--blue-soft); color: var(--blue); }
+    .tag.green { background: var(--green-soft); color: var(--green); }
+    .tag.amber { background: var(--amber-soft); color: var(--amber); }
+    .tag.purple { background: var(--purple-soft); color: var(--purple); }
+    .tag.red { background: var(--red-soft); color: var(--red); }
+    .tag.slate { background: var(--slate-soft); color: var(--slate); }
+
+    .code-card,
+    .detail-card {
+      margin-top: 14px;
+      padding: 14px;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .detail-card ul {
+      margin: 0;
+      padding-left: 18px;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    pre {
+      margin: 0;
+      padding: 12px;
+      border-radius: 8px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-size: 12px;
+      line-height: 1.45;
+      overflow-x: auto;
+    }
+
+    .pattern-grid,
+    .hazard-grid,
+    .source-grid {
+      display: grid;
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .pattern-grid,
+    .hazard-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .pattern-card,
+    .hazard-card,
+    .source-card {
+      padding: 14px;
+    }
+
+    .pattern-card,
+    .hazard-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      display: grid;
+      gap: 8px;
+    }
+
+    .pattern-card strong,
+    .hazard-card strong {
+      font-size: 14px;
+    }
+
+    .pattern-card p,
+    .hazard-card p,
+    .source-card p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .mini-matrix {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+    }
+
+    .mini-cell {
+      min-height: 42px;
+      border-radius: 6px;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      display: grid;
+      place-items: center;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      text-align: center;
+      padding: 4px;
+    }
+
+    .mini-cell.hot { background: var(--blue-soft); color: var(--blue); }
+    .mini-cell.warm { background: var(--amber-soft); color: var(--amber); }
+    .mini-cell.ok { background: var(--green-soft); color: var(--green); }
+
+    .grid-shell {
+      display: grid;
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .allocator-toggle {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .memory-grid {
+      display: grid;
+      gap: 10px;
+    }
+
+    .memory-row {
+      display: grid;
+      grid-template-columns: 96px repeat(8, minmax(0, 1fr));
+      gap: 8px;
+      align-items: stretch;
+    }
+
+    .memory-label,
+    .memory-slot {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      min-height: 62px;
+      padding: 10px;
+    }
+
+    .memory-label {
+      background: var(--surface);
+      display: grid;
+      align-content: center;
+      font-weight: 700;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .memory-slot {
+      background: #fbfcfe;
+      display: grid;
+      align-content: center;
+      justify-items: center;
+      text-align: center;
+      font-size: 12px;
+      color: var(--muted);
+      gap: 4px;
+    }
+
+    .memory-slot.active {
+      background: var(--purple-soft);
+      color: var(--purple);
+      border-color: rgba(124, 58, 237, 0.24);
+      font-weight: 800;
+    }
+
+    .memory-slot.reuse {
+      background: var(--green-soft);
+      color: var(--green);
+      border-color: rgba(15, 138, 95, 0.22);
+      font-weight: 800;
+    }
+
+    .memory-slot.warn {
+      background: var(--amber-soft);
+      color: var(--amber);
+      border-color: rgba(183, 121, 31, 0.22);
+      font-weight: 800;
+    }
+
+    .timeline {
+      display: grid;
+      grid-template-columns: 180px repeat(5, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .timeline-head,
+    .timeline-label,
+    .timeline-cell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 74px;
+      background: var(--surface);
+    }
+
+    .timeline-head {
+      min-height: 60px;
+      display: grid;
+      justify-items: center;
+      align-content: center;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+    }
+
+    .timeline-label {
+      display: grid;
+      align-content: center;
+      gap: 4px;
+      background: var(--surface-2);
+    }
+
+    .timeline-label strong {
+      font-size: 13px;
+    }
+
+    .timeline-label small {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .timeline-cell {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      background: #fbfcfe;
+    }
+
+    .timeline-cell strong {
+      font-size: 13px;
+    }
+
+    .timeline-cell p {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .source-grid {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
+    .source-card a {
+      color: var(--blue);
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    .hidden {
+      display: none;
+    }
+
+    @media (max-width: 980px) {
+      .hero,
+      .view-shell,
+      .pattern-grid,
+      .hazard-grid,
+      .source-grid {
+        grid-template-columns: 1fr;
+      }
+      .memory-row,
+      .timeline {
+        min-width: 920px;
+      }
+      .view-panel {
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div class="hero-copy">
+        <div class="meta">
+          <span class="pill">Theme: <strong>TMEM path</strong></span>
+          <span class="pill">Pass focus: <strong>Promote / Layout / Allocate / Barrier</strong></span>
+          <span class="pill">Architectures: <strong>sm100+</strong></span>
+        </div>
+        <h1>TMEM 这条线要拆成四个问题：能不能进、进去后怎么排、物理放哪儿、什么时候必须停一下</h1>
+        <p class="subtitle">
+          这里最容易乱的地方，是把 placement、layout、allocation、synchronization 全部混成“TMEM 优化”。
+          这个页面按 contract 拆开：先决定值能不能从 shared path 切到 TMEM，再看局部 layout rewrite，
+          最后才是 row/col 分配和 barrier 插入。
+        </p>
+      </div>
+      <div class="hero-side">
+        <div class="mini-card">
+          <strong>placement</strong>
+          <p><code>PromoteLHSToTMem</code> 决定某些 TCGen5 MMA 的 A operand 是否从 shared 改为 TMEM。</p>
+        </div>
+        <div class="mini-card">
+          <strong>allocation</strong>
+          <p><code>TensorMemoryAllocation</code> 给抽象 <code>ttng.tmem_alloc</code> 写入 <code>tensor_memory_col_offset</code> 和 <code>row_offset</code>。</p>
+        </div>
+        <div class="mini-card">
+          <strong>barrier</strong>
+          <p><code>TMemBarrierInsertion</code> 不为“所有 TMEM 访问”加 barrier，而是看 WAR / RAW / WAW 和 <code>load/store -&gt; mma</code> 依赖。</p>
+        </div>
+      </div>
+    </header>
+
+    <section>
+      <h2>主视图</h2>
+      <p class="subtitle">切换一个问题一个问题地看，不要试图一次把 TMEM 全部细节塞进脑子里。</p>
+      <div class="toolbar" id="viewTabs"></div>
+
+      <div class="view-shell">
+        <div class="view-panel" id="placementView">
+          <h3>Placement：什么样的 LHS 才允许切到 TMEM</h3>
+          <p>这里的目标不是“尽量多用 TMEM”，而是只在 contract 明确、layout 可落地时才把 A operand 改成 TMEM memdesc。</p>
+          <div class="decision-flow">
+            <div class="decision-node">
+              <span class="tag blue">constraint 1</span>
+              <strong>源必须来自 <code>ttg.local_alloc</code></strong>
+              <p>不是所有 SSA value 都能直接变成 TMEM；pass 先要求它已经是 local/shared materialization 过的对象。</p>
+            </div>
+            <div class="decision-node">
+              <span class="tag blue">constraint 2</span>
+              <strong><code>local_alloc</code> 和 <code>tc_gen5_mma</code> 必须在同一 region</strong>
+              <p>源码注释写得很直白：要把 TMEM allocation 的生命期限制在单个 block 内。</p>
+            </div>
+            <div class="decision-node">
+              <span class="tag amber">constraint 3</span>
+              <strong>element bit width 只能是 8 / 16 / 32，且不能是 fp4 padded</strong>
+              <p>超出这个集合就直接失败，不是“先放进来再想办法修”。</p>
+            </div>
+            <div class="decision-node last">
+              <span class="tag purple">decision</span>
+              <strong>layout 不兼容时，只有部分来源才允许插 <code>convert_layout</code></strong>
+              <p>对来自 load / block-arg 的来源更保守；除非环境变量放开，否则宁可不 promote。</p>
+            </div>
+          </div>
+          <div class="code-card">
+            <strong>关键源码片段</strong>
+            <pre>auto localAllocOp = lhs.getDefiningOp&lt;ttg::LocalAllocOp&gt;();
+if (!localAllocOp) return failure();
+if (localAllocOp-&gt;getParentRegion() != tcGen5MMAOp-&gt;getParentRegion())
+  return failure();
+if (!llvm::is_contained({8, 16, 32}, elemBitWidth)) return failure();
+if (isFp4Padded(lhs.getType().getEncoding())) return failure();</pre>
+          </div>
+        </div>
+
+        <div class="view-panel hidden" id="layoutView">
+          <h3>Layout：TMEM 边界上的重写不是“清理语法”，而是在顺着 use pattern 改形状</h3>
+          <p><code>OptimizeTMemLayouts</code> 的四个 pattern 可以按“别在 TMEM 边界做多余 reshape/join/split”来记。</p>
+          <div class="pattern-grid">
+            <div class="pattern-card">
+              <span class="tag blue">split-load</span>
+              <strong>大块 load 再切，改成多个 subslice + load</strong>
+              <p>目标是别先把大块 tensor 从 TMEM 拉出来再二次切分，而是在 TMEM 边界直接 materialize 独立 subslice。</p>
+              <div class="mini-matrix">
+                <div class="mini-cell warm">big load</div>
+                <div class="mini-cell warm">reshape</div>
+                <div class="mini-cell warm">transpose</div>
+                <div class="mini-cell warm">split</div>
+                <div class="mini-cell ok">subslice</div>
+                <div class="mini-cell ok">load</div>
+                <div class="mini-cell ok">subslice</div>
+                <div class="mini-cell ok">load</div>
+              </div>
+            </div>
+            <div class="pattern-card">
+              <span class="tag blue">store-join</span>
+              <strong>join 再 store，改成多个独立 store</strong>
+              <p>它和 split-load 是对偶关系：不要先 join 成一个大块，再一次性写回 TMEM。</p>
+              <div class="mini-matrix">
+                <div class="mini-cell warm">join</div>
+                <div class="mini-cell warm">transpose</div>
+                <div class="mini-cell warm">reshape</div>
+                <div class="mini-cell warm">store</div>
+                <div class="mini-cell ok">store@N0</div>
+                <div class="mini-cell ok">store@N1</div>
+                <div class="mini-cell ok">store@N2</div>
+                <div class="mini-cell ok">store@N3</div>
+              </div>
+            </div>
+            <div class="pattern-card">
+              <span class="tag amber">reduction-aware</span>
+              <strong>8 warps 且沿 N reduction 时，回推更适合沿 M 分布的 load layout</strong>
+              <p>这是典型的“看 use pattern 再决定上游 layout”，不是静态 canonicalization。</p>
+              <div class="mini-matrix">
+                <div class="mini-cell hot">warp0 N0</div>
+                <div class="mini-cell hot">warp1 N1</div>
+                <div class="mini-cell hot">warp2 N2</div>
+                <div class="mini-cell hot">warp3 N3</div>
+                <div class="mini-cell ok">warp0 M0</div>
+                <div class="mini-cell ok">warp1 M1</div>
+                <div class="mini-cell ok">warp2 M2</div>
+                <div class="mini-cell ok">warp3 M3</div>
+              </div>
+            </div>
+            <div class="pattern-card">
+              <span class="tag green">shared -&gt; TMEM</span>
+              <strong>shared 到 <code>tmem_store</code> 的布局要兼顾后续 local-load lowering</strong>
+              <p>pass 会看 backward slice，只在替代 layout 真的更便宜时才换。</p>
+              <div class="mini-matrix">
+                <div class="mini-cell warm">shared tile</div>
+                <div class="mini-cell warm">awkward</div>
+                <div class="mini-cell ok">better</div>
+                <div class="mini-cell ok">tmem_store</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="view-panel hidden" id="allocationView">
+          <h3>Allocation：抽象 <code>ttng.tmem_alloc</code> 何时变成 row / col offset</h3>
+          <p>真实 dump 和“帮助理解 allocator”的示意要分开看。左边是源码 contract，下面两组图分别是当前 matmul dump 的观察结果和一个 first-fit 复用心智模型。</p>
+          <div class="detail-card">
+            <strong>源码里能确定的事实</strong>
+            <ul>
+              <li><code>allocGranularity = 64</code></li>
+              <li><code>kNumRows = 2</code></li>
+              <li>first-fit 线性扫描</li>
+              <li>把 <code>tensor_memory_col_offset</code> / <code>tensor_memory_row_offset</code> 写回到 <code>ttng.tmem_alloc</code></li>
+            </ul>
+          </div>
+          <div class="grid-shell">
+            <div class="allocator-toggle">
+              <button class="seg-btn active" data-alloc-mode="observed">当前 matmul dump</button>
+              <button class="seg-btn" data-alloc-mode="model">allocator 心智模型</button>
+            </div>
+            <div id="observedAlloc">
+              <div class="detail-card">
+                <strong>当前 dump 里的已观测事实</strong>
+                <p>在 <code>After TritonNvidiaGPUTMemBarrierInsertionPass</code> 里，acc 对应的 alloc 已被写成 <code>{tensor_memory_col_offset = 0, tensor_memory_row_offset = 0}</code>。</p>
+                <pre>%acc = ttng.tmem_alloc
+  {tensor_memory_col_offset = 0 : i32,
+   tensor_memory_row_offset = 0 : i32}
+  : () -> !ttg.memdesc&lt;64x64xf32, #tmem, #ttng.tensor_memory, mutable&gt;</pre>
+              </div>
+              <div class="memory-grid">
+                <div class="memory-row">
+                  <div class="memory-label">row 0</div>
+                  <div class="memory-slot active">col 0<br>acc base</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                </div>
+                <div class="memory-row">
+                  <div class="memory-label">row 1</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                </div>
+              </div>
+            </div>
+            <div id="modelAlloc" class="hidden">
+              <div class="detail-card">
+                <strong>示意：first-fit + liveness reuse</strong>
+                <p>下面这张图是帮助理解 allocator 的 schematic，不是当前 dump 的逐字重现。它只想说明：先找最早可用槽位，活跃区间结束后再复用。</p>
+              </div>
+              <div class="memory-grid">
+                <div class="memory-row">
+                  <div class="memory-label">frame 1</div>
+                  <div class="memory-slot active">A</div>
+                  <div class="memory-slot active">A</div>
+                  <div class="memory-slot warn">B</div>
+                  <div class="memory-slot warn">B</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                </div>
+                <div class="memory-row">
+                  <div class="memory-label">frame 2</div>
+                  <div class="memory-slot reuse">C reuses A</div>
+                  <div class="memory-slot reuse">C reuses A</div>
+                  <div class="memory-slot warn">B live</div>
+                  <div class="memory-slot warn">B live</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                  <div class="memory-slot">free</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="view-panel hidden" id="barrierView">
+          <h3>Barrier：不是“所有 TMEM op 都停一下”，而是看真实依赖</h3>
+          <p>用户已经对源码核对过：WAR / RAW / WAW 都算，<code>load -&gt; mma</code> 和 <code>store -&gt; mma</code> 也要 barrier；<code>mma -&gt; load/store</code> 不需要，因为后续有 <code>mbarrier wait</code>。</p>
+          <div class="hazard-grid">
+            <div class="hazard-card">
+              <span class="tag red">must barrier</span>
+              <strong>WAR / RAW / WAW on TMEM object</strong>
+              <p>同一块 TMEM 物理对象只要存在真实别名依赖，就必须把顺序固定住。</p>
+            </div>
+            <div class="hazard-card">
+              <span class="tag red">must barrier</span>
+              <strong><code>tmem_load -&gt; tc_gen5_mma</code> / <code>tmem_store -&gt; tc_gen5_mma</code></strong>
+              <p>这是“先访问 TMEM，再让 MMA 以 async 方式继续使用它”的典型边界。</p>
+            </div>
+            <div class="hazard-card">
+              <span class="tag green">no extra barrier</span>
+              <strong><code>tc_gen5_mma -&gt; tmem_load/store</code></strong>
+              <p>这类顺序由后续的 mbarrier wait 覆盖，不需要再额外补一条 CTA-level barrier。</p>
+            </div>
+            <div class="hazard-card">
+              <span class="tag blue">observed in dump</span>
+              <strong>当前 matmul dump 在首个 MMA 前插入了 <code>ttg.barrier local</code></strong>
+              <p>你可以把它理解成“开始把 shared/TMEM 状态交给第一个 async MMA 之前，先把可见性和顺序收紧”。</p>
+            </div>
+          </div>
+          <div class="timeline">
+            <div class="timeline-head">Lane / Stage</div>
+            <div class="timeline-head">0<br>init</div>
+            <div class="timeline-head">1<br>tmem seed</div>
+            <div class="timeline-head">2<br>shared A/B</div>
+            <div class="timeline-head">3<br>barrier</div>
+            <div class="timeline-head">4<br>async MMA</div>
+
+            <div class="timeline-label"><strong>TMEM object</strong><small>acc memdesc</small></div>
+            <div class="timeline-cell"><p>abstract alloc</p></div>
+            <div class="timeline-cell"><strong>tmem_store</strong><p>把 0 初始化到 acc</p></div>
+            <div class="timeline-cell"><p>等待与 shared A/B 一起组成可发起状态</p></div>
+            <div class="timeline-cell"><p>顺序在这里被固定</p></div>
+            <div class="timeline-cell"><strong>tc_gen5_mma</strong><p>开始异步使用 acc</p></div>
+
+            <div class="timeline-label"><strong>Shared A/B</strong><small>mma operands</small></div>
+            <div class="timeline-cell"><p>empty</p></div>
+            <div class="timeline-cell"><p>empty</p></div>
+            <div class="timeline-cell"><strong>tt.load + local_alloc</strong><p>shared1 / shared2 建好</p></div>
+            <div class="timeline-cell"><strong>fence_async_shared</strong><p>交给 async MMA 前最后一道桥</p></div>
+            <div class="timeline-cell"><p>MMA 读取 A/B</p></div>
+
+            <div class="timeline-label"><strong>Control</strong><small>observed pass output</small></div>
+            <div class="timeline-cell"><p>no barrier yet</p></div>
+            <div class="timeline-cell"><p>still no barrier</p></div>
+            <div class="timeline-cell"><p>still assembling inputs</p></div>
+            <div class="timeline-cell"><strong>ttg.barrier local</strong><p>After TMemBarrierInsertion</p></div>
+            <div class="timeline-cell"><p>async path continues</p></div>
+          </div>
+          <div class="code-card">
+            <strong>当前 dump 里的关键对照</strong>
+            <pre>ttng.fence_async_shared {bCluster = false}
+ttg.barrier local
+ttng.tc_gen5_mma %a_41, %b_43, %acc, %false, %acc_39, %acc_37[%true] {is_async}</pre>
+          </div>
+        </div>
+
+        <aside class="view-panel">
+          <h3>阅读提示</h3>
+          <p>这条路径的难点不在“记住 pass 名字”，而在于知道每个 pass 正在建立哪一种 contract。</p>
+          <div class="detail-card">
+            <strong>推荐心智顺序</strong>
+            <ul>
+              <li>先问这个 value 能不能进 TMEM，而不是先问物理地址。</li>
+              <li>再问 TMEM 边界是否需要改 layout，避免在错误层面追踪 reshape / join。</li>
+              <li>最后才看 allocator 和 barrier，因为这两者依赖前面的 placement 与 use pattern。</li>
+            </ul>
+          </div>
+          <div class="detail-card">
+            <strong>和 TMA 的边界</strong>
+            <p>TMA 的主问题是 <code>global &lt;-&gt; shared</code> transport。TMEM 的主问题是 Blackwell tensor-core state 该不该驻留在 TMEM，以及之后怎样同步和分配。</p>
+          </div>
+          <div class="detail-card">
+            <strong>最值得反复对照的真实文件</strong>
+            <ul>
+              <li><code>PromoteLHSToTMem.cpp</code></li>
+              <li><code>OptimizeTMemLayouts.cpp</code></li>
+              <li><code>TensorMemoryAllocation.cpp</code></li>
+              <li><code>TMemBarrierInsertion.cpp</code></li>
+              <li><code>learn_triton/dumps/matmul/sm100_num_ctas1/...</code></li>
+            </ul>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section>
+      <h2>证据入口</h2>
+      <div class="source-grid">
+        <div class="source-card">
+          <strong><a href="../notes/2026-07-01-tmem-pass-learning.md">TMEM 学习笔记</a></strong>
+          <p>五段 contract 和 pipeline 位置已经按源码核对过。</p>
+        </div>
+        <div class="source-card">
+          <strong><a href="../../lib/Dialect/TritonNvidiaGPU/Transforms/PromoteLHSToTMem.cpp">PromoteLHSToTMem.cpp</a></strong>
+          <p>LHS promote 的硬约束和保守 layout-conversion 行为来自这里。</p>
+        </div>
+        <div class="source-card">
+          <strong><a href="../../lib/Dialect/TritonNvidiaGPU/Transforms/TensorMemoryAllocation.cpp">TensorMemoryAllocation.cpp</a></strong>
+          <p><code>allocGranularity = 64</code>、<code>kNumRows = 2</code>、first-fit 和 offset attr 写回来自这里。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const tabs = [
+      { key: "placement", button: "placement", panel: "placementView" },
+      { key: "layout", button: "layout", panel: "layoutView" },
+      { key: "allocation", button: "allocation", panel: "allocationView" },
+      { key: "barrier", button: "barrier", panel: "barrierView" }
+    ];
+
+    const viewTabs = document.getElementById("viewTabs");
+    let currentView = "placement";
+
+    function renderTabs() {
+      viewTabs.innerHTML = "";
+      tabs.forEach((tab) => {
+        const btn = document.createElement("button");
+        btn.className = "seg-btn" + (tab.key === currentView ? " active" : "");
+        btn.textContent = tab.button;
+        btn.addEventListener("click", () => {
+          currentView = tab.key;
+          updateViews();
+        });
+        viewTabs.appendChild(btn);
+      });
+    }
+
+    function updateViews() {
+      renderTabs();
+      tabs.forEach((tab) => {
+        document.getElementById(tab.panel).classList.toggle("hidden", tab.key !== currentView);
+      });
+    }
+
+    document.querySelectorAll("[data-alloc-mode]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll("[data-alloc-mode]").forEach((b) => b.classList.remove("active"));
+        btn.classList.add("active");
+        const observed = btn.dataset.allocMode === "observed";
+        document.getElementById("observedAlloc").classList.toggle("hidden", !observed);
+        document.getElementById("modelAlloc").classList.toggle("hidden", observed);
+      });
+    });
+
+    updateViews();
+  </script>
+</body>
+</html>

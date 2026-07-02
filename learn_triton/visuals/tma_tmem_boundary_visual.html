@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TMA TMEM Boundary Visual</title>
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface-2: #eef3f8;
+      --line: #d6deea;
+      --ink: #172033;
+      --muted: #5a6a82;
+      --blue: #2563eb;
+      --blue-soft: #dbeafe;
+      --green: #0f8a5f;
+      --green-soft: #dcfce7;
+      --amber: #b7791f;
+      --amber-soft: #fff4d6;
+      --purple: #7c3aed;
+      --purple-soft: #ede9fe;
+      --red: #b42318;
+      --red-soft: #fee4e2;
+      --slate: #64748b;
+      --slate-soft: #eef2f7;
+      --shadow: 0 16px 38px rgba(30, 48, 74, 0.08);
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      line-height: 1.55;
+    }
+
+    main {
+      width: min(1280px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 28px 0 52px;
+    }
+
+    h1, h2, h3, p { margin: 0; }
+
+    .hero,
+    section {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      box-shadow: var(--shadow);
+    }
+
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.45fr) minmax(300px, 0.9fr);
+      gap: 18px;
+      padding: 24px;
+    }
+
+    .meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--line);
+      background: var(--surface-2);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+
+    h1 {
+      font-size: clamp(30px, 4.1vw, 50px);
+      line-height: 1.02;
+      letter-spacing: 0;
+      max-width: 860px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      font-size: 16px;
+      max-width: 820px;
+      margin-top: 14px;
+    }
+
+    .hero-side {
+      display: grid;
+      gap: 12px;
+      align-content: start;
+    }
+
+    .mini-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 14px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .mini-card strong {
+      font-size: 13px;
+    }
+
+    .mini-card p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    section {
+      margin-top: 18px;
+      padding: 20px;
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .seg-btn {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--muted);
+      border-radius: 999px;
+      min-height: 34px;
+      padding: 6px 12px;
+      font: inherit;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    .seg-btn.active {
+      background: var(--blue-soft);
+      color: var(--blue);
+      border-color: rgba(37, 99, 235, 0.24);
+    }
+
+    .matrix,
+    .path-shell,
+    .router-grid {
+      margin-top: 16px;
+    }
+
+    .matrix {
+      display: grid;
+      gap: 10px;
+    }
+
+    .matrix-row {
+      display: grid;
+      grid-template-columns: 220px repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      align-items: stretch;
+    }
+
+    .matrix-head,
+    .matrix-label,
+    .matrix-cell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 70px;
+      background: var(--surface);
+    }
+
+    .matrix-head {
+      min-height: 58px;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      font-weight: 800;
+      color: var(--muted);
+      background: #f8fbff;
+    }
+
+    .matrix-label {
+      display: grid;
+      gap: 4px;
+      align-content: center;
+      background: var(--surface-2);
+    }
+
+    .matrix-label strong {
+      font-size: 13px;
+    }
+
+    .matrix-label small {
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    .matrix-cell {
+      display: grid;
+      place-items: center;
+      text-align: center;
+      font-size: 12px;
+      font-weight: 800;
+    }
+
+    .matrix-cell.on-tma {
+      background: var(--blue-soft);
+      color: var(--blue);
+      border-color: rgba(37, 99, 235, 0.2);
+    }
+
+    .matrix-cell.on-tmem {
+      background: var(--purple-soft);
+      color: var(--purple);
+      border-color: rgba(124, 58, 237, 0.2);
+    }
+
+    .matrix-cell.on-both {
+      background: var(--green-soft);
+      color: var(--green);
+      border-color: rgba(15, 138, 95, 0.2);
+    }
+
+    .matrix-cell.off {
+      background: #fbfcfe;
+      color: #a0aec0;
+    }
+
+    .path-shell {
+      display: grid;
+      grid-template-columns: minmax(0, 1.55fr) minmax(320px, 0.9fr);
+      gap: 18px;
+      align-items: start;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: var(--surface-2);
+      padding: 16px;
+    }
+
+    .panel h3 {
+      font-size: 18px;
+      margin-bottom: 8px;
+    }
+
+    .panel p {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .path-grid {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .path-row {
+      display: grid;
+      grid-template-columns: 170px repeat(6, minmax(0, 1fr));
+      gap: 10px;
+      min-width: 980px;
+    }
+
+    .path-head,
+    .path-label,
+    .path-cell {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 10px;
+      min-height: 76px;
+      background: var(--surface);
+    }
+
+    .path-head {
+      min-height: 58px;
+      display: grid;
+      place-items: center;
+      font-size: 12px;
+      color: var(--muted);
+      font-weight: 700;
+      background: #f8fbff;
+    }
+
+    .path-label {
+      display: grid;
+      gap: 4px;
+      align-content: center;
+      background: var(--surface-2);
+    }
+
+    .path-label strong {
+      font-size: 13px;
+    }
+
+    .path-label small {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .path-cell {
+      display: grid;
+      gap: 6px;
+      align-content: start;
+      background: #fbfcfe;
+    }
+
+    .path-cell strong {
+      font-size: 13px;
+    }
+
+    .path-cell p {
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .tag {
+      display: inline-flex;
+      width: fit-content;
+      min-height: 24px;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 800;
+    }
+
+    .tag.tma { background: var(--blue-soft); color: var(--blue); }
+    .tag.tmem { background: var(--purple-soft); color: var(--purple); }
+    .tag.both { background: var(--green-soft); color: var(--green); }
+    .tag.sync { background: var(--amber-soft); color: var(--amber); }
+    .tag.note { background: var(--slate-soft); color: var(--slate); }
+
+    .router-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 14px;
+    }
+
+    .router-card,
+    .source-card {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 14px;
+      background: var(--surface-2);
+      display: grid;
+      gap: 8px;
+    }
+
+    .router-card strong,
+    .source-card strong {
+      font-size: 14px;
+    }
+
+    .router-card p,
+    .source-card p,
+    .detail-list li {
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .detail-list {
+      margin: 0;
+      padding-left: 18px;
+    }
+
+    .source-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .source-card a {
+      color: var(--blue);
+      text-decoration: none;
+      font-weight: 700;
+    }
+
+    @media (max-width: 980px) {
+      .hero,
+      .path-shell,
+      .router-grid,
+      .source-grid {
+        grid-template-columns: 1fr;
+      }
+      .matrix-row,
+      .path-row {
+        min-width: 960px;
+      }
+      .panel {
+        overflow-x: auto;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <div>
+        <div class="meta">
+          <span class="pill">Theme: <strong>TMA / TMEM boundary</strong></span>
+          <span class="pill">Question: <strong>哪条路径在回答哪类问题</strong></span>
+          <span class="pill">Source: <strong>compiler.py + pass sources</strong></span>
+        </div>
+        <h1>TMA 和 TMEM 会在同一个 kernel 里同时出现，但它们解决的不是同一个 contract</h1>
+        <p class="subtitle">
+          这页专门用来消除“为什么笔记里总感觉它们缠在一起”的问题。
+          先看 capability/pipeline 的交集，再看数据路径真正在哪一层分叉：
+          TMA 负责 <code>global &lt;-&gt; shared</code> transport；TMEM 负责 Blackwell tensor-core state 的 placement / layout / allocation / synchronization。
+        </p>
+      </div>
+      <div class="hero-side">
+        <div class="mini-card">
+          <strong>Hopper 也有 TMA</strong>
+          <p><code>sm90+</code> 走 <code>tma_lowering</code>。所以 “看到 TMA” 不等于 “已经进入 TMEM 路径”。</p>
+        </div>
+        <div class="mini-card">
+          <strong>Blackwell 才有这条 TMEM 主线</strong>
+          <p><code>sm100+</code> 才会走 <code>promote_lhs_to_tmem</code>、<code>allocate_tensor_memory</code>、<code>tmem_barrier_insertion</code> 这套 accumulator 常驻 TMEM 的路径。</p>
+        </div>
+        <div class="mini-card">
+          <strong>相遇点</strong>
+          <p>两条线会在 shared/TMEM alias 和 proxy visibility 上相互影响，所以 <code>proxy_fence_insertion</code> 常常是读懂边界的关键。</p>
+        </div>
+      </div>
+    </header>
+
+    <section>
+      <h2>Capability / Pipeline 矩阵</h2>
+      <p class="subtitle">先别看细节，先看它们到底在哪些架构上存在。</p>
+      <div class="matrix">
+        <div class="matrix-row">
+          <div class="matrix-head">Pass / Capability</div>
+          <div class="matrix-head">sm80</div>
+          <div class="matrix-head">sm90</div>
+          <div class="matrix-head">sm100</div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-label"><strong>OptimizeDescriptorEncoding</strong><small>descriptor shared layout contract</small></div>
+          <div class="matrix-cell on-tma">TMA precondition</div>
+          <div class="matrix-cell on-tma">TMA precondition</div>
+          <div class="matrix-cell on-both">TMA precondition</div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-label"><strong>TMALowering</strong><small>descriptor -&gt; async_tma_* / barrier</small></div>
+          <div class="matrix-cell off">not in sm80 path</div>
+          <div class="matrix-cell on-tma">active</div>
+          <div class="matrix-cell on-both">active</div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-label"><strong>PromoteLHSToTMem</strong><small>shared/local A operand -&gt; TMEM</small></div>
+          <div class="matrix-cell off">no</div>
+          <div class="matrix-cell off">no</div>
+          <div class="matrix-cell on-tmem">active</div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-label"><strong>OptimizeTMemLayouts / InterleaveTMem</strong><small>TMEM 边界形状与调度</small></div>
+          <div class="matrix-cell off">no main TMEM path</div>
+          <div class="matrix-cell off">no main TMEM path</div>
+          <div class="matrix-cell on-tmem">active</div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-label"><strong>AllocateTensorMemory / TMemBarrierInsertion</strong><small>真实 row/col + CTA barrier</small></div>
+          <div class="matrix-cell off">no</div>
+          <div class="matrix-cell off">no</div>
+          <div class="matrix-cell on-tmem">active</div>
+        </div>
+        <div class="matrix-row">
+          <div class="matrix-label"><strong>ProxyFenceInsertion</strong><small>async / generic proxy visibility</small></div>
+          <div class="matrix-cell on-tma">shared async path</div>
+          <div class="matrix-cell on-tma">shared async path</div>
+          <div class="matrix-cell on-both">shared async path + TMEM-adjacent readers</div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <h2>路径图</h2>
+      <p class="subtitle">切换 Hopper / Blackwell 看真正的数据路径在哪一层分叉。</p>
+      <div class="toolbar" id="pathTabs"></div>
+      <div class="path-shell">
+        <div class="panel">
+          <h3 id="pathTitle"></h3>
+          <p id="pathIntro"></p>
+          <div class="path-grid" id="pathGrid"></div>
+        </div>
+        <aside class="panel">
+          <h3>怎么用这张图排错</h3>
+          <ul class="detail-list">
+            <li>如果问题是 swizzle / descriptor / tensormap / barrier_expect，先站到 TMA 视角。</li>
+            <li>如果问题是 <code>ttng.tmem_alloc</code>、row/col offset、<code>ttg.barrier local</code>、<code>tc_gen5_mma</code> 前后依赖，先站到 TMEM 视角。</li>
+            <li>如果问题是 “shared 明明写了，为什么另一个 async reader 还需要 fence”，去看 proxy 视角。</li>
+          </ul>
+          <div class="router-grid">
+            <div class="router-card">
+              <span class="tag tma">ask TMA</span>
+              <strong>descriptor 能不能编码</strong>
+              <p>看 <code>OptimizeDescriptorEncoding</code> 和 <code>TMAUtilities</code>。</p>
+            </div>
+            <div class="router-card">
+              <span class="tag tma">ask TMA</span>
+              <strong>为什么 lower 成这么多 barrier / local_alloc</strong>
+              <p>看 <code>TMALowering</code> 协议模板。</p>
+            </div>
+            <div class="router-card">
+              <span class="tag tmem">ask TMEM</span>
+              <strong>为什么这个 A operand 会进 TMEM</strong>
+              <p>看 <code>PromoteLHSToTMem</code> 的硬条件和 layout 兼容性。</p>
+            </div>
+            <div class="router-card">
+              <span class="tag both">ask boundary</span>
+              <strong>为什么还要 proxy fence</strong>
+              <p>completion 和跨 proxy visibility 不是一回事。</p>
+            </div>
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section>
+      <h2>证据入口</h2>
+      <div class="source-grid">
+        <div class="source-card">
+          <strong><a href="../../third_party/nvidia/backend/compiler.py">compiler.py</a></strong>
+          <p><code>sm90+</code> 走 <code>tma_lowering</code>，<code>sm100+</code> 额外走 TMEM promote / alloc / barrier 路径。</p>
+        </div>
+        <div class="source-card">
+          <strong><a href="../notes/2026-07-01-tma-pass-learning.md">TMA 笔记</a></strong>
+          <p>descriptor、async transport、proxy visibility 三段 contract。</p>
+        </div>
+        <div class="source-card">
+          <strong><a href="../notes/2026-07-01-tmem-pass-learning.md">TMEM 笔记</a></strong>
+          <p>placement、layout、allocation、synchronization 四段主线。</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const paths = {
+      sm90: {
+        label: "sm90",
+        title: "Hopper: TMA 在，TMEM accumulator 主线不在",
+        intro: "这里仍然会经历 descriptor encoding、TMA lowering、proxy fence，但不会进入 Blackwell 那条 `promote_lhs_to_tmem -> allocate_tensor_memory` 主路径。",
+        lanes: [
+          { name: "Global", desc: "tensor source / dest" },
+          { name: "Shared", desc: "TMA 典型落点" },
+          { name: "Registers", desc: "local_load materialization" },
+          { name: "Tensor Core", desc: "warp_group_dot / mma consume" }
+        ],
+        columns: [
+          { head: "0", sub: "descriptor", cells: { 0: ["tma", "tt.tensordesc", "shared layout 已被编码化"], 1: ["note", "shared contract", "TMA 的目的地 contract 在这里被固定"] } },
+          { head: "1", sub: "transport", cells: { 0: ["tma", "async_tma_*", "发起 global -> shared"], 1: ["tma", "shared tile", "TMA 典型真实落点"] } },
+          { head: "2", sub: "completion", cells: { 1: ["sync", "mbarrier", "wait / inval 协议收尾"] } },
+          { head: "3", sub: "materialize", cells: { 2: ["note", "ttg.local_load", "shared -> registers"] } },
+          { head: "4", sub: "consume", cells: { 3: ["note", "warp_group_dot", "从 shared/regs 路径继续"] } },
+          { head: "5", sub: "visibility", cells: { 1: ["both", "proxy fence", "async/generic 域可见性单独补齐"] } }
+        ]
+      },
+      sm100: {
+        label: "sm100",
+        title: "Blackwell: TMA 还在，但 TCGen5 operand / accumulator 会继续分叉进 TMEM",
+        intro: "这里最关键的是别把 shared 落点误认为终点。TMA 仍然主要负责 global/shared transport，而 TMEM 路径从 shared/local materialization 之后才开始接管部分 operand / accumulator。",
+        lanes: [
+          { name: "Global", desc: "tensor source / dest" },
+          { name: "Shared", desc: "TMA 典型落点 + MMA B operand staging" },
+          { name: "TMEM", desc: "A operand / acc state 可驻留在此" },
+          { name: "Registers", desc: "final tmem_load / store path" },
+          { name: "Tensor Core", desc: "tc_gen5_mma async consume" }
+        ],
+        columns: [
+          { head: "0", sub: "descriptor", cells: { 0: ["tma", "tt.tensordesc", "先规范 shared layout"], 1: ["tma", "shared contract", "TMA 目标仍然是 shared"] } },
+          { head: "1", sub: "transport", cells: { 0: ["tma", "async_tma_*", "负责 global -> shared"], 1: ["tma", "shared tile", "A/B 先 materialize 到 shared"] } },
+          { head: "2", sub: "promote", cells: { 1: ["tmem", "PromoteLHSToTMem", "只把满足条件的 A operand 切到 TMEM"], 2: ["tmem", "ttng.tmem_alloc", "acc / A operand 进入 TMEM path"] } },
+          { head: "3", sub: "allocate", cells: { 2: ["tmem", "row/col offsets", "allocate_tensor_memory 写回物理位置"] } },
+          { head: "4", sub: "async mma", cells: { 1: ["sync", "fence_async_shared", "shared A/B 交给 async MMA"], 2: ["tmem", "tc_gen5_mma", "TMEM resident state 被异步继续使用"], 4: ["tmem", "tensor core", "TCGen5 正式消费"] } },
+          { head: "5", sub: "retire / readback", cells: { 2: ["sync", "tmem barrier", "按 RAW/WAR/WAW 与 load/store->mma 插 CTA barrier"], 3: ["tmem", "ttng.tmem_load", "最后从 TMEM 拉回 registers"] } }
+        ]
+      }
+    };
+
+    const pathTabs = document.getElementById("pathTabs");
+    const pathTitle = document.getElementById("pathTitle");
+    const pathIntro = document.getElementById("pathIntro");
+    const pathGrid = document.getElementById("pathGrid");
+    let currentPath = "sm90";
+
+    function tagClass(kind) {
+      return kind === "tma" ? "tma" : kind === "tmem" ? "tmem" : kind === "both" ? "both" : kind === "sync" ? "sync" : "note";
+    }
+
+    function renderPathTabs() {
+      pathTabs.innerHTML = "";
+      Object.entries(paths).forEach(([key, value]) => {
+        const btn = document.createElement("button");
+        btn.className = "seg-btn" + (key === currentPath ? " active" : "");
+        btn.textContent = value.label;
+        btn.addEventListener("click", () => {
+          currentPath = key;
+          renderPath();
+        });
+        pathTabs.appendChild(btn);
+      });
+    }
+
+    function renderPath() {
+      renderPathTabs();
+      const path = paths[currentPath];
+      pathTitle.textContent = path.title;
+      pathIntro.textContent = path.intro;
+      pathGrid.innerHTML = "";
+
+      const headRow = document.createElement("div");
+      headRow.className = "path-row";
+      headRow.innerHTML = `<div class="path-head">Lane</div>` +
+        path.columns.map(col => `<div class="path-head">${col.head}<br>${col.sub}</div>`).join("");
+      pathGrid.appendChild(headRow);
+
+      path.lanes.forEach((lane, laneIdx) => {
+        const row = document.createElement("div");
+        row.className = "path-row";
+        const label = document.createElement("div");
+        label.className = "path-label";
+        label.innerHTML = `<strong>${lane.name}</strong><small>${lane.desc}</small>`;
+        row.appendChild(label);
+
+        path.columns.forEach((col) => {
+          const cell = document.createElement("div");
+          cell.className = "path-cell";
+          const content = col.cells[laneIdx];
+          if (content) {
+            cell.innerHTML = `<span class="tag ${tagClass(content[0])}">${content[0]}</span><strong>${content[1]}</strong><p>${content[2]}</p>`;
+          }
+          row.appendChild(cell);
+        });
+        pathGrid.appendChild(row);
+      });
+    }
+
+    renderPath();
+  </script>
+</body>
+</html>

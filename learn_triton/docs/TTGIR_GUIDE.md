@@ -53,6 +53,81 @@ Triton lowers a `@triton.jit` kernel through five IRs. Each is one file in
 Wiring is in `third_party/nvidia/backend/compiler.py` (`add_stages`,
 `make_ttir`, `make_ttgir`, `make_llir`, `make_ptx`, `make_cubin`).
 
+## What TTGIR is actually for
+
+Use this mental model:
+
+```text
+TTGIR = distributed execution mapping
+      + layout / data-movement organization
+      + target-driven scheduling
+```
+
+In practice:
+
+- **Distributed execution mapping**:
+  decide which thread / warp / CTA owns which logical tensor elements.
+- **Layout / data-movement organization**:
+  decide how those values are organized as distributed tensors, shared-memory
+  tiles, descriptor-backed tiles, and layout conversions.
+- **Target-driven scheduling**:
+  when needed, decide when to load, when to compute, when to overlap, and when
+  to synchronize.
+
+In TTGIR, **layout is not only a storage format**. It is also one of the main
+carriers of the execution mapping.
+
+This is visible in the TTIR -> TTGIR conversion itself:
+[include/triton/Conversion/TritonToTritonGPU/Passes.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Conversion/TritonToTritonGPU/Passes.td:6)
+describes `ConvertTritonToTritonGPU` as enhancing tensor types with layout
+encodings that include `numWarps`, `threadsPerWarp`, and `numCTAs`.
+
+So when you see:
+
+```text
+tensor<... , #blocked<...>>
+```
+
+do not read it as only "memory layout changed". Read it as:
+
+```text
+the compiler has chosen a distributed ownership / execution pattern
+and encoded it into the tensor type
+```
+
+## TTGIR vs. TTNG boundary
+
+When learning the NVIDIA backend, it is easy to blur:
+
+- `ttg` = TritonGPU dialect, the generic GPU-level tensor/distribution layer
+- `ttng` = TritonNvidiaGPU dialect, the NVIDIA-specific layer for things such as
+  TMA, TMEM, async proxy fences, cluster barriers, and other target-specific ops
+
+The boundary matters because many "memory movement / synchronization" examples
+that show up in real Hopper or Blackwell kernels are no longer pure `ttg`
+concepts.
+
+Examples from the current repository:
+
+- TMA lowering, descriptor-encoding optimization, and TMEM passes live in
+  [include/triton/Dialect/TritonNvidiaGPU/Transforms/Passes.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonNvidiaGPU/Transforms/Passes.td:109)
+- NVIDIA-specific async copy, barrier, cluster, and fence ops live in
+  [include/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUOps.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUOps.td:52)
+
+So a better way to think about the backend split is:
+
+```text
+TTIR
+  -> TTGIR: establish GPU-distributed tensor semantics and generic GPU scheduling structure
+  -> TTNGIR / NVIDIA-specific TTGIR region: materialize NVIDIA-specific transport,
+     tensor-memory, barrier, fence, and cluster contracts
+  -> LLVM IR
+```
+
+That means statements like "TTGIR mainly does TMA / TMEM / cp.async barrier
+protocol" are too broad unless you explicitly include the NVIDIA-specific
+dialect layer in your definition of "TTGIR".
+
 ## The two dump views (what your leader meant)
 
 - `mlir-pass-dump.log` — the FULL log: IR snapshot **after every MLIR pass**, in order.
@@ -84,19 +159,19 @@ Think of the early backend as a dependency graph, not just a flat list:
 ```text
 TTIR tensor program
   -> ConvertTritonToTritonGPU
-       establishes GPU layouts / encodings
+       establishes GPU-distributed ownership / layouts / encodings
   -> Coalesce / layout-oriented passes
-       improve memory-facing layouts
+       refine memory-facing layouts without changing tensor meaning
   -> PlanCTA
        establishes CTA ownership / CGA layout when num_ctas > 1
   -> RemoveLayoutConversions / OptimizeThreadLocality / OptimizeDotOperands
-       clean and refine layout contracts around compute and memory
+       clean and refine layout contracts around compute, communication, and memory
   -> AccelerateMatmul / MMA-WGMMA-oriented passes
        establish tensor-core instruction contracts
   -> Pipeline / ScheduleLoops / WarpSpecialize
        establish execution ordering and latency-hiding contracts
-  -> Shared memory / TMEM / barrier / allocation passes
-       materialize hardware resources and synchronization
+  -> NVIDIA-specific descriptor / TMA / TMEM / fence / barrier passes
+       materialize target-specific transport, memory-space, and synchronization contracts
   -> ConvertTritonGPUToLLVM
        lowers the established contracts into LLVM/NVVM-level code
 ```
@@ -111,7 +186,9 @@ depends on its output.
 ### TTIR -> TTGIR (the most important transition)
 - **ConvertTritonToTritonGPU** (`009`) — THE pivotal pass. Attaches a **layout**
   (`#blocked<{sizePerThread, threadsPerWarp, warpsPerCTA, order}>`) to every tensor.
-  This decides how tensor elements map onto threads/warps. Compare `008` vs `009`.
+  This is not only a storage decision. It decides how tensor elements map onto
+  threads/warps/CTAs and encodes that distributed ownership into the type.
+  Compare `008` vs `009`.
 - **TritonGPUCoalesce** (`010`) — pick layouts so neighbouring threads touch
   neighbouring memory => coalesced (fast) global loads/stores.
 - **AccelerateMatmul** — map `tt.dot` onto tensor-core (`mma`) instructions. (No-op here,
@@ -130,6 +207,38 @@ depends on its output.
 
 So if you only learn three passes, learn:
 **ConvertTritonToTritonGPU**, **Coalesce**, **ConvertTritonGPUToLLVM**.
+
+## A better 3-question framework for TTGIR
+
+When reading any TTGIR pass, avoid starting from "what op did it rewrite?".
+Start from which compiler question it is answering:
+
+1. **Who computes / owns these tensor elements?**
+   This is the execution-mapping question.
+   Typical carriers: `#blocked`, `#slice`, CTA tiling, warp specialization tags.
+
+2. **In what form should these values exist between uses?**
+   This is the layout / movement question.
+   Typical carriers: `ttg.convert_layout`, `local_load`, `local_store`,
+   coalesced layouts, shared layouts, dot-operand layouts.
+
+3. **When should the work happen, and what ordering is required?**
+   This is the schedule / synchronization question.
+   Typical carriers: pipelining, loop scheduling, warp specialization,
+   later target-specific barriers / fences / waits.
+
+This framework is stronger than "TTGIR mostly changes layout" because it tells
+you **why** layout changes exist:
+
+```text
+optimization goal
+  -> choose execution ownership
+  -> choose value organization / movement
+  -> if needed, choose execution order
+```
+
+`ttg.convert_layout` is often just the visible symptom of one of those deeper
+decisions.
 
 ## How to regenerate dumps for any kernel
 

@@ -1,5 +1,8 @@
 # Working on Triton
 
+## Role Expectation
+- You are a senior engineer with deep expertise in Triton compilation, CUDA, and high-performance GPU programming.
+
 ## Commentary Discipline
 - Keep commentary concise and task-relevant.
 - Do not add optional narration, motivational text, or speculative filler.
