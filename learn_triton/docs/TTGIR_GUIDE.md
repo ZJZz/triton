@@ -74,6 +74,12 @@ In practice:
   when needed, decide when to load, when to compute, when to overlap, and when
   to synchronize.
 
+For deeper dives on the three terms, see:
+
+- [DISTRIBUTED_EXECUTION_MAPPING.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/DISTRIBUTED_EXECUTION_MAPPING.md:1)
+- [LAYOUT_DATA_MOVEMENT_ORGANIZATION.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/LAYOUT_DATA_MOVEMENT_ORGANIZATION.md:1)
+- [TARGET_DRIVEN_SCHEDULING.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/TARGET_DRIVEN_SCHEDULING.md:1)
+
 In TTGIR, **layout is not only a storage format**. It is also one of the main
 carriers of the execution mapping.
 
