@@ -1,6 +1,8 @@
 # Triton TTGIR：Distributed Execution Mapping
 
-本文只回答一个问题：一个 logical tensor 在 TTGIR 里如何被切给 CTA、warp、thread 和 per-thread values。TTGIR 里的 layout encoding 不只是“内存布局”，很多时候就是这份 ownership contract 的承载体。
+这里的 `distributed` 不是“分布式系统”，这里的 `execution` 也不是“具体硬件功能单元执行”。它们合起来指的是：把 logical tensor 的元素分给 CTA、warp、thread 和 per-thread values 这些执行层级。
+
+本文只回答一个问题：一个 logical tensor 在 TTGIR 里如何被切给 CTA、warp、thread 和 per-thread values。TTGIR 里的 layout encoding 不只是“内存布局”，很多时候就是这份 ownership contract 的承载体。这里的 `ownership` 指“哪些执行层级负责 / 持有 / 处理 tensor 中哪些元素”，不是对象所有权或内存所有权。
 
 ## 1. 核心定义
 
@@ -23,11 +25,21 @@ CTAs Per CGA -> Warps Per CTA -> Threads Per Warp -> Values Per Thread
 
 这里回答的是 `who owns / who computes these elements`，不是 `what form`，也不是 `when`.
 
+如果把 TTGIR 三层压成一句短记忆：
+
+```text
+mapping = 分工
+organization = 衔接
+scheduling = 时序
+```
+
+那么本文只负责第一层：`mapping = 分工`。
+
 ## 2. 和另外两层的边界
 
 | 主题 | 核心问题 | 典型载体 |
 |---|---|---|
-| distributed execution mapping | 谁拥有这些元素 | `#blocked`、`CGAEncodingAttr`、`#ttg.slice`、`#ttg.dot_op` 的 parent |
+| distributed execution mapping（执行层级上的分工映射） | 谁拥有这些元素 | `#blocked`、`CGAEncodingAttr`、`#ttg.slice`、`#ttg.dot_op` 的 parent |
 | layout / data-movement organization | 这些值以什么 form / carrier 流动 | `ttg.convert_layout`、`ttg.local_alloc`、descriptor、TMEM |
 | target-driven scheduling | 这些工作何时发生、如何 overlap、何时同步 | `loop.stage`、`loop.cluster`、async op、wait、barrier |
 
@@ -39,7 +51,7 @@ CTAs Per CGA -> Warps Per CTA -> Threads Per Warp -> Values Per Thread
 
 ## 3. 关键载体
 
-### 3.1 module attrs：execution envelope
+### 3.1 module attrs：执行层级分工的全局边界
 
 TTGIR module 顶层会挂这些 attr：
 
@@ -51,7 +63,7 @@ TTGIR module 顶层会挂这些 attr：
 定义见
 [Dialect.h](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/IR/Dialect.h:49)。
 
-这些 attr 还不是每个 tensor 的具体 ownership，但它们给出了所有 distributed layout 的全局边界条件。
+这些 attr 还不是每个 tensor 的具体 ownership，但它们给出了所有“承载执行分发的 layout” 的全局边界条件。
 
 ### 3.2 `#blocked`：默认、最常见的 ownership contract
 
@@ -75,7 +87,7 @@ TTGIR module 顶层会挂这些 attr：
   + optional CGALayout
 ```
 
-它不是“普通 tensor + 一个 tag”，而是 ownership 的压缩表示。
+它不是“普通 tensor + 一个 tag”，而是 ownership 的压缩表示。这里的 `own` 可以直接读成：哪个 CTA / warp / thread 负责哪些 tensor elements。
 
 ### 3.3 `CGAEncodingAttr`：CTA 级切分单独编码
 
@@ -102,7 +114,7 @@ dump 里常见：
 这不是新的独立分工，更准确的理解是：
 
 ```text
-对 parent distributed layout 做降维投影，
+对 parent 执行分发 layout 做降维投影，
 让 `tt.make_range` / `tt.expand_dims` 一类 helper 值
 继续共享同一套 ownership 语义
 ```
@@ -136,7 +148,7 @@ ConvertTritonToTritonGPU
 见
 [compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:269)。
 
-### 4.1 `ConvertTritonToTritonGPU`：把 logical tensor 变成 distributed tensor
+### 4.1 `ConvertTritonToTritonGPU`：把 logical tensor 变成带执行分发信息的 tensor
 
 `ConvertTritonToTritonGPU` 的 pass 定义明确说，它会给 tensor type 增加 layout encoding，而这些 encoding 一般包含 `numWarps`、`threadsPerWarp` 和 `numCTAs`，见
 [Passes.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Conversion/TritonToTritonGPU/Passes.td:6)。
@@ -157,7 +169,7 @@ ConvertTritonToTritonGPU
 
 ```text
 从这里开始，tensor 不再只是 logical shape，
-而是 logical shape + distributed ownership
+而是 logical shape + 执行分发 ownership
 ```
 
 ### 4.2 `BlockedEncodingAttr` builder：先定 CTA split，再定 warp/thread decomposition
@@ -238,7 +250,7 @@ shape
 
 在
 [018_Before_ConvertTritonToTritonGPU.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/vecadd/sm86/mlir-pass-dump.split/018_Before_ConvertTritonToTritonGPU.mlir:12)
-里，`%offsets`、`%x_3`、`%output` 还只是普通 tensor / pointer tensor，没有 distributed encoding。
+里，`%offsets`、`%x_3`、`%output` 还只是普通 tensor / pointer tensor，没有执行分发 encoding。
 
 到了
 [019_After_ConvertTritonToTritonGPU.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/vecadd/sm86/mlir-pass-dump.split/019_After_ConvertTritonToTritonGPU.mlir:2)

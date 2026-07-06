@@ -40,8 +40,8 @@ Python kernel
 
 | 阶段 | 你主要在学什么 |
 |---|---|
-| TTIR | Triton tensor program 的逻辑语义，还没有 GPU-distributed contract |
-| TTGIR | distributed execution mapping、layout / movement organization、target-driven scheduling |
+| TTIR | Triton tensor program 的逻辑语义，还没有 GPU 执行分发 contract |
+| TTGIR | distributed execution mapping（执行层级上的分工映射）、layout / movement organization、target-driven scheduling |
 | LLVM IR | Triton contract 如何被拆成每个 lane 的地址计算、控制流和目标相关 intrinsic |
 | PTX / cubin | 后端最终选择了哪些 ISA 级指令和协议 |
 
@@ -130,10 +130,12 @@ TTIR 阶段先看语义成形和代码清理，不用在这里停太久。
   和 [Passes.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/Transforms/Passes.td:43)
   以及 [Passes.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/Transforms/Passes.td:6)
 
-在 NVIDIA backend 上，这一段主干顺序和 target 分叉在
-[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:261)、
-[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:282)、
-[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:292)。
+在 NVIDIA backend 上，这一段主干顺序定义在
+[compiler.py:261](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:261)，
+其中 target 分叉分别在
+[compiler.py:282](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:282)
+和
+[compiler.py:292](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:292)。
 
 ### 5.3 TTGIR -> LLVM IR
 
@@ -242,6 +244,6 @@ python learn_triton/tools/mark_effective_passes.py \
 - [TTGIR_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/TTGIR_GUIDE.md)
   负责只面向 TTGIR 的心智模型、边界、对象和最小学习路径
 - 三篇 TTGIR 专题文档
-  负责把 TTGIR 拆成 execution mapping、layout / movement、scheduling 三个主题分别讲清
+  负责把 TTGIR 拆成“执行层级分工映射”、layout / movement、scheduling 三个主题分别讲清
 - [IR_PASS_DIFF_LEARNING_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/IR_PASS_DIFF_LEARNING_GUIDE.md)
   负责具体的 pass-diff 方法

@@ -151,7 +151,7 @@ IR change:
 
 对 TTGIR pass，优先把问题归到这三类之一：
 
-- 谁拥有这些元素
+- 谁拥有这些元素，或者说这些元素如何分到 CTA / warp / thread 这些执行层级
 - 这些值以什么 form / carrier 流动
 - 这些工作何时发生、如何 overlap、何时同步
 
@@ -165,7 +165,7 @@ IR change:
 
 ```text
 ConvertTritonToTritonGPU:
-  logical tensor 如何映射到 GPU threads / warps / CTAs？
+  logical tensor 如何分发到 GPU threads / warps / CTAs？
 
 Coalesce:
   已经知道谁来访问后，哪些 memory-facing layout 更适合 coalesced access？

@@ -7,7 +7,7 @@
 ```text
 layout / data-movement organization
   = 为同一批 values 选择一条表示与搬运路径：
-    distributed tensor
+    带执行分发信息的 tensor
     -> memory-facing form
     -> shared memdesc view
     -> compute-specific operand form
@@ -21,17 +21,27 @@ layout / data-movement organization
 因此它们现在该长成什么样、放在哪里、通过什么介质流动
 ```
 
+如果把 TTGIR 三层压成一句短记忆：
+
+```text
+mapping = 分工
+organization = 衔接
+scheduling = 时序
+```
+
+那么本文只负责第二层：`organization = 衔接`。更准确地说，它桥接的是 producer form 和 consumer-required form。
+
 ## 2. 和另外两层的边界
 
 | 主题 | 核心问题 | 典型载体 |
 |---|---|---|
-| distributed execution mapping | 谁拥有这些元素 | `#blocked`、`CGAEncodingAttr`、`#ttg.slice` |
+| distributed execution mapping（执行层级上的分工映射） | 谁拥有这些元素 | `#blocked`、`CGAEncodingAttr`、`#ttg.slice` |
 | layout / data-movement organization | 这些值以什么 form / carrier 流动 | `ttg.convert_layout`、`ttg.local_alloc`、descriptor、TMEM |
 | target-driven scheduling | 这些工作何时发生、如何 overlap、何时同步 | `loop.stage`、async op、wait、barrier |
 
 有三个容易混淆的点：
 
-- 它不是 distributed execution mapping。mapping 回答 `who computes`；本文回答 `same values in what form move between uses`。
+- 它不是 distributed execution mapping。这里的重点是 CTA / warp / thread 执行层级上的分工；mapping 回答 `who computes`，本文回答 `same values in what form move between uses`。
 - 它不是 scheduling。本文回答 `what form / what path`；scheduling 回答 `when / what ordering`。
 - 它也不是“只要看到 layout attr 就是一回事”。有些 encoding 主要承载 ownership，有些主要承载 memory-facing / compute-facing organization，还有些 op 直接把 carrier 切换显式化。
 
@@ -46,7 +56,7 @@ layout / data-movement organization
 
 ```text
 logical value 没变，
-但下一个 consumer 希望它换一种 distributed / memory-facing / compute-facing form
+但下一个 consumer 希望它换一种执行分发表达 / memory-facing / compute-facing form
 ```
 
 更关键的是，allocation analysis 里直接把：
@@ -59,15 +69,17 @@ logical value 没变，
 
 这说明 `convert_layout` 在编译器眼里往往意味着真实的数据重组织，而不只是标签改写。
 
-### 3.2 shared `memdesc`：值暂时退出 distributed tensor world
+### 3.2 shared `memdesc`：值暂时退出“带执行分发信息的 tensor”世界
 
 `ttg.local_alloc` 会在 shared memory 中分配 buffer，返回的是 descriptor，而不是 tensor 本身，见
 [TritonGPUOps.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/IR/TritonGPUOps.td:152)。
 
+可以把它近似理解成“这批 tensor values 在 shared memory 里的承载形式”，但更准确地说，它是这份数据在 shared memory 中的 descriptor / handle，不是 tensor 本体。
+
 对应地：
 
-- `ttg.local_load`：从 local `memdesc` 读回 distributed tensor
-- `ttg.local_store`：把 distributed tensor 写进 local `memdesc`
+- `ttg.local_load`：从 local `memdesc` 读回带执行分发信息的 tensor
+- `ttg.local_store`：把带执行分发信息的 tensor 写进 local `memdesc`
 
 定义见
 [TritonGPUOps.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/IR/TritonGPUOps.td:359)，
@@ -76,7 +88,7 @@ logical value 没变，
 这条边界表达的是：
 
 ```text
-值暂时不再以 distributed tensor 的形式存在，
+值暂时不再以“带执行分发信息的 tensor”的形式存在，
 而是以 shared-memory descriptor 的方式存在
 ```
 
@@ -322,7 +334,7 @@ Blackwell 这份 dump 里：
 [033_After_TritonGPUAccelerateMatmul.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/033_After_TritonGPUAccelerateMatmul.mlir:74)，
 [033_After_TritonGPUAccelerateMatmul.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/033_After_TritonGPUAccelerateMatmul.mlir:76)。
 
-这里最关键的事实是：值短暂离开了普通 distributed tensor world，住进了 target-specific memory carrier。
+这里最关键的事实是：值短暂离开了普通“带执行分发信息的 tensor”世界，住进了 target-specific memory carrier。
 
 说明：当前 `learn_triton/dumps/` 这组 canonical dump 里没有单独的 descriptor kernel，所以 descriptor / TMA 小节主要依赖源码链而不是现成 dump。
 
