@@ -1,0 +1,3337 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GPU Synchronization Protocol Simulator</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #fafafa;
+    --bg-accent: linear-gradient(180deg, rgba(255, 255, 255, 0.92), rgba(250, 250, 250, 0.92));
+    --card: #ffffff;
+    --card-soft: #f7f7f8;
+    --card-tint: #fbfbfc;
+    --line: #e5e7eb;
+    --line-strong: #d1d5db;
+    --text: #111827;
+    --muted: #6b7280;
+    --blue: #2563eb;
+    --blue-soft: #dbeafe;
+    --orange: #f59e0b;
+    --orange-soft: #fef3c7;
+    --green: #16a34a;
+    --green-soft: #dcfce7;
+    --amber: #d97706;
+    --amber-soft: #ffedd5;
+    --purple: #7c3aed;
+    --purple-soft: #ede9fe;
+    --red: #dc2626;
+    --red-soft: #fee2e2;
+    --shadow: 0 18px 48px rgba(15, 23, 42, 0.08);
+    --shadow-soft: 0 10px 24px rgba(15, 23, 42, 0.05);
+    --radius: 18px;
+    --radius-sm: 12px;
+    --font: "SF Pro Display", "SF Pro Text", "Segoe UI", "Helvetica Neue", system-ui, sans-serif;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background:
+      radial-gradient(circle at top left, rgba(219, 234, 254, 0.45), transparent 34%),
+      radial-gradient(circle at top right, rgba(253, 230, 138, 0.24), transparent 30%),
+      var(--bg);
+    color: var(--text);
+    font-family: var(--font);
+  }
+
+  body {
+    min-height: 100vh;
+  }
+
+  button,
+  select {
+    font: inherit;
+  }
+
+  .app {
+    max-width: 1600px;
+    margin: 0 auto;
+    padding: 20px;
+    display: grid;
+    gap: 16px;
+  }
+
+  .toolbar {
+    background: var(--bg-accent);
+    backdrop-filter: blur(14px);
+    border: 1px solid rgba(229, 231, 235, 0.88);
+    border-radius: 24px;
+    box-shadow: var(--shadow);
+    padding: 18px 20px;
+    display: grid;
+    gap: 16px;
+  }
+
+  .toolbar-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+
+  .title-block h1 {
+    margin: 0;
+    font-size: 24px;
+    letter-spacing: -0.03em;
+  }
+
+  .title-block p {
+    margin: 8px 0 0;
+    max-width: 760px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  .summary-chip {
+    align-self: flex-start;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.88);
+    padding: 10px 14px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .toolbar-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.55fr) auto;
+    gap: 14px;
+    align-items: end;
+  }
+
+  .control-group {
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  .control-label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+
+  .segmented {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .segmented button {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--muted);
+    min-height: 42px;
+    padding: 9px 14px;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease, color 0.16s ease, box-shadow 0.16s ease;
+    font-size: 13px;
+    font-weight: 700;
+    box-shadow: var(--shadow-soft);
+  }
+
+  .segmented button:hover {
+    transform: translateY(-1px);
+    border-color: var(--line-strong);
+  }
+
+  .segmented button.active {
+    color: var(--text);
+    background: #ffffff;
+    border-color: rgba(37, 99, 235, 0.28);
+    box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.18), 0 8px 24px rgba(37, 99, 235, 0.08);
+  }
+
+  .segmented button.tone-execution.active {
+    background: linear-gradient(180deg, #ffffff, #eff6ff);
+  }
+
+  .segmented button.tone-completion.active {
+    background: linear-gradient(180deg, #ffffff, #fffbeb);
+  }
+
+  .segmented button.tone-visibility.active {
+    background: linear-gradient(180deg, #ffffff, #f0fdf4);
+  }
+
+  .segmented button.tone-hardware.active {
+    background: linear-gradient(180deg, #ffffff, #f5f3ff);
+  }
+
+  .control-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .plain-btn {
+    appearance: none;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--text);
+    min-height: 42px;
+    padding: 9px 14px;
+    border-radius: 14px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 700;
+    box-shadow: var(--shadow-soft);
+    transition: transform 0.16s ease, border-color 0.16s ease, background 0.16s ease;
+  }
+
+  .plain-btn:hover {
+    transform: translateY(-1px);
+    border-color: var(--line-strong);
+  }
+
+  .plain-btn.primary {
+    background: linear-gradient(180deg, #eff6ff, #dbeafe);
+    border-color: rgba(37, 99, 235, 0.28);
+    color: var(--blue);
+  }
+
+  .plain-btn.ghost {
+    color: var(--muted);
+  }
+
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 16px;
+    min-height: 0;
+  }
+
+  .main-column,
+  .side-column {
+    display: grid;
+    gap: 16px;
+    min-height: 0;
+  }
+
+  .card {
+    background: rgba(255, 255, 255, 0.92);
+    border: 1px solid rgba(229, 231, 235, 0.92);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+  }
+
+  .card-head {
+    padding: 16px 18px 14px;
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    gap: 10px;
+  }
+
+  .card-title-row {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    flex-wrap: wrap;
+  }
+
+  .card-title {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  .card-subtitle {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .badge-row {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--card-soft);
+    padding: 6px 10px;
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+
+  .badge strong {
+    color: var(--text);
+  }
+
+  .flow-row {
+    padding: 0 18px 16px;
+    display: grid;
+    gap: 10px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(249, 250, 251, 0.72), rgba(255, 255, 255, 0.88));
+  }
+
+  .flow-caption {
+    color: var(--muted);
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .flow-strip {
+    display: flex;
+    gap: 8px;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .flow-pill {
+    position: relative;
+    min-width: 140px;
+    padding: 12px 14px;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    color: var(--muted);
+    box-shadow: var(--shadow-soft);
+    transition: border-color 0.16s ease, transform 0.16s ease, background 0.16s ease;
+  }
+
+  .flow-pill.active {
+    transform: translateY(-1px);
+    color: var(--text);
+    border-color: rgba(37, 99, 235, 0.24);
+    background: linear-gradient(180deg, #ffffff, #f9fafb);
+  }
+
+  .flow-pill.active.execution {
+    box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.14), 0 12px 24px rgba(37, 99, 235, 0.08);
+  }
+
+  .flow-pill.active.completion {
+    box-shadow: inset 0 0 0 1px rgba(245, 158, 11, 0.16), 0 12px 24px rgba(245, 158, 11, 0.08);
+  }
+
+  .flow-pill.active.visibility {
+    box-shadow: inset 0 0 0 1px rgba(22, 163, 74, 0.16), 0 12px 24px rgba(22, 163, 74, 0.08);
+  }
+
+  .flow-pill.active.hardware {
+    box-shadow: inset 0 0 0 1px rgba(124, 58, 237, 0.14), 0 12px 24px rgba(124, 58, 237, 0.08);
+  }
+
+  .flow-pill .kicker {
+    font-size: 10px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+
+  .flow-pill .name {
+    margin-top: 6px;
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--text);
+  }
+
+  .flow-pill .desc {
+    margin-top: 5px;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .protocol-body {
+    padding: 16px 18px 18px;
+    display: grid;
+    gap: 16px;
+  }
+
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .status-card {
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.95), rgba(249, 250, 251, 0.95));
+    padding: 14px;
+    display: grid;
+    gap: 6px;
+    min-height: 118px;
+  }
+
+  .status-card .label {
+    font-size: 12px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .status-card .value {
+    font-size: 18px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  .status-card .desc {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .tone-execution {
+    color: var(--blue);
+  }
+
+  .tone-completion {
+    color: var(--orange);
+  }
+
+  .tone-visibility {
+    color: var(--green);
+  }
+
+  .tone-hardware {
+    color: var(--purple);
+  }
+
+  .tone-waiting {
+    color: var(--amber);
+  }
+
+  .tone-dirty {
+    color: var(--red);
+  }
+
+  .tone-muted {
+    color: var(--muted);
+  }
+
+  .timeline-card {
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(249, 250, 251, 0.84), rgba(255, 255, 255, 0.96));
+    overflow: hidden;
+  }
+
+  .timeline-summary {
+    padding: 14px 16px;
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    gap: 12px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(249, 250, 251, 0.84));
+  }
+
+  .path-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.35fr) minmax(240px, 0.9fr);
+    gap: 12px;
+  }
+
+  .path-card,
+  .focus-card {
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.94);
+    padding: 12px 13px;
+    display: grid;
+    gap: 10px;
+  }
+
+  .path-label,
+  .focus-label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .path-strip {
+    display: flex;
+    gap: 8px;
+    align-items: stretch;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
+  .path-node {
+    min-width: 124px;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    padding: 10px 12px;
+    box-shadow: var(--shadow-soft);
+    display: grid;
+    gap: 4px;
+  }
+
+  .path-node .kicker {
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .path-node .name {
+    font-size: 13px;
+    font-weight: 800;
+    color: var(--text);
+  }
+
+  .path-node .sub {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.45;
+  }
+
+  .path-arrow {
+    align-self: center;
+    color: var(--muted);
+    font-size: 16px;
+    font-weight: 800;
+    flex: none;
+  }
+
+  .path-note {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .focus-card .value {
+    font-size: 15px;
+    font-weight: 800;
+    color: var(--text);
+    line-height: 1.45;
+  }
+
+  .focus-card .note {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .timeline-head {
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid var(--line);
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .timeline-head .title {
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  .timeline-head .meta {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .timeline-shell {
+    --label-w: 158px;
+    padding: 10px 14px 16px;
+    overflow-x: auto;
+  }
+
+  .timeline-shell.scrubbing,
+  .timeline-shell.scrubbing * {
+    cursor: grabbing !important;
+    user-select: none;
+  }
+
+  .timeline-inner {
+    min-width: 860px;
+    display: grid;
+    gap: 10px;
+  }
+
+  .timeline-content {
+    display: grid;
+    grid-template-columns: minmax(0, 1.75fr) minmax(320px, 0.78fr);
+    gap: 0;
+    align-items: stretch;
+  }
+
+  .timeline-lanes {
+    min-width: 0;
+  }
+
+  .timeline-console {
+    border-left: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(249, 250, 251, 0.94));
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    min-height: 0;
+    max-height: none;
+    overflow: hidden;
+  }
+
+  .timeline-console-head {
+    padding: 14px 16px 12px;
+    border-bottom: 1px solid var(--line);
+    display: grid;
+    gap: 4px;
+  }
+
+  .timeline-console-head .title {
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  .timeline-console-head .sub {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .current-event {
+    margin-top: 8px;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: rgba(255, 255, 255, 0.96);
+    padding: 10px 12px;
+    display: grid;
+    gap: 4px;
+    box-shadow: var(--shadow-soft);
+  }
+
+  .current-event .label {
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .current-event .time {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--text);
+  }
+
+  .current-event .text {
+    font-size: 13px;
+    line-height: 1.5;
+  }
+
+  .scale-row,
+  .lane-row {
+    display: grid;
+    grid-template-columns: var(--label-w) minmax(0, 1fr);
+    gap: 12px;
+    align-items: stretch;
+  }
+
+  .scale-label {
+    padding: 8px 0 0;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .scale-track {
+    position: relative;
+    height: 36px;
+    border-bottom: 1px solid var(--line);
+    cursor: ew-resize;
+  }
+
+  .tick {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: linear-gradient(180deg, rgba(209, 213, 219, 0.78), rgba(229, 231, 235, 0.14));
+  }
+
+  .tick span {
+    position: absolute;
+    top: 4px;
+    left: 6px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .global-cursor {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background: rgba(17, 24, 39, 0.14);
+    border-radius: 999px;
+    pointer-events: none;
+  }
+
+  .global-cursor::before {
+    content: "";
+    position: absolute;
+    top: -5px;
+    left: -5px;
+    width: 12px;
+    height: 12px;
+    border-radius: 999px;
+    background: #111827;
+    box-shadow: 0 0 0 4px rgba(17, 24, 39, 0.08);
+  }
+
+  .lane-label {
+    padding: 12px 12px 12px 0;
+    display: grid;
+    gap: 4px;
+    align-content: center;
+  }
+
+  .lane-label .name {
+    font-size: 14px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+  }
+
+  .lane-label .sub {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .lane-label .state {
+    margin-top: 4px;
+    width: fit-content;
+    border-radius: 999px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    border: 1px solid var(--line);
+    background: var(--card);
+  }
+
+  .lane-track {
+    position: relative;
+    min-height: 72px;
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 250, 251, 0.92));
+    overflow: hidden;
+    cursor: ew-resize;
+  }
+
+  .lane-grid {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .lane-grid .grid-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1px;
+    background: rgba(229, 231, 235, 0.7);
+  }
+
+  .lane-segment {
+    position: absolute;
+    top: 18px;
+    height: 36px;
+    min-width: 2px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.84);
+    box-shadow: 0 6px 14px rgba(15, 23, 42, 0.05);
+  }
+
+  .lane-segment.execution {
+    background: linear-gradient(180deg, #60a5fa, #2563eb);
+  }
+
+  .lane-segment.completion {
+    background: linear-gradient(180deg, #fbbf24, #f59e0b);
+  }
+
+  .lane-segment.visibility {
+    background: linear-gradient(180deg, #4ade80, #16a34a);
+  }
+
+  .lane-segment.hardware {
+    background: linear-gradient(180deg, #a78bfa, #7c3aed);
+  }
+
+  .lane-segment.waiting {
+    background: linear-gradient(180deg, #fdba74, #d97706);
+  }
+
+  .lane-segment.dirty {
+    background: linear-gradient(180deg, #f87171, #dc2626);
+  }
+
+  .lane-segment.muted {
+    background: linear-gradient(180deg, #d1d5db, #9ca3af);
+  }
+
+  .lane-segment .segment-label {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    color: rgba(255, 255, 255, 0.92);
+    font-size: 11px;
+    font-weight: 700;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+    pointer-events: none;
+    white-space: nowrap;
+  }
+
+  .lane-marker {
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    width: 0;
+    border-left: 1px dashed rgba(107, 114, 128, 0.65);
+  }
+
+  .lane-marker span {
+    position: absolute;
+    top: -4px;
+    left: 8px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 8px;
+    color: var(--muted);
+    font-size: 10px;
+    font-weight: 700;
+    white-space: nowrap;
+    box-shadow: var(--shadow-soft);
+  }
+
+  .lane-marker.highlight {
+    border-left-color: rgba(37, 99, 235, 0.48);
+  }
+
+  .lane-marker.highlight span {
+    color: var(--text);
+    border-color: rgba(37, 99, 235, 0.24);
+  }
+
+  .runner {
+    position: absolute;
+    top: 31px;
+    width: 16px;
+    height: 16px;
+    border-radius: 999px;
+    border: 2px solid rgba(255, 255, 255, 0.9);
+    transform: translate(-50%, -50%);
+    box-shadow: 0 8px 16px rgba(15, 23, 42, 0.12);
+    pointer-events: none;
+  }
+
+  .runner.execution {
+    background: var(--blue);
+  }
+
+  .runner.completion {
+    background: var(--orange);
+  }
+
+  .runner.visibility {
+    background: var(--green);
+  }
+
+  .runner.hardware {
+    background: var(--purple);
+  }
+
+  .runner.waiting {
+    background: var(--amber);
+    animation: pulse 1.1s ease-in-out infinite;
+  }
+
+  .runner.dirty {
+    background: var(--red);
+  }
+
+  .runner.muted {
+    background: #9ca3af;
+  }
+
+  .lane-overlay {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+  }
+
+  .checkpoint {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    border-radius: 999px;
+    background: linear-gradient(180deg, rgba(37, 99, 235, 0.16), rgba(37, 99, 235, 0.48), rgba(37, 99, 235, 0.16));
+  }
+
+  .checkpoint.waiting {
+    background: linear-gradient(180deg, rgba(217, 119, 6, 0.12), rgba(217, 119, 6, 0.42), rgba(217, 119, 6, 0.12));
+  }
+
+  .checkpoint span {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 4px 9px;
+    color: var(--text);
+    font-size: 10px;
+    font-weight: 800;
+    box-shadow: var(--shadow-soft);
+    white-space: nowrap;
+  }
+
+  .detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .detail-card {
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 250, 251, 0.94));
+    padding: 14px;
+    display: grid;
+    gap: 12px;
+    min-height: 176px;
+  }
+
+  .detail-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .detail-head .title {
+    font-size: 14px;
+    font-weight: 800;
+  }
+
+  .detail-head .hint {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+
+  .field {
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    padding: 10px 11px;
+    display: grid;
+    gap: 5px;
+  }
+
+  .field .label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .field .value {
+    font-size: 16px;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+  }
+
+  .field .note {
+    color: var(--muted);
+    font-size: 11px;
+    line-height: 1.4;
+  }
+
+  .bullet-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .bullet {
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    padding: 10px 12px;
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .bullet strong {
+    color: var(--text);
+  }
+
+  .memory-grid {
+    display: grid;
+    gap: 12px;
+  }
+
+  .memory-strip {
+    position: relative;
+    display: grid;
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 8px;
+    padding: 10px;
+    border-radius: 16px;
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(249, 250, 251, 0.84), rgba(255, 255, 255, 0.98));
+    overflow: hidden;
+  }
+
+  .memory-cell {
+    position: relative;
+    min-height: 54px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.88);
+    display: grid;
+    place-items: center;
+    font-size: 11px;
+    font-weight: 800;
+    color: rgba(255, 255, 255, 0.92);
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
+    box-shadow: 0 10px 18px rgba(15, 23, 42, 0.06);
+  }
+
+  .memory-cell.empty {
+    background: linear-gradient(180deg, #e5e7eb, #cbd5e1);
+    color: rgba(17, 24, 39, 0.66);
+    text-shadow: none;
+  }
+
+  .memory-cell.dirty {
+    background: linear-gradient(180deg, #fca5a5, #dc2626);
+  }
+
+  .memory-cell.visible {
+    background: linear-gradient(180deg, #86efac, #16a34a);
+  }
+
+  .memory-cell.inflight {
+    background: linear-gradient(180deg, #c4b5fd, #7c3aed);
+  }
+
+  .memory-cell.consumed {
+    background: linear-gradient(180deg, #93c5fd, #2563eb);
+  }
+
+  .memory-cell.reused {
+    background: linear-gradient(180deg, #fde68a, #f59e0b);
+  }
+
+  .memory-sweep {
+    position: absolute;
+    top: 8px;
+    bottom: 8px;
+    width: 16%;
+    border-radius: 16px;
+    border: 1px solid rgba(22, 163, 74, 0.26);
+    background: linear-gradient(90deg, rgba(34, 197, 94, 0.05), rgba(34, 197, 94, 0.18), rgba(34, 197, 94, 0.05));
+    box-shadow: 0 0 0 1px rgba(34, 197, 94, 0.06) inset;
+    transform: translateX(-50%);
+    pointer-events: none;
+  }
+
+  .memory-legend {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .memory-legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    padding: 5px 9px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .memory-legend i {
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    display: inline-block;
+  }
+
+  .compiler-card details,
+  details.compiler-toggle {
+    display: block;
+  }
+
+  .compiler-toggle summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 16px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border-bottom: 1px solid var(--line);
+    user-select: none;
+  }
+
+  .compiler-toggle summary::-webkit-details-marker {
+    display: none;
+  }
+
+  .compiler-toggle summary .title {
+    font-size: 16px;
+    font-weight: 800;
+  }
+
+  .compiler-toggle summary .sub {
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .compiler-body {
+    padding: 16px 18px 18px;
+    display: grid;
+    gap: 14px;
+  }
+
+  .compiler-steps {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .compiler-step {
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--card-soft);
+    padding: 7px 10px;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 700;
+  }
+
+  .compiler-step.active {
+    color: var(--text);
+    background: var(--card);
+    border-color: rgba(37, 99, 235, 0.24);
+    box-shadow: var(--shadow-soft);
+  }
+
+  .compiler-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+  }
+
+  .compiler-column {
+    border-radius: 18px;
+    border: 1px solid var(--line);
+    background: linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(249, 250, 251, 0.95));
+    padding: 14px;
+    display: grid;
+    gap: 8px;
+  }
+
+  .compiler-column .label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .compiler-column .code {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 13px;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1.45;
+  }
+
+  .compiler-column .desc {
+    color: var(--muted);
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .info-panel {
+    padding: 18px;
+    display: grid;
+    gap: 14px;
+    align-content: start;
+  }
+
+  .info-hero {
+    display: grid;
+    gap: 10px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .info-hero .eyebrow {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .info-hero .title {
+    font-size: 21px;
+    font-weight: 800;
+    letter-spacing: -0.03em;
+  }
+
+  .info-hero .desc {
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .info-section {
+    display: grid;
+    gap: 8px;
+  }
+
+  .info-section .label {
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  .info-section .value {
+    font-size: 14px;
+    line-height: 1.55;
+  }
+
+  .stack-list {
+    display: grid;
+    gap: 8px;
+  }
+
+  .stack-item {
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: var(--card-soft);
+    padding: 10px 12px;
+    font-size: 12px;
+    line-height: 1.5;
+  }
+
+  .console-body {
+    padding: 12px 14px 14px;
+    max-height: 100%;
+    overflow: auto;
+    display: grid;
+    gap: 8px;
+    background:
+      linear-gradient(180deg, rgba(249, 250, 251, 0.84), rgba(255, 255, 255, 0.98));
+  }
+
+  .log-row {
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 12px;
+    align-items: start;
+    border-radius: 14px;
+    border: 1px solid var(--line);
+    background: var(--card);
+    padding: 10px 12px;
+    color: var(--muted);
+    transition: transform 0.16s ease, border-color 0.16s ease, opacity 0.16s ease;
+  }
+
+  .log-row.past {
+    color: var(--text);
+  }
+
+  .log-row.current {
+    transform: translateY(-1px);
+    border-color: rgba(37, 99, 235, 0.24);
+    box-shadow: 0 10px 18px rgba(37, 99, 235, 0.08);
+  }
+
+  .log-row.future {
+    opacity: 0.56;
+  }
+
+  .log-time {
+    font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+    font-size: 12px;
+    font-weight: 800;
+    color: var(--muted);
+  }
+
+  .log-text {
+    font-size: 13px;
+    line-height: 1.55;
+  }
+
+  .tooltip {
+    position: fixed;
+    z-index: 30;
+    max-width: 280px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border: 1px solid rgba(209, 213, 219, 0.9);
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 18px 36px rgba(15, 23, 42, 0.14);
+    color: var(--text);
+    font-size: 12px;
+    line-height: 1.5;
+    pointer-events: none;
+    opacity: 0;
+    transform: translate3d(0, 6px, 0);
+    transition: opacity 0.12s ease, transform 0.12s ease;
+  }
+
+  .tooltip.visible {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+
+  @keyframes pulse {
+    0%, 100% { transform: translate(-50%, -50%) scale(1); }
+    50% { transform: translate(-50%, -50%) scale(1.12); }
+  }
+
+  @media (max-width: 1240px) {
+    .toolbar-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .layout {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .detail-grid,
+    .compiler-grid,
+    .path-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
+    .timeline-content {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .timeline-console {
+      border-left: 0;
+      border-top: 1px solid var(--line);
+      max-height: 320px;
+    }
+  }
+
+  @media (max-width: 760px) {
+    .app {
+      padding: 14px;
+    }
+
+    .toolbar {
+      border-radius: 20px;
+      padding: 16px;
+    }
+
+    .title-block h1 {
+      font-size: 20px;
+    }
+
+    .status-grid,
+    .detail-grid,
+    .field-grid,
+    .compiler-grid,
+    .path-grid {
+      grid-template-columns: minmax(0, 1fr);
+    }
+
+    .timeline-shell {
+      --label-w: 112px;
+    }
+
+    .lane-label .name {
+      font-size: 13px;
+    }
+
+    .flow-pill {
+      min-width: 128px;
+    }
+
+    .log-row {
+      grid-template-columns: 62px minmax(0, 1fr);
+    }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="toolbar">
+    <div class="toolbar-head">
+      <div class="title-block">
+        <h1>GPU Synchronization Protocol Simulator</h1>
+        <p id="toolbarSummary">
+          这个页面把 Execution、Completion、Visibility 拆成三条独立机制来讲。重点不是记 PTX 名字，而是看 protocol 在什么时刻改变了什么状态。
+        </p>
+      </div>
+      <div class="summary-chip" id="clockSummary">Clock 0.00 / 0.00</div>
+    </div>
+    <div class="toolbar-grid">
+      <div class="control-group">
+        <div class="control-label">
+          <span>Architecture</span>
+          <span id="archHint">实现变化，语义不变</span>
+        </div>
+        <div class="segmented" id="archSelector"></div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">
+          <span>Protocol</span>
+          <span id="protocolHint">按 protocol flow 组织，不按 instruction 名组织</span>
+        </div>
+        <div class="segmented" id="protocolSelector"></div>
+      </div>
+      <div class="control-group">
+        <div class="control-label">
+          <span>Controls</span>
+          <span id="speedHint">Single requestAnimationFrame clock</span>
+        </div>
+        <div class="control-row" id="playbackControls">
+          <button class="plain-btn primary" id="playPauseBtn">Play</button>
+          <button class="plain-btn ghost" id="stepBtn">Step</button>
+          <button class="plain-btn ghost" id="resetBtn">Reset</button>
+        </div>
+        <div class="segmented" id="speedSelector"></div>
+      </div>
+    </div>
+  </section>
+
+  <div class="layout">
+    <div class="main-column">
+      <section class="card">
+        <div class="card-head">
+          <div class="card-title-row">
+            <div>
+              <div class="card-title" id="protocolTitle">Complete Pipeline</div>
+              <div class="card-subtitle" id="protocolSubtitle"></div>
+            </div>
+            <div class="badge-row" id="protocolBadges"></div>
+          </div>
+        </div>
+        <div class="flow-row">
+          <div class="flow-caption">Abstract protocol flow</div>
+          <div class="flow-strip" id="flowStrip"></div>
+        </div>
+        <div class="protocol-body">
+          <div class="status-grid" id="statusGrid"></div>
+          <div class="timeline-card">
+            <div class="timeline-summary" id="timelineSummary"></div>
+            <div class="timeline-head">
+              <div class="title">Swimlanes</div>
+              <div class="meta" id="timelineMeta"></div>
+            </div>
+            <div class="timeline-content">
+              <div class="timeline-lanes">
+                <div class="timeline-shell">
+                  <div class="timeline-inner" id="timeline"></div>
+                </div>
+              </div>
+              <div class="timeline-console">
+                <div class="timeline-console-head">
+                  <div class="title">Protocol Console</div>
+                  <div class="sub">拖动到任意时刻时，直接在这里看当前发生的 protocol 事件。</div>
+                  <div class="current-event" id="currentEvent"></div>
+                </div>
+                <div class="console-body" id="consoleBody"></div>
+              </div>
+            </div>
+          </div>
+          <div class="detail-grid" id="detailGrid"></div>
+        </div>
+      </section>
+
+      <section class="card compiler-card">
+        <details class="compiler-toggle" open>
+          <summary>
+            <div>
+              <div class="title">Compiler Mapping</div>
+              <div class="sub">TTIR -> TTGIR -> PTX -> Hardware。动画走到哪一步，就高亮哪一条 lowering 链。</div>
+            </div>
+            <div class="summary-chip" id="compilerStepLabel">Current step</div>
+          </summary>
+          <div class="compiler-body">
+            <div class="compiler-steps" id="compilerSteps"></div>
+            <div class="compiler-grid" id="compilerGrid"></div>
+          </div>
+        </details>
+      </section>
+
+      <section class="card">
+      <div class="info-panel" id="infoPanel"></div>
+      </section>
+    </div>
+  </div>
+
+</div>
+
+<div class="tooltip" id="tooltip"></div>
+
+<script>
+  const ARCHES = [
+    { id: "SM80", label: "SM80", tooltip: "Ampere 路径以 cp.async group 为主；更多 completion 语义仍靠 wait_group + CTA synchronization 组合。" },
+    { id: "SM90", label: "SM90", tooltip: "Hopper 路径把 TMA、mbarrier、proxy fence、WGMMA 明确拆成独立 protocol。" },
+    { id: "SM100", label: "SM100", tooltip: "Blackwell 延续 mbarrier / proxy protocol，并把 tcgen05 / Tensor Memory 纳入同一条 completion 体系。" }
+  ];
+
+  const PROTOCOLS = [
+    { id: "execution", label: "Execution Rendezvous", tone: "execution", tooltip: "多个执行单元会合后再继续。它阻塞 execution，但不跟踪异步完成。" },
+    { id: "completion", label: "Completion Tracking", tone: "completion", tooltip: "issue 之后 execution 可以继续；只有 completion object 变 ready，observer 才能确认异步工作完成。" },
+    { id: "visibility", label: "Proxy Visibility", tone: "visibility", tooltip: "fence 只建立 ordering / visibility，不负责 execution rendezvous，也不负责异步完成记账。" },
+    { id: "pipeline", label: "Complete Pipeline", tone: "hardware", tooltip: "把 store、fence、async engine、completion object、polling、consumer、reuse 串成一条完整 protocol。" }
+  ];
+
+  const SPEEDS = [
+    { value: 0.5, label: "0.5x" },
+    { value: 1, label: "1x" },
+    { value: 2, label: "2x" }
+  ];
+
+  const ARCH_META = {
+    SM80: {
+      scope: "CTA",
+      completionObject: "cp.async Group",
+      completionEngine: "cp.async Engine",
+      producer: "Warp",
+      consumer: "CTA consumer",
+      visibilityNote: "SM80 的经典 cp.async 主路径里，没有像 SM90 那样单独凸显的 fence.proxy.async；ordering 常被折叠进 wait_group 与后续 CTA synchronization。",
+      pipelineFence: "Ordering edge folded into wait_group + CTA barrier"
+    },
+    SM90: {
+      scope: "CTA / Warp Group",
+      completionObject: "mbarrier Object",
+      completionEngine: "TMA Engine",
+      producer: "Warp",
+      consumer: "Warp Group consumer",
+      visibilityNote: "SM90 显式区分 generic proxy 与 async proxy；shared-memory handoff 常需要 fence.proxy.async.shared::cta。",
+      pipelineFence: "fence.proxy.async.shared::cta"
+    },
+    SM100: {
+      scope: "CTA / Warp-specialized group",
+      completionObject: "mbarrier Object",
+      completionEngine: "TMA + TCGen05 Engine",
+      producer: "Warp Group",
+      consumer: "Warp-specialized Warp Group",
+      visibilityNote: "SM100 继续保留 proxy ordering，并把 Tensor Memory / tcgen05 结果接回 mbarrier observation。",
+      pipelineFence: "fence.proxy.async + fence.proxy.tensormap"
+    }
+  };
+
+  const els = {
+    archSelector: document.getElementById("archSelector"),
+    protocolSelector: document.getElementById("protocolSelector"),
+    speedSelector: document.getElementById("speedSelector"),
+    playPauseBtn: document.getElementById("playPauseBtn"),
+    stepBtn: document.getElementById("stepBtn"),
+    resetBtn: document.getElementById("resetBtn"),
+    protocolTitle: document.getElementById("protocolTitle"),
+    protocolSubtitle: document.getElementById("protocolSubtitle"),
+    protocolBadges: document.getElementById("protocolBadges"),
+    flowStrip: document.getElementById("flowStrip"),
+    statusGrid: document.getElementById("statusGrid"),
+    timeline: document.getElementById("timeline"),
+    timelineMeta: document.getElementById("timelineMeta"),
+    detailGrid: document.getElementById("detailGrid"),
+    timelineSummary: document.getElementById("timelineSummary"),
+    currentEvent: document.getElementById("currentEvent"),
+    infoPanel: document.getElementById("infoPanel"),
+    consoleBody: document.getElementById("consoleBody"),
+    compilerSteps: document.getElementById("compilerSteps"),
+    compilerGrid: document.getElementById("compilerGrid"),
+    compilerStepLabel: document.getElementById("compilerStepLabel"),
+    toolbarSummary: document.getElementById("toolbarSummary"),
+    clockSummary: document.getElementById("clockSummary"),
+    tooltip: document.getElementById("tooltip")
+  };
+
+  const state = {
+    arch: "SM90",
+    protocol: "pipeline",
+    speed: 1,
+    time: 0,
+    playing: false,
+    lastFrame: 0,
+    scrubbing: null
+  };
+
+  let model = null;
+
+  function clamp(value, min, max) {
+    return Math.min(max, Math.max(min, value));
+  }
+
+  function lerp(a, b, t) {
+    return a + (b - a) * t;
+  }
+
+  function progress(time, start, end) {
+    if (end === start) return time >= end ? 1 : 0;
+    return clamp((time - start) / (end - start), 0, 1);
+  }
+
+  function formatTime(value) {
+    return value.toFixed(2);
+  }
+
+  function timeFromClientX(clientX, rect, duration) {
+    if (!rect || !rect.width) return 0;
+    const ratio = clamp((clientX - rect.left) / rect.width, 0, 1);
+    return ratio * duration;
+  }
+
+  function esc(value) {
+    return String(value)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function findCurrentStep(steps, time) {
+    for (let i = 0; i < steps.length; i++) {
+      const step = steps[i];
+      if (time >= step.start && time < step.end) return i;
+    }
+    return Math.max(0, steps.length - 1);
+  }
+
+  function countAtOrBefore(times, time) {
+    return times.filter((item) => time >= item).length;
+  }
+
+  function runnerState(lane, time) {
+    let current = lane.segments[0];
+    for (const segment of lane.segments) {
+      if (time < segment.start) break;
+      current = segment;
+      if (time >= segment.start && time < segment.end) break;
+    }
+    const seg = current;
+    const segProgress = progress(time, seg.start, seg.end);
+    const x = seg.x0 === seg.x1 ? seg.x0 : lerp(seg.x0, seg.x1, segProgress);
+    return { x, segment: seg };
+  }
+
+  function sharedCells(states, sweep) {
+    return {
+      kind: "memory",
+      title: "Shared Memory View",
+      hint: "颜色表示当前 memory state；不是 instruction 装饰。",
+      cells: states.map((state, index) => ({
+        label: `tile ${index}`,
+        state
+      })),
+      sweep
+    };
+  }
+
+  function buildExecutionModel(arch) {
+    const archConfig = {
+      SM80: {
+        scope: "CTA",
+        ptx: ["bar.sync 0", "__syncthreads()"],
+        triton: ["ttg.barrier"],
+        hardware: "Ampere 上最常见的是 CTA 内 bar.sync。它是 execution rendezvous，不是 completion object。"
+      },
+      SM90: {
+        scope: "CTA",
+        ptx: ["bar.sync 0", "barrier.cluster.arrive / wait（跨 CTA 变体）"],
+        triton: ["ttg.barrier", "ttng.cluster_barrier"],
+        hardware: "Hopper 没有改变 rendezvous 的语义；改变的是 cluster 级实现与其它 async protocol 的并存方式。"
+      },
+      SM100: {
+        scope: "CTA / warp-specialized partition",
+        ptx: ["bar.sync", "named CTA barrier"],
+        triton: ["ttg.barrier", "warp-specialized partition barrier"],
+        hardware: "Blackwell 经常把 rendezvous 用在 warp specialization 的 buffer reuse 点，但它仍然只负责 execution 会合。"
+      }
+    }[arch];
+
+    const duration = 4.20;
+    const releaseTime = 2.55;
+    const arrivals = [
+      { name: "Warp0", arrive: 1.05, subtitle: "最先到达 checkpoint" },
+      { name: "Warp1", arrive: 1.45, subtitle: "略慢于 Warp0" },
+      { name: "Warp2", arrive: 1.80, subtitle: "仍未满足 rendezvous" },
+      { name: "Warp3", arrive: 2.55, subtitle: "最后到达并触发 release" }
+    ];
+
+    const lanes = arrivals.map((item) => ({
+      name: item.name,
+      subtitle: item.subtitle,
+      tooltip: "一个 Warp 的 execution lane。bar.sync 之前可以独立前进；到达后若未凑齐全部参与者，就只能等待。",
+      showRunner: true,
+      segments: [
+        { start: 0.00, end: item.arrive, x0: 5, x1: 55, tone: "execution", state: "Running" },
+        { start: item.arrive, end: releaseTime, x0: 55, x1: 55, tone: "waiting", state: item.arrive < releaseTime ? "Waiting" : "Arrive + release" },
+        { start: releaseTime, end: duration, x0: 55, x1: 94, tone: "execution", state: "Continue" }
+      ],
+      markers: [
+        { time: item.arrive, label: "arrive", tooltip: "Warp 已到达 rendezvous，但如果不是最后一个到达者，execution 仍不能继续。" }
+      ]
+    }));
+
+    return {
+      id: "execution",
+      duration,
+      title: "Execution Rendezvous",
+      subtitle: "多个 Warp 在同一 execution point 会合。早到者等待，最后一个到达后统一放行。",
+      badges: [
+        { label: "Architecture", value: arch },
+        { label: "Scope", value: archConfig.scope },
+        { label: "Invariant", value: "No completion tracking" }
+      ],
+      dataPath: {
+        nodes: [
+          { tone: "execution", kicker: "Participants", name: "Warp0..Warp3", sub: "execution participants" },
+          { tone: "execution", kicker: "Checkpoint", name: "bar.sync", sub: "shared rendezvous point" },
+          { tone: "execution", kicker: "Release", name: "Warp0..Warp3", sub: "continue together" }
+        ],
+        note: "这个 protocol 没有异步数据搬移目标。它组织的是 execution participants 如何会合，而不是字节从哪搬到哪。"
+      },
+      toolbarSummary: "Execution rendezvous 只回答“谁必须先会合再继续”。它不观察 TMA、cp.async、WGMMA 或 tcgen05 是否完成。",
+      flow: [
+        { tone: "execution", kicker: "1", name: "Participants", desc: "多个 Warp 独立执行。", start: 0.00, end: 0.85 },
+        { tone: "execution", kicker: "2", name: "Arrive", desc: "先到者抵达同一 checkpoint。", start: 0.85, end: 1.95 },
+        { tone: "waiting", kicker: "3", name: "Wait", desc: "未凑齐全部参与者前，execution 停住。", start: 1.05, end: releaseTime },
+        { tone: "execution", kicker: "4", name: "Release", desc: "最后一个 Warp 到达后统一放行。", start: releaseTime, end: 3.05 },
+        { tone: "execution", kicker: "5", name: "Continue", desc: "全部 Warp 同步继续。", start: 3.05, end: duration + 0.01 }
+      ],
+      lanes,
+      laneDecorations: [
+        { x: 55, label: "bar.sync / rendezvous", tone: "execution", tooltip: "这里是 execution checkpoint。它不是 completion object，也不会帮你跟踪异步硬件是否完成。" }
+      ],
+      compilerSteps: [
+        {
+          title: "Emit rendezvous",
+          start: 0.00,
+          end: 1.20,
+          mapping: {
+            TTIR: "tile handoff + explicit sync point",
+            TTGIR: arch === "SM90" ? "ttg.barrier / ttng.cluster_barrier" : "ttg.barrier",
+            PTX: archConfig.ptx[0],
+            Hardware: "participants converge toward the same execution checkpoint"
+          }
+        },
+        {
+          title: "Block early arrivals",
+          start: 1.20,
+          end: releaseTime,
+          mapping: {
+            TTIR: "same execution dependency",
+            TTGIR: "rendezvous still pending",
+            PTX: "bar.sync state not yet satisfied",
+            Hardware: "early arrivals stall; no async completion is queried"
+          }
+        },
+        {
+          title: "Release all participants",
+          start: releaseTime,
+          end: duration + 0.01,
+          mapping: {
+            TTIR: "dependency resolved",
+            TTGIR: "barrier satisfied",
+            PTX: "bar.sync releases all threads in scope",
+            Hardware: "fan-out happens only after the last participant arrives"
+          }
+        }
+      ],
+      logs: [
+        { time: 0.00, text: "四个 Warp 独立开始执行，当前没有 completion object 参与。", tone: "execution" },
+        { time: 1.05, text: "Warp0 先到达 bar.sync，但仍需等待其它参与者。", tone: "waiting" },
+        { time: 1.45, text: "Warp1 到达同一 checkpoint。execution rendezvous 尚未满足。", tone: "waiting" },
+        { time: 1.80, text: "Warp2 到达；仍然缺少最后一个 Warp。", tone: "waiting" },
+        { time: 2.55, text: "Warp3 最后到达。bar.sync 满足，所有参与者同时 release。", tone: "execution" },
+        { time: 3.05, text: "四个 Warp 以统一的 post-barrier 顺序继续前进。", tone: "execution" }
+      ],
+      info: {
+        purpose: "保证多个 execution unit 在继续之前先会合。它回答的是控制流 rendezvous，而不是异步硬件 completion。",
+        producer: "多个 Warp 自身就是参与者，没有独立 hardware engine。",
+        consumer: "同一 scope 内所有等待继续的 Warp。",
+        completion: "无。这个 protocol 不维护 phase bit、remaining bytes、group scoreboard 之类的 completion state。",
+        visibility: "bar.sync 可顺带建立 scope 内 ordering，但那只是 barrier 的副作用，不是这个 protocol 的主职责。",
+        scope: archConfig.scope,
+        ptx: archConfig.ptx,
+        triton: archConfig.triton,
+        hardware: archConfig.hardware,
+        invariants: [
+          "Execution rendezvous 不会跟踪异步完成。",
+          "如果最后一个参与者还没到达，先到者只能等待。",
+          "换到新架构后，rendezvous 的语义不变，只是实现与 scope 选择变了。"
+        ]
+      },
+      view(time) {
+        const arrived = countAtOrBefore(arrivals.map((item) => item.arrive), time);
+        const released = time >= releaseTime;
+        const waiters = released ? 0 : arrived;
+        return {
+          axes: [
+            {
+              tone: released ? "execution" : "waiting",
+              label: "Execution",
+              value: released ? "Released" : `${arrived}/4 arrived`,
+              desc: released ? "最后一个 Warp 已到达，checkpoint 已放行。" : "execution 在 checkpoint 聚合，未凑齐之前继续阻塞。"
+            },
+            {
+              tone: "muted",
+              label: "Completion",
+              value: "None",
+              desc: "这里没有 mbarrier、cp.async Group 或其它 completion object。"
+            },
+            {
+              tone: "visibility",
+              label: "Visibility",
+              value: "Incidental",
+              desc: "如果有 ordering，也是 rendezvous 的副作用，不是独立 visibility fence。"
+            }
+          ],
+          targetFocus: {
+            label: "Current Target",
+            value: released ? "Execution checkpoint satisfied" : "bar.sync checkpoint waiting for all participants",
+            note: released ? "当前目标不是某块 memory，而是所有参与者已完成 rendezvous，可以继续执行。" : "当前被等待的对象是 execution checkpoint，本例没有独立 completion object 或 async destination。"
+          },
+          details: [
+            {
+              kind: "fields",
+              title: "Rendezvous State",
+              hint: "重点看 arrival count 和 release point。",
+              fields: [
+                { label: "Participants", value: "4 Warp", note: "统一 scope 内的执行参与者。" },
+                { label: "Arrived", value: `${arrived}/4`, note: "只统计到达 checkpoint 的 Warp。" },
+                { label: "Waiting", value: released ? "0" : String(waiters), note: "先到者必须停住，直到最后一个到达。" },
+                { label: "Release", value: released ? "Yes" : "No", note: "release 由最后一个到达者触发。" }
+              ]
+            },
+            {
+              kind: "list",
+              title: "Fan-In / Fan-Out",
+              hint: "这是 execution protocol，不是 instruction 记忆卡。",
+              items: [
+                "Fan-In：不同 Warp 以不同速度汇聚到同一 checkpoint。",
+                "Wait：checkpoint 未满足时，execution 被阻塞，但没有异步完成状态被观察。",
+                "Fan-Out：最后一个 Warp 到达后，同一 scope 内参与者一起继续。"
+              ]
+            }
+          ]
+        };
+      }
+    };
+  }
+
+  function buildCompletionModel(arch) {
+    const meta = ARCH_META[arch];
+    const duration = 5.30;
+    const isSM80 = arch === "SM80";
+    const isSM100 = arch === "SM100";
+
+    const lanes = isSM80
+      ? [
+          {
+            name: "Warp",
+            subtitle: "issue 后立刻继续执行",
+            tooltip: "Warp 发出 cp.async 之后不会原地阻塞；只有执行到 wait_group 时，才显式观察 completion。",
+            showRunner: true,
+            segments: [
+              { start: 0.00, end: 0.78, x0: 5, x1: 24, tone: "execution", state: "Setup" },
+              { start: 0.78, end: 2.60, x0: 24, x1: 66, tone: "execution", state: "Independent work" },
+              { start: 2.60, end: 3.72, x0: 66, x1: 66, tone: "waiting", state: "wait_group" },
+              { start: 3.72, end: duration, x0: 66, x1: 94, tone: "execution", state: "Resume" }
+            ],
+            markers: [
+              { time: 0.78, label: "cp.async", tooltip: "issue 只是发起；它不等于 shared-memory tile 已经可安全消费。" },
+              { time: 2.60, label: "wait_group", tooltip: "这里才开始显式观察本 Warp 发出的 async group 是否完成。" }
+            ]
+          },
+          {
+            name: "Shared Memory",
+            subtitle: "tile 等待被 CTA 消费",
+            tooltip: "cp.async 把数据搬到 shared memory，但 wait_group 只保证 issuing thread 观察到 completion；CTA-wide 消费通常还需要后续 barrier。",
+            showRunner: false,
+            segments: [
+              { start: 0.82, end: 3.60, x0: 14, x1: 86, tone: "hardware", state: "Copy in flight" },
+              { start: 3.72, end: duration, x0: 70, x1: 92, tone: "visibility", state: "Now consumable" }
+            ],
+            markers: [
+              { time: 3.60, label: "copy done", tooltip: "engine 完成拷贝；后续是否 CTA-wide 可见，还要看同步组织方式。" }
+            ]
+          },
+          {
+            name: "cp.async Group",
+            subtitle: "per-thread completion scoreboard",
+            tooltip: "这是 completion bookkeeping，不是 execution barrier。它记录 outstanding group，而不是让所有线程会合。",
+            showRunner: false,
+            segments: [
+              { start: 0.78, end: 3.60, x0: 24, x1: 74, tone: "completion", state: "Outstanding group" }
+            ],
+            markers: [
+              { time: 3.72, label: "ready", tooltip: "wait_group 观察到 outstanding group 已满足。" }
+            ]
+          },
+          {
+            name: "cp.async Engine",
+            subtitle: "独立于 Warp 的硬件执行",
+            tooltip: "硬件 engine 独立工作；Warp issue 之后可以先去做别的事情。",
+            showRunner: true,
+            segments: [
+              { start: 0.82, end: 3.60, x0: 12, x1: 90, tone: "hardware", state: "Transfer" },
+              { start: 3.60, end: duration, x0: 90, x1: 94, tone: "muted", state: "Idle" }
+            ],
+            markers: [
+              { time: 3.60, label: "engine complete", tooltip: "硬件完成与 Warp 是否已经执行到 wait_group 是两件独立的事。" }
+            ]
+          }
+        ]
+      : [
+          {
+            name: isSM100 ? "Warp Group" : "Warp",
+            subtitle: isSM100 ? "warp-specialized consumer reaches wait later" : "issue 之后继续做独立工作",
+            tooltip: "completion protocol 的关键点是：issue 后 execution 可以继续，observer 直到 wait 才真正查询 completion state。",
+            showRunner: true,
+            segments: [
+              { start: 0.00, end: 0.90, x0: 5, x1: 24, tone: "execution", state: "Init + issue" },
+              { start: 0.90, end: 2.80, x0: 24, x1: 68, tone: "execution", state: "Independent work" },
+              { start: 2.80, end: 4.18, x0: 68, x1: 68, tone: "waiting", state: "Polling wait" },
+              { start: 4.18, end: duration, x0: 68, x1: 94, tone: "execution", state: "Resume" }
+            ],
+            markers: [
+              { time: 0.90, label: isSM100 ? "commit" : "async issue", tooltip: "issue / commit 只把 future completion 挂到 object 上，不会立刻让 consumer 继续。" },
+              { time: 2.80, label: "wait", tooltip: "wait 开始观察 completion object 的 ready 条件。" },
+              { time: 4.18, label: "resume", tooltip: "observer 看到 phase / transaction 条件满足后才继续。" }
+            ]
+          },
+          {
+            name: isSM100 ? "Tensor Memory" : "Shared Memory",
+            subtitle: isSM100 ? "结果等待被后续阶段消费" : "tile 被 TMA 写入 shared memory",
+            tooltip: isSM100
+              ? "SM100 常把 tcgen05 的完成折回 mbarrier 观察；结果主体则驻留在 Tensor Memory。"
+              : "TMA 把 tile 写进 shared memory，但 Warp issue 之后不会同步等待它写完。",
+            showRunner: false,
+            segments: [
+              { start: 0.96, end: 4.00, x0: 16, x1: 88, tone: "hardware", state: isSM100 ? "Compute / writeback in flight" : "Transfer in flight" },
+              { start: 4.18, end: duration, x0: 72, x1: 92, tone: "visibility", state: "Consumable" }
+            ],
+            markers: [
+              { time: 4.00, label: isSM100 ? "result done" : "bytes reach zero", tooltip: "真正 completion 先发生在 engine / object 侧，然后 observer 才能看到 ready。" }
+            ]
+          },
+          {
+            name: "mbarrier Object",
+            subtitle: isSM100 ? "completion bookkeeping for tcgen05 / async work" : "shared-memory completion object",
+            tooltip: "mbarrier 追踪的是完成条件，不是 execution rendezvous。它可以存放 expected bytes、transaction count、phase bit 等状态。",
+            showRunner: false,
+            segments: [
+              { start: 0.40, end: 0.78, x0: 12, x1: 20, tone: "completion", state: "Init / expect" },
+              { start: 0.90, end: 4.00, x0: 20, x1: 76, tone: "completion", state: "Outstanding" },
+              { start: 4.00, end: duration, x0: 76, x1: 92, tone: "visibility", state: "Ready / next phase" }
+            ],
+            markers: [
+              { time: 0.44, label: "expect", tooltip: "设置本轮 completion 条件；不是 execution barrier。" },
+              { time: 4.04, label: "phase flips", tooltip: "completion 条件满足后，phase bit 切换，observer 才能放行。" }
+            ]
+          },
+          {
+            name: isSM100 ? "TCGen05 Engine" : "TMA Engine",
+            subtitle: "独立工作，直到硬件完成",
+            tooltip: "独立 hardware engine 在 Warp issue 之后自行前进。它完成时才回写 completion bookkeeping。",
+            showRunner: true,
+            segments: [
+              { start: 0.96, end: 4.00, x0: 12, x1: 90, tone: "hardware", state: "Working" },
+              { start: 4.00, end: duration, x0: 90, x1: 94, tone: "muted", state: "Idle" }
+            ],
+            markers: [
+              { time: 4.00, label: "complete", tooltip: "engine 完成与 observer 何时来到 wait 不是同一时刻。" }
+            ]
+          }
+        ];
+
+    return {
+      id: "completion",
+      duration,
+      title: "Completion Tracking",
+      subtitle: isSM80
+        ? "Warp issue cp.async 后继续执行；直到 wait_group 时，才显式观察 completion。"
+        : "Barrier object 负责 completion bookkeeping。issue 不阻塞 execution，wait 才开始观察 ready 条件。",
+      badges: [
+        { label: "Architecture", value: arch },
+        { label: "Completion Object", value: isSM80 ? "cp.async Group" : "mbarrier" },
+        { label: "Invariant", value: "Issue != complete" }
+      ],
+      dataPath: isSM80
+        ? {
+            nodes: [
+              { tone: "execution", kicker: "Source", name: "Global Memory", sub: "tile source bytes" },
+              { tone: "hardware", kicker: "Engine", name: "cp.async Engine", sub: "independent transfer engine" },
+              { tone: "visibility", kicker: "Target", name: "Shared Memory", sub: "destination tile buffer" },
+              { tone: "completion", kicker: "Observe", name: "cp.async Group", sub: "completion scoreboard" }
+            ],
+            note: "先明确目标：cp.async 把字节从 Global Memory 搬到 Shared Memory。cp.async Group 不是目标，它只是观察这次搬运是否完成。"
+          }
+        : isSM100
+          ? {
+              nodes: [
+                { tone: "execution", kicker: "Producer", name: "Warp Group", sub: "issues async compute/copy work" },
+                { tone: "hardware", kicker: "Engine", name: "TCGen05 Engine", sub: "independent hardware execution" },
+                { tone: "visibility", kicker: "Target", name: "Tensor Memory", sub: "result destination" },
+                { tone: "completion", kicker: "Observe", name: "mbarrier Object", sub: "completion bookkeeping" }
+              ],
+              note: "本页强调的是目标对象与完成观察分离：结果落在 Tensor Memory，但 consumer 仍通过 Shared-Memory mbarrier 观察 completion。"
+            }
+          : {
+              nodes: [
+                { tone: "execution", kicker: "Source", name: "Global Memory", sub: "tile source bytes" },
+                { tone: "hardware", kicker: "Engine", name: "TMA Engine", sub: "bulk tensor transfer" },
+                { tone: "visibility", kicker: "Target", name: "Shared Memory", sub: "destination tile buffer" },
+                { tone: "completion", kicker: "Observe", name: "mbarrier Object", sub: "completion bookkeeping" }
+              ],
+              note: "在 SM90 这条线里，最重要的是先看清搬运目标：TMA 把 tile 从 Global Memory 写进 Shared Memory。mbarrier 只负责告诉你这次写入什么时候真的完成。"
+            },
+      toolbarSummary: "Completion tracking 的主线是：Producer issue 后立刻离开；Hardware Engine 独立执行；Observer 直到 wait / poll 才看到 ready state。",
+      flow: [
+        { tone: "execution", kicker: "1", name: "Producer", desc: "Warp / Warp Group 准备 async work。", start: 0.00, end: 0.70 },
+        { tone: "completion", kicker: "2", name: "Issue", desc: "发起 async work，但不等待完成。", start: 0.70, end: 1.02 },
+        { tone: "hardware", kicker: "3", name: "Hardware Engine", desc: "TMA、cp.async 或 tcgen05 独立运行。", start: 1.00, end: 4.00 },
+        { tone: "completion", kicker: "4", name: "Completion Object", desc: isSM80 ? "Group scoreboard 跟踪 outstanding group。" : "mbarrier 记录 transaction / phase state。", start: 0.82, end: 4.05 },
+        { tone: "waiting", kicker: "5", name: "Observation", desc: "observer 在 wait / poll 处查询 ready。", start: 2.60, end: 4.18 },
+        { tone: "execution", kicker: "6", name: "Reuse", desc: "看到 ready 后才安全消费或复用。", start: 4.18, end: duration + 0.01 }
+      ],
+      lanes,
+      laneDecorations: [
+        { x: 68, label: "wait / observation", tone: "waiting", tooltip: "真正的 completion observation 发生在这里，而不是 issue 的时刻。" }
+      ],
+      compilerSteps: isSM80
+        ? [
+            {
+              title: "Emit async copy",
+              start: 0.00,
+              end: 0.96,
+              mapping: {
+                TTIR: "ttg.async_copy_global_to_local",
+                TTGIR: "ttg.async_commit_group",
+                PTX: "cp.async + cp.async.commit_group",
+                Hardware: "copy enters the cp.async engine"
+              }
+            },
+            {
+              title: "Track outstanding group",
+              start: 0.96,
+              end: 3.60,
+              mapping: {
+                TTIR: "async group still live",
+                TTGIR: "per-thread outstanding group",
+                PTX: "cp.async group scoreboard",
+                Hardware: "engine progresses independently of Warp execution"
+              }
+            },
+            {
+              title: "Observe completion",
+              start: 2.60,
+              end: duration + 0.01,
+              mapping: {
+                TTIR: "ttg.async_wait",
+                TTGIR: "ttg.async_wait + optional ttg.barrier",
+                PTX: "cp.async.wait_group",
+                Hardware: "issuing Warp finally observes completion; CTA-wide handoff may still need a barrier"
+              }
+            }
+          ]
+        : [
+            {
+              title: "Initialize completion object",
+              start: 0.00,
+              end: 0.78,
+              mapping: {
+                TTIR: "ttng.init_barrier",
+                TTGIR: isSM100 ? "ttng.init_barrier + completion expectation" : "ttng.init_barrier + ttng.barrier_expect",
+                PTX: isSM100 ? "mbarrier.init" : "mbarrier.init + mbarrier.expect_tx",
+                Hardware: "shared-memory completion object is armed for the next async transaction"
+              }
+            },
+            {
+              title: "Issue async work",
+              start: 0.78,
+              end: 1.05,
+              mapping: {
+                TTIR: isSM100 ? "ttng.tc_gen5_mma" : "ttng.async_tma_load",
+                TTGIR: isSM100 ? "ttng.tc_gen5_commit" : "ttng.async_tma_copy_global_to_local",
+                PTX: isSM100 ? "tcgen05.mma + tcgen05.commit" : "cp.async.bulk.tensor",
+                Hardware: isSM100 ? "TensorCore pipeline starts work and links completion to mbarrier" : "TMA engine starts a bulk transfer and will later decrement barrier state"
+              }
+            },
+            {
+              title: "Observe ready state",
+              start: 2.80,
+              end: 4.18,
+              mapping: {
+                TTIR: "ttng.wait_barrier",
+                TTGIR: "ttng.wait_barrier",
+                PTX: "mbarrier.try_wait.parity",
+                Hardware: "observer polls phase / transaction condition until completion becomes visible"
+              }
+            },
+            {
+              title: "Consume / reuse",
+              start: 4.18,
+              end: duration + 0.01,
+              mapping: {
+                TTIR: "consumer resumes",
+                TTGIR: isSM100 ? "warp-specialized consumer resumes" : "shared-memory consumer resumes",
+                PTX: isSM100 ? "post-wait tensor-memory use" : "post-wait shared-memory use",
+                Hardware: "now the result can be safely consumed because completion has actually been observed"
+              }
+            }
+          ],
+      logs: isSM80
+        ? [
+            { time: 0.20, text: "Warp 准备 cp.async group。此时还没有任何 completion 被观察。", tone: "execution" },
+            { time: 0.78, text: "Warp issue cp.async，并继续前进。issue 本身不阻塞 execution。", tone: "completion" },
+            { time: 1.10, text: "cp.async Engine 独立搬运数据；Warp 在做别的工作。", tone: "hardware" },
+            { time: 2.60, text: "Warp 走到 wait_group，开始显式观察 group 是否完成。", tone: "waiting" },
+            { time: 3.60, text: "Engine 完成最后一段拷贝，outstanding group 归零。", tone: "completion" },
+            { time: 3.72, text: "wait_group 满足，Warp 恢复执行。若要让整个 CTA 消费，通常还需要 CTA barrier。", tone: "execution" }
+          ]
+        : [
+            { time: 0.12, text: isSM100 ? "初始化 mbarrier，准备接 tcgen05 completion。" : "初始化 mbarrier，并登记本轮 expected transaction。" , tone: "completion" },
+            { time: 0.90, text: isSM100 ? "Warp Group 发起 tcgen05，并把 completion 挂到 mbarrier。" : "Warp 发起 async_tma_load，随后立刻继续执行。", tone: "completion" },
+            { time: 1.08, text: `${isSM100 ? "TCGen05 Engine" : "TMA Engine"} 独立开始工作；execution 与 completion 已经解耦。`, tone: "hardware" },
+            { time: 2.80, text: "consumer 走到 wait，进入 polling state。这里才真正观察 completion object。", tone: "waiting" },
+            { time: 4.00, text: isSM100 ? "tcgen05 completion 已经记到账到 mbarrier。" : "剩余 bytes 降到 0，transaction count 归零。", tone: "completion" },
+            { time: 4.04, text: "phase bit 切换。ready state 变为 true。", tone: "completion" },
+            { time: 4.18, text: "observer 看到 ready 后恢复执行。completion protocol 到此闭环。", tone: "execution" }
+          ],
+      info: {
+        purpose: isSM80
+          ? "观察 cp.async 这类异步搬运是否真的完成。核心不是 Warp 会不会等待，而是 wait_group 何时让 issuing Warp 看到 group ready。"
+          : "观察 async hardware completion。核心不是 issue，而是 completion object 何时变 ready，observer 何时真的看到了这个 ready state。",
+        producer: isSM80 ? "发起 cp.async 的 Warp。" : isSM100 ? "发起 tcgen05 / async work 的 Warp Group。" : "发起 TMA load 的 Warp。",
+        consumer: isSM80 ? "同一个 issuing Warp；CTA-wide consumer 另需组织同步。" : "执行 wait / poll 的 observer，通常是 consumer Warp 或 Warp Group。",
+        completion: isSM80
+          ? "cp.async Group 是 per-thread completion scoreboard。它不是 execution barrier，也不会自动把 per-thread 完成升级成 CTA rendezvous。"
+          : "mbarrier 是 shared-memory completion object。它跟踪的是 transaction / phase 的完成条件，而不是谁已经在控制流上会合。",
+        visibility: isSM80
+          ? "如果后面要把数据作为 CTA-wide 共享 tile 使用，仍要单独处理 ordering / rendezvous。wait_group 只覆盖 issuing Warp 的 completion observation。"
+          : "mbarrier 负责 completion，不自动替代所有 proxy ordering。是否还需要 fence.proxy.async，要看 producer / consumer 是否跨 proxy。",
+        scope: meta.scope,
+        ptx: isSM80
+          ? ["cp.async", "cp.async.commit_group", "cp.async.wait_group", "bar.sync（CTA handoff 时常配套出现）"]
+          : isSM100
+            ? ["mbarrier.init", "tcgen05.mma", "tcgen05.commit", "mbarrier.try_wait.parity"]
+            : ["mbarrier.init", "mbarrier.expect_tx", "cp.async.bulk.tensor", "mbarrier.try_wait.parity"],
+        triton: isSM80
+          ? ["ttg.async_copy_global_to_local", "ttg.async_commit_group", "ttg.async_wait", "ttg.barrier"]
+          : isSM100
+            ? ["ttng.init_barrier", "ttng.tc_gen5_mma", "ttng.tc_gen5_commit", "ttng.wait_barrier"]
+            : ["ttng.init_barrier", "ttng.barrier_expect", "ttng.async_tma_copy_global_to_local", "ttng.wait_barrier"],
+        hardware: isSM80
+          ? "Ampere 主要用 per-thread async group 跟踪 completion。要让 tile 作为 CTA 级公共资源消费，还需要额外同步组织。"
+          : isSM100
+            ? "Blackwell 可以把 tcgen05 completion 折回 mbarrier 统一观察。结果主体可能在 Tensor Memory，但 completion observation 仍走 mbarrier。"
+            : "Hopper 把 TMA 完成明确记到账到 shared-memory mbarrier。Warp 直到 wait 时才真正看到 ready，而不是在 issue 的瞬间看到。",
+        invariants: [
+          "Issue 不等于 complete。",
+          isSM80 ? "completion scoreboard 不负责 execution rendezvous。" : "mbarrier 不负责 execution rendezvous。",
+          "observer 只有在 wait / poll 看到 ready 后，才可以安全地把异步结果当作已完成。"
+        ]
+      },
+      view(time) {
+        if (isSM80) {
+          const engineP = progress(time, 0.82, 3.60);
+          const outstanding = time < 3.60 ? 1 : 0;
+          const cells = Array.from({ length: 8 }, (_, index) => {
+            const filled = index < Math.floor(engineP * 8);
+            return filled ? (time < 3.72 ? "inflight" : "visible") : "empty";
+          });
+          return {
+            axes: [
+              {
+                tone: time < 2.60 ? "execution" : time < 3.72 ? "waiting" : "execution",
+                label: "Execution",
+                value: time < 2.60 ? "Running" : time < 3.72 ? "At wait_group" : "Resumed",
+                desc: "Warp issue 后继续跑；真正的等待出现在 wait_group。"
+              },
+              {
+                tone: outstanding ? "completion" : "visibility",
+                label: "Completion",
+                value: outstanding ? "Outstanding group" : "Ready",
+                desc: "group scoreboard 只记录 outstanding cp.async group。"
+              },
+              {
+                tone: time < 3.72 ? "muted" : "visibility",
+                label: "Visibility",
+                value: time < 3.72 ? "CTA handoff pending" : "Consumable",
+                desc: "wait_group 之后，issuing Warp 看到 completion；CTA-wide handoff 仍需单独组织。"
+              }
+            ],
+            targetFocus: {
+              label: "Current Target",
+              value: time < 3.72 ? "Shared Memory tile is still being filled" : "Shared Memory tile can now be consumed",
+              note: time < 3.72
+                ? "目标对象是 Shared Memory tile。cp.async Engine 还在把 Global Memory 的数据搬进来；cp.async Group 只在旁边记录 completion。"
+                : "搬运目标仍然是这块 Shared Memory tile，只是此刻 issuing Warp 已经观察到它完成。若要 CTA-wide handoff，还需额外同步。"
+            },
+            details: [
+              {
+                kind: "fields",
+                title: "cp.async Group State",
+                hint: "SM80 这里没有 mbarrier；completion 由 group scoreboard 表示。",
+                fields: [
+                  { label: "Committed Groups", value: time < 0.78 ? "0" : "1", note: "本例只演示一个 outstanding group。" },
+                  { label: "Outstanding", value: String(outstanding), note: "只表示 issuing Warp 仍有未完成 group。" },
+                  { label: "Wait Target", value: "0 group", note: "wait_group 等待 outstanding group 降到目标值。" },
+                  { label: "Ready", value: outstanding ? "No" : "Yes", note: "ready 只意味着 issuing Warp 看到 group 完成。" }
+                ]
+              },
+              sharedCells(cells, null)
+            ]
+          };
+        }
+
+        const engineP = progress(time, 0.96, 4.00);
+        const ready = time >= 4.04;
+        const totalBytes = isSM100 ? 0 : 128;
+        const remainingBytes = isSM100 ? 0 : Math.max(0, Math.round((1 - engineP) * totalBytes / 16) * 16);
+        const txCount = ready ? 0 : 1;
+        const phase = ready ? 1 : 0;
+        const cells = Array.from({ length: 8 }, (_, index) => {
+          if (index >= Math.floor(engineP * 8)) return "empty";
+          if (!ready) return "inflight";
+          return "visible";
+        });
+        return {
+          axes: [
+            {
+              tone: time < 2.80 ? "execution" : time < 4.18 ? "waiting" : "execution",
+              label: "Execution",
+              value: time < 2.80 ? "Running" : time < 4.18 ? "Polling wait" : "Resumed",
+              desc: "wait 之前，producer / consumer 的 execution 可以与 engine 并行。"
+            },
+            {
+              tone: ready ? "visibility" : "completion",
+              label: "Completion",
+              value: ready ? "Ready" : txCount ? "Outstanding" : "Pending phase flip",
+              desc: "completion object 先记账，再被 observer 观察到。"
+            },
+            {
+              tone: ready ? "visibility" : "muted",
+              label: "Visibility",
+              value: ready ? "Consumable" : "Not yet consumable",
+              desc: ready ? "observer 已经看到 ready，所以后续消费合法。" : "issue 已发生，但完成结果还不能当作已可用。"
+            }
+          ],
+          targetFocus: isSM100
+            ? {
+                label: "Current Target",
+                value: ready ? "Tensor Memory result can now be consumed" : "Tensor Memory result is still being produced",
+                note: ready
+                  ? "结果目标对象是 Tensor Memory；observer 已通过 mbarrier 看到了 completion。"
+                  : "当前 hardware engine 正在生成写往 Tensor Memory 的结果。mbarrier 和 wait 只负责观察这件事何时完成。"
+              }
+            : {
+                label: "Current Target",
+                value: ready ? "Shared Memory tile can now be consumed" : "Shared Memory tile is still being filled by TMA",
+                note: ready
+                  ? "目标对象是 Shared Memory tile。TMA 已完成把 Global Memory 的 tile 写到这里，observer 也已经看到 ready。"
+                  : "目标对象始终是 Shared Memory tile。之所以 TMA Engine 和 Shared Memory lane 都在动，是因为一个表示 engine 在工作，另一个表示目标 tile 的状态还在变化。"
+              },
+          details: [
+            {
+              kind: "fields",
+              title: "mbarrier State",
+              hint: "Expected Bytes / Remaining Bytes / Transaction Count / Phase Bit / Ready State 是 completion protocol 的核心字段。",
+              fields: [
+                { label: "Expected Bytes", value: String(totalBytes), note: isSM100 ? "tcgen05 completion 例子以 transaction/phase 为主，bytes 字段可为 0。" : "本轮 barrier 期待的总字节数。" },
+                { label: "Remaining Bytes", value: String(remainingBytes), note: isSM100 ? "本例主要看 transaction 与 phase 变化。" : "engine 完成过程中逐步递减。" },
+                { label: "Transaction Count", value: String(txCount), note: "为 0 才说明 completion bookkeeping 满足。" },
+                { label: "Phase Bit", value: String(phase), note: "phase flip 让 observer 能区分本轮与下一轮。" },
+                { label: "Ready State", value: ready ? "True" : "False", note: "observer 真正看到 ready 后才恢复执行。" },
+                { label: "Observer", value: time < 2.80 ? "Not at wait" : ready ? "Observed ready" : "Polling", note: "wait 才是 observation 点。" }
+              ]
+            },
+            sharedCells(cells, null)
+          ]
+        };
+      }
+    };
+  }
+
+  function buildVisibilityModel(arch) {
+    const meta = ARCH_META[arch];
+    const duration = 4.80;
+    const fenceStart = 1.55;
+    const fenceEnd = 2.35;
+    const genericWriteEnd = 1.18;
+    const observeTime = 2.92;
+    const explicitFence = arch !== "SM80";
+
+    const lanes = [
+      {
+        name: "Generic Proxy",
+        subtitle: "普通 ld/st 的可见性世界",
+        tooltip: "generic proxy 写 shared memory 时，写脏了数据，但 execution 不会因为 fence 而停住。",
+        showRunner: true,
+        segments: [
+          { start: 0.00, end: genericWriteEnd, x0: 5, x1: 30, tone: "dirty", state: "Dirty writes" },
+          { start: genericWriteEnd, end: fenceStart, x0: 30, x1: 38, tone: "execution", state: "Approach fence" },
+          { start: fenceStart, end: duration, x0: 38, x1: 94, tone: "execution", state: "Continue" }
+        ],
+        markers: [
+          { time: fenceStart, label: explicitFence ? "fence.proxy.async" : "ordering edge", tooltip: explicitFence ? "fence 只建立 generic -> async ordering，不阻塞 execution。" : "SM80 把这条 ordering 更常折叠进其它同步边界；这里用抽象 protocol 表示它。" }
+        ]
+      },
+      {
+        name: "Shared Memory",
+        subtitle: "dirty -> visible 的边界扫过 tile",
+        tooltip: "可见性边界改变的是 memory ordering，而不是线程是否暂停执行。",
+        showRunner: false,
+        segments: [
+          { start: 0.28, end: genericWriteEnd, x0: 12, x1: 44, tone: "dirty", state: "Dirty view" },
+          { start: fenceStart, end: fenceEnd, x0: 44, x1: 64, tone: "visibility", state: "Visibility sweep" },
+          { start: fenceEnd, end: duration, x0: 64, x1: 92, tone: "visibility", state: "Visible to async proxy" }
+        ],
+        markers: [
+          { time: fenceEnd, label: "ordered", tooltip: "当 sweep 完成后，async proxy 再去观察这块内存才是安全的。" }
+        ]
+      },
+      {
+        name: "Async Proxy",
+        subtitle: "异步 consumer 的可见性世界",
+        tooltip: "async proxy 不是自动看到 generic proxy 的最新写入；ordering 需要单独建立。",
+        showRunner: true,
+        segments: [
+          { start: 0.00, end: observeTime, x0: 5, x1: 72, tone: "hardware", state: "Independent progress" },
+          { start: observeTime, end: duration, x0: 72, x1: 94, tone: "visibility", state: "Safe observe" }
+        ],
+        markers: [
+          { time: observeTime, label: "observe", tooltip: "这里不是被 fence 卡住，而是 async consumer 选择在 ordering 成立后再安全观察。" }
+        ]
+      }
+    ];
+
+    return {
+      id: "visibility",
+      duration,
+      title: "Proxy Visibility",
+      subtitle: explicitFence
+        ? "fence.proxy.async 只建立 generic proxy -> async proxy 的 ordering。线程继续跑，fence 本身不阻塞 execution。"
+        : "这里用抽象 ordering boundary 解释 visibility。SM80 的经典路径通常不会把它单独暴露成 fence.proxy.async。",
+      badges: [
+        { label: "Architecture", value: arch },
+        { label: "Visibility boundary", value: explicitFence ? "Explicit fence" : "Conceptual ordering edge" },
+        { label: "Invariant", value: "Fence never blocks execution" }
+      ],
+      dataPath: {
+        nodes: [
+          { tone: "dirty", kicker: "Producer", name: "Generic Proxy", sub: "writes shared-memory bytes" },
+          { tone: "visibility", kicker: "Boundary", name: explicitFence ? "Proxy Fence" : "Ordering Edge", sub: "generic -> async ordering" },
+          { tone: "visibility", kicker: "Target", name: "Shared Memory", sub: "same bytes, new visible view" },
+          { tone: "hardware", kicker: "Observer", name: "Async Proxy", sub: "safe after ordering" }
+        ],
+        note: "这里没有“数据搬到另一块存储”的目标；目标是让同一块 Shared Memory 在 Async Proxy 视图里变得可见。"
+      },
+      toolbarSummary: "Visibility protocol 只改 memory ordering。它不是 rendezvous，也不是 completion object。最重要的误区就是别把 fence 画成会挡住线程的门。",
+      flow: [
+        { tone: "dirty", kicker: "1", name: "Producer", desc: "generic proxy 写 shared memory，生成 dirty view。", start: 0.00, end: genericWriteEnd },
+        { tone: "visibility", kicker: "2", name: "Proxy Fence", desc: explicitFence ? "显式 fence 建立 ordering。" : "抽象 ordering edge 表示 generic -> async 可见性转换。", start: fenceStart, end: fenceStart + 0.18 },
+        { tone: "visibility", kicker: "3", name: "Visibility Sweep", desc: "边界扫过 shared memory，dirty 数据变成 async-visible。", start: fenceStart, end: fenceEnd },
+        { tone: "hardware", kicker: "4", name: "Async Progress", desc: "async proxy 的 execution 仍在继续；不是被 fence 阻塞。", start: 0.40, end: observeTime },
+        { tone: "visibility", kicker: "5", name: "Observation", desc: "ordering 成立后，async proxy 才安全观察。", start: observeTime, end: duration + 0.01 }
+      ],
+      lanes,
+      laneDecorations: [
+        { x: 46, label: explicitFence ? "visibility boundary" : "ordering boundary", tone: "visibility", tooltip: "这条边界移动时改变的是 memory visibility；execution 不会在这里被强制停住。" }
+      ],
+      compilerSteps: [
+        {
+          title: "Create dirty view",
+          start: 0.00,
+          end: genericWriteEnd,
+          mapping: {
+            TTIR: "generic shared-memory producer",
+            TTGIR: "shared-memory writes before async consumer",
+            PTX: "ordinary st.shared / generic store",
+            Hardware: "data becomes dirty in the generic proxy view"
+          }
+        },
+        {
+          title: "Insert ordering edge",
+          start: fenceStart,
+          end: fenceEnd,
+          mapping: {
+            TTIR: explicitFence ? "ttng.fence_async_shared" : "implicit ordering boundary in the abstract model",
+            TTGIR: explicitFence ? "ttng.fence_async_shared" : "ordering folded into the pipeline organization",
+            PTX: explicitFence ? (arch === "SM100" ? "fence.proxy.async.shared::cta / fence.proxy.tensormap" : "fence.proxy.async.shared::cta") : "no single explicit fence in the canonical SM80 path",
+            Hardware: "generic proxy view is ordered before the async proxy view"
+          }
+        },
+        {
+          title: "Observe ordered view",
+          start: observeTime,
+          end: duration + 0.01,
+          mapping: {
+            TTIR: "async consumer resumes on ordered data",
+            TTGIR: "async-facing consumer path",
+            PTX: explicitFence ? "async consumer sees ordered memory" : "consumer relies on the folded ordering guarantee",
+            Hardware: "async observer now sees the same bytes through its own proxy"
+          }
+        }
+      ],
+      logs: [
+        { time: 0.20, text: "Generic Proxy 开始写 shared memory，形成 dirty view。", tone: "dirty" },
+        { time: 1.18, text: "写入完成，但这些字节还只是 generic proxy 视图里的最新值。", tone: "dirty" },
+        { time: fenceStart, text: explicitFence ? "执行 fence.proxy.async。注意：线程继续前进，fence 不会阻塞 execution。" : "进入抽象 ordering edge。这里表达 generic -> async visibility transition，而不是执行阻塞。", tone: "visibility" },
+        { time: 1.82, text: "可见性边界开始扫过 shared memory；dirty 数据逐步变成 async-visible。", tone: "visibility" },
+        { time: fenceEnd, text: "ordering 已建立。Async Proxy 现在可以安全观察这块数据。", tone: "visibility" },
+        { time: observeTime, text: "Async Proxy 在 ordering 成立后观察数据。整个过程中没有 execution rendezvous。", tone: "hardware" }
+      ],
+      info: {
+        purpose: "建立 memory ordering / visibility，而不是强制多个线程会合。",
+        producer: "通过 generic proxy 写 shared memory 的 producer。",
+        consumer: "通过 async proxy 读取或消费同一块内存的 consumer。",
+        completion: "无独立 completion object。这个 protocol 不回答“异步 engine 是否做完”，它只回答“两个 proxy 的可见性何时对齐”。",
+        visibility: explicitFence ? "显式 fence.proxy.async 建立 generic -> async ordering。" : "本页把 visibility 画成抽象 boundary；SM80 常把它折叠进 pipeline 的其它同步点。",
+        scope: meta.scope,
+        ptx: explicitFence
+          ? arch === "SM100"
+            ? ["fence.proxy.async.shared::cta", "fence.proxy.tensormap::generic.acquire.gpu"]
+            : ["fence.proxy.async.shared::cta"]
+          : ["No single explicit fence.proxy.async in the canonical SM80 path"],
+        triton: explicitFence ? ["ttng.fence_async_shared", arch === "SM100" ? "ttng.tensormap_fenceproxy_acquire" : ""] : ["ordering usually folded into the cp.async pipeline organization"],
+        hardware: meta.visibilityNote,
+        invariants: [
+          "Visibility fence 不阻塞 execution。",
+          "Visibility fence 不是 completion object。",
+          "如果 producer / consumer 处在不同 proxy 视图里，ordering 需要单独成立。"
+        ]
+      },
+      view(time) {
+        const dirtyP = progress(time, 0.28, genericWriteEnd);
+        const sweepP = progress(time, fenceStart, fenceEnd);
+        const visibleCells = Math.floor(sweepP * 8);
+        const dirtyCells = Math.max(0, Math.floor(dirtyP * 8) - visibleCells);
+        const cells = Array.from({ length: 8 }, (_, index) => {
+          if (index < visibleCells) return "visible";
+          if (index < visibleCells + dirtyCells) return "dirty";
+          return "empty";
+        });
+        const safe = time >= fenceEnd;
+        return {
+          axes: [
+            {
+              tone: "execution",
+              label: "Execution",
+              value: "Running",
+              desc: "Generic Proxy 和 Async Proxy 都持续前进；没有任何 lane 被 fence 停住。"
+            },
+            {
+              tone: "muted",
+              label: "Completion",
+              value: "None",
+              desc: "这里没有 mbarrier 或 group scoreboard。completion 不在这个 protocol 的职责里。"
+            },
+            {
+              tone: safe ? "visibility" : "dirty",
+              label: "Visibility",
+              value: safe ? `${visibleCells}/8 visible` : `${dirtyCells}/8 dirty`,
+              desc: safe ? "async proxy 现在可以看到 producer 写入的最新字节。" : "数据正在从 generic-visible 变成 async-visible。"
+            }
+          ],
+          targetFocus: {
+            label: "Current Target",
+            value: safe ? "Shared Memory is async-visible" : "Shared Memory is still only partially async-visible",
+            note: safe
+              ? "目标对象仍是同一块 Shared Memory。变化的不是存储位置，而是 Async Proxy 是否已经能合法观察这些字节。"
+              : "当前正在改变的是 Shared Memory 的可见性边界，而不是线程是否被阻塞。"
+          },
+          details: [
+            sharedCells(cells, { left: `${12 + sweepP * 68}%`, visible: time >= fenceStart && time <= fenceEnd }),
+            {
+              kind: "fields",
+              title: "Ordering State",
+              hint: "关键不是 instruction 名，而是 visibility boundary 是否已经成立。",
+              fields: [
+                { label: "Fence", value: explicitFence ? (time < fenceStart ? "Not issued" : time < fenceEnd ? "Sweeping" : "Done") : (time < fenceStart ? "Pending edge" : time < fenceEnd ? "Ordering transition" : "Established"), note: "只改变 memory visibility，不阻塞线程。" },
+                { label: "Dirty Cells", value: String(Math.max(0, dirtyCells)), note: "这些字节还停留在 generic proxy 的最新视图里。" },
+                { label: "Visible Cells", value: String(visibleCells), note: "这些字节已经对 async proxy 有序可见。" },
+                { label: "Async Observe Safe", value: safe ? "Yes" : "Not yet", note: "只有 ordering 成立后，async observer 才安全。" }
+              ]
+            }
+          ]
+        };
+      }
+    };
+  }
+
+  function buildPipelineModel(arch) {
+    const meta = ARCH_META[arch];
+    const duration = 7.10;
+    const isSM80 = arch === "SM80";
+    const isSM100 = arch === "SM100";
+    const fenceStart = 1.40;
+    const fenceEnd = 2.05;
+    const asyncIssue = 1.72;
+    const completionReady = 4.18;
+    const reuseRelease = 6.10;
+
+    const lanes = [
+      {
+        name: isSM100 ? "Producer Warp Group" : "Producer Warp",
+        subtitle: "store -> fence -> continue -> reuse rendezvous",
+        tooltip: "producer 先写 memory，再建立 ordering，然后继续别的 execution；直到 buffer reuse 点才与 consumer 再次会合。",
+        showRunner: true,
+        segments: [
+          { start: 0.00, end: 0.92, x0: 5, x1: 22, tone: "dirty", state: "Store" },
+          { start: 0.92, end: fenceStart, x0: 22, x1: 32, tone: "execution", state: "Approach fence" },
+          { start: fenceStart, end: 4.90, x0: 32, x1: 80, tone: "execution", state: "Other work" },
+          { start: 4.90, end: 5.55, x0: 80, x1: 84, tone: "execution", state: "Reach reuse gate" },
+          { start: 5.55, end: reuseRelease, x0: 84, x1: 84, tone: "waiting", state: "Reuse rendezvous" },
+          { start: reuseRelease, end: duration, x0: 84, x1: 94, tone: "execution", state: "Reuse next tile" }
+        ],
+        markers: [
+          { time: fenceStart, label: isSM80 ? "ordering edge" : "Proxy Fence", tooltip: "这一点只负责 visibility ordering，不负责 completion observation。" },
+          { time: reuseRelease, label: "reuse release", tooltip: "最终的 buffer reuse 需要 execution rendezvous，而不是 completion object 直接代劳。" }
+        ]
+      },
+      {
+        name: isSM100 ? "Shared / Tensor Memory" : "Shared Memory",
+        subtitle: "dirty -> visible -> consumed -> reused",
+        tooltip: "同一块 buffer 先经历 dirty、ordered、consumed，最后再进入 reuse。每一步语义不同。",
+        showRunner: false,
+        segments: [
+          { start: 0.18, end: 1.12, x0: 10, x1: 30, tone: "dirty", state: "Dirty" },
+          { start: fenceStart, end: fenceEnd, x0: 30, x1: 42, tone: "visibility", state: "Ordered" },
+          { start: asyncIssue, end: completionReady, x0: 42, x1: 68, tone: "hardware", state: "Async engine uses it" },
+          { start: completionReady, end: 5.32, x0: 68, x1: 82, tone: "visibility", state: "Consumer uses it" },
+          { start: reuseRelease, end: duration, x0: 82, x1: 94, tone: "completion", state: "Reused" }
+        ],
+        markers: [
+          { time: fenceEnd, label: "visible", tooltip: "ordering 完成后，async engine / async consumer 才应把它当成最新视图。" },
+          { time: reuseRelease, label: "buffer free", tooltip: "只有 reuse rendezvous 之后，这块 buffer 才能进入下一轮。" }
+        ]
+      },
+      {
+        name: isSM80 ? "cp.async Engine" : isSM100 ? "TMA + TCGen05 Engine" : "TMA Engine",
+        subtitle: "独立进行 transfer / compute",
+        tooltip: "async engine 与 producer / consumer execution 解耦。它完成时只更新 completion bookkeeping，不会自动做 execution rendezvous。",
+        showRunner: true,
+        segments: [
+          { start: asyncIssue, end: completionReady - 0.08, x0: 18, x1: 90, tone: "hardware", state: "Working" },
+          { start: completionReady - 0.08, end: duration, x0: 90, x1: 94, tone: "muted", state: "Idle" }
+        ],
+        markers: [
+          { time: asyncIssue, label: "Async Issue", tooltip: "此刻只是把工作交给 hardware engine；producer 不会原地等它。" },
+          { time: completionReady - 0.08, label: "engine done", tooltip: "engine 完成在前，observer 看见 ready 在后。" }
+        ]
+      },
+      {
+        name: isSM80 ? "cp.async Group" : "mbarrier Object",
+        subtitle: isSM80 ? "tracks outstanding async groups" : "tracks completion until observer sees ready",
+        tooltip: isSM80
+          ? "cp.async Group 是 completion bookkeeping，不会自动让 producer / consumer 会合。"
+          : "mbarrier 只记录 completion。即便 ready 了，也不代表 execution rendezvous 自动完成。",
+        showRunner: false,
+        segments: [
+          { start: 0.46, end: 0.82, x0: 14, x1: 20, tone: "completion", state: "Arm object" },
+          { start: asyncIssue, end: completionReady, x0: 20, x1: 74, tone: "completion", state: "Outstanding" },
+          { start: completionReady, end: duration, x0: 74, x1: 92, tone: "visibility", state: "Ready / next phase" }
+        ],
+        markers: [
+          { time: completionReady, label: "ready", tooltip: "observer 只有在这里才真正获得“异步工作已完成”的证据。" }
+        ]
+      },
+      {
+        name: isSM100 ? "Consumer Warp Group" : "Consumer Warp",
+        subtitle: "poll -> consume -> reuse rendezvous",
+        tooltip: "consumer 会在 completion ready 之前先到 wait / poll；之后消费数据，最后还要参与 buffer reuse 的 execution rendezvous。",
+        showRunner: true,
+        segments: [
+          { start: 0.00, end: 2.90, x0: 5, x1: 62, tone: "execution", state: "Independent work" },
+          { start: 2.90, end: completionReady, x0: 62, x1: 62, tone: "waiting", state: "Polling completion" },
+          { start: completionReady, end: 5.32, x0: 62, x1: 84, tone: "execution", state: "Consume" },
+          { start: 5.32, end: reuseRelease, x0: 84, x1: 84, tone: "waiting", state: "Reuse rendezvous" },
+          { start: reuseRelease, end: duration, x0: 84, x1: 94, tone: "execution", state: "Next stage" }
+        ],
+        markers: [
+          { time: 2.90, label: "Poll", tooltip: "consumer 在这里观察 completion object，而不是等待 fence。" },
+          { time: 5.32, label: "Consume done", tooltip: "消费结束后，还不能立刻复用 buffer；必须等 reuse rendezvous。" }
+        ]
+      }
+    ];
+
+    return {
+      id: "pipeline",
+      duration,
+      title: "Complete Synchronization Pipeline",
+      subtitle: "把 Generic Store、Proxy Fence、Async Issue、Hardware Engine、Completion Object、Polling、Consumer、Reuse 串成一条统一 timeline。",
+      badges: [
+        { label: "Architecture", value: arch },
+        { label: "Completion Object", value: isSM80 ? "cp.async Group + CTA barrier" : "mbarrier + reuse barrier" },
+        { label: "Invariant", value: "Execution / Completion / Visibility are orthogonal" }
+      ],
+      dataPath: isSM80
+        ? {
+            nodes: [
+              { tone: "dirty", kicker: "Producer", name: "Producer Warp", sub: "prepares stage buffer / source tile" },
+              { tone: "hardware", kicker: "Engine", name: "cp.async Engine", sub: "moves tile bytes" },
+              { tone: "visibility", kicker: "Target", name: "Shared Memory", sub: "destination stage buffer" },
+              { tone: "completion", kicker: "Observe", name: "cp.async Group + barrier", sub: "completion then handoff" }
+            ],
+            note: "先把目标看清楚：这条 pipeline 最终要让 Shared Memory stage buffer 安全可消费并最终可复用。"
+          }
+        : isSM100
+          ? {
+              nodes: [
+                { tone: "dirty", kicker: "Producer", name: "Producer Warp Group", sub: "writes / prepares stage data" },
+                { tone: "hardware", kicker: "Engine", name: "TMA + TCGen05", sub: "transfer + async compute" },
+                { tone: "visibility", kicker: "Target", name: "Shared / Tensor Memory", sub: "stage buffer and result target" },
+                { tone: "completion", kicker: "Observe", name: "mbarrier + reuse barrier", sub: "completion then reuse rendezvous" }
+              ],
+              note: "这条完整链同时包含目标数据对象和最终复用对象：先让目标数据可消费，再让 stage buffer 可复用。"
+            }
+          : {
+              nodes: [
+                { tone: "dirty", kicker: "Producer", name: "Producer Warp", sub: "writes / prepares stage data" },
+                { tone: "hardware", kicker: "Engine", name: "TMA Engine", sub: "moves tile bytes" },
+                { tone: "visibility", kicker: "Target", name: "Shared Memory", sub: "destination stage buffer" },
+                { tone: "completion", kicker: "Observe", name: "mbarrier + reuse barrier", sub: "completion then buffer reuse" }
+              ],
+              note: "这条链里要分清两个对象：先完成对 Shared Memory 目标 tile 的写入，再在最后处理同一 stage buffer 的 reuse。"
+            },
+      toolbarSummary: "完整 pipeline 最容易暴露误区：Fence 只管 visibility，Completion Object 只管异步完成，Reuse barrier 才负责最后的 execution rendezvous。",
+      flow: [
+        { tone: "dirty", kicker: "1", name: "Generic Store", desc: "producer 先生成 dirty data。", start: 0.00, end: 1.10 },
+        { tone: "visibility", kicker: "2", name: "Proxy Fence", desc: isSM80 ? "抽象 ordering edge 表示 visibility handoff。" : "显式 Proxy Fence 建立 generic -> async ordering。", start: fenceStart, end: fenceEnd },
+        { tone: "hardware", kicker: "3", name: "Async Issue", desc: "工作进入独立 hardware engine。", start: asyncIssue, end: asyncIssue + 0.22 },
+        { tone: "hardware", kicker: "4", name: "Hardware Transfer", desc: "TMA / cp.async / tcgen05 在后台独立进行。", start: asyncIssue, end: completionReady - 0.08 },
+        { tone: "completion", kicker: "5", name: "Completion Object", desc: isSM80 ? "Group scoreboard 记录 outstanding group。" : "mbarrier 记录本轮 completion state。", start: asyncIssue, end: completionReady },
+        { tone: "waiting", kicker: "6", name: "Polling", desc: "consumer 到 wait 后才开始观察 ready。", start: 2.90, end: completionReady },
+        { tone: "execution", kicker: "7", name: "Consumer", desc: "观察到 ready 后才消费数据。", start: completionReady, end: 5.32 },
+        { tone: "execution", kicker: "8", name: "Reuse", desc: "producer 与 consumer 在 reuse 点再做 execution rendezvous。", start: 5.32, end: duration + 0.01 }
+      ],
+      lanes,
+      laneDecorations: [
+        { x: 40, label: isSM80 ? "ordering edge" : "Proxy Fence", tone: "visibility", tooltip: "这里只解决 generic -> async visibility，不观察 hardware completion。" },
+        { x: 84, label: "reuse bar.sync", tone: "waiting", tooltip: "buffer reuse 需要 execution rendezvous；completion object 不会自动替代这一步。" }
+      ],
+      compilerSteps: [
+        {
+          title: "Produce dirty data",
+          start: 0.00,
+          end: 1.10,
+          mapping: {
+            TTIR: "producer writes a tile / stage buffer",
+            TTGIR: "shared-memory producer path",
+            PTX: "generic st.shared / ordinary writes",
+            Hardware: "data is dirty in the producer's proxy view"
+          }
+        },
+        {
+          title: "Establish visibility ordering",
+          start: fenceStart,
+          end: fenceEnd,
+          mapping: {
+            TTIR: isSM80 ? "ordering folded into the pipeline organization" : "ttng.fence_async_shared",
+            TTGIR: isSM80 ? "wait / barrier organization carries ordering" : arch === "SM100" ? "ttng.fence_async_shared + ttng.tensormap_fenceproxy_acquire" : "ttng.fence_async_shared",
+            PTX: isSM80 ? "no single explicit fence in the canonical path" : meta.pipelineFence,
+            Hardware: "generic proxy view becomes ordered before the async-facing consumer"
+          }
+        },
+        {
+          title: "Issue and track async work",
+          start: asyncIssue,
+          end: completionReady,
+          mapping: {
+            TTIR: isSM80 ? "ttg.async_copy_global_to_local" : arch === "SM100" ? "ttng.async_tma_copy_global_to_local + ttng.tc_gen5_commit" : "ttng.async_tma_copy_global_to_local",
+            TTGIR: isSM80 ? "ttg.async_commit_group" : "ttng.wait_barrier-compatible completion path",
+            PTX: isSM80 ? "cp.async + commit_group" : arch === "SM100" ? "cp.async.bulk.tensor + tcgen05.commit + mbarrier" : "cp.async.bulk.tensor + mbarrier",
+            Hardware: "engine works independently while completion bookkeeping stays outstanding"
+          }
+        },
+        {
+          title: "Observe ready and consume",
+          start: 2.90,
+          end: 5.32,
+          mapping: {
+            TTIR: isSM80 ? "ttg.async_wait + consumer" : "ttng.wait_barrier + consumer",
+            TTGIR: isSM80 ? "optional ttg.barrier for CTA handoff" : "consumer resumes on ready barrier state",
+            PTX: isSM80 ? "cp.async.wait_group + bar.sync" : "mbarrier.try_wait.parity + consumer instructions",
+            Hardware: "consumer only proceeds after actual completion is observed"
+          }
+        },
+        {
+          title: "Rendezvous for reuse",
+          start: 5.32,
+          end: duration + 0.01,
+          mapping: {
+            TTIR: "buffer reuse dependency",
+            TTGIR: "ttg.barrier / named reuse barrier",
+            PTX: "bar.sync / named CTA barrier",
+            Hardware: "producer and consumer meet again before the buffer is recycled"
+          }
+        }
+      ],
+      logs: [
+        { time: 0.12, text: "Producer 写入 shared stage buffer，数据先进入 dirty view。", tone: "dirty" },
+        { time: fenceStart, text: isSM80 ? "进入抽象 ordering edge。它表达 visibility handoff，不表达 completion。" : "执行 Proxy Fence。注意：它只建立 visibility ordering。", tone: "visibility" },
+        { time: asyncIssue, text: `${isSM80 ? "cp.async Engine" : isSM100 ? "TMA / TCGen05 Engine" : "TMA Engine"} 接手异步工作，producer 继续执行。`, tone: "hardware" },
+        { time: 2.90, text: "Consumer 到达 poll / wait 点，开始观察 completion object。", tone: "waiting" },
+        { time: completionReady - 0.08, text: "Hardware Engine 完成后台工作，但 consumer 仍要等到 ready 被观察。", tone: "hardware" },
+        { time: completionReady, text: `${isSM80 ? "cp.async Group" : "mbarrier"} 变 ready。consumer 现在才可安全消费。`, tone: "completion" },
+        { time: 5.32, text: "Consumer 消费完成，但 buffer 仍未立刻复用；还缺最后的 execution rendezvous。", tone: "execution" },
+        { time: reuseRelease, text: "Producer 与 consumer 在 reuse barrier 会合。下一轮 buffer reuse 现在才合法。", tone: "execution" }
+      ],
+      info: {
+        purpose: "用一条完整 timeline 证明三件事彼此独立：visibility fence 先建立 ordering；completion object 之后才证明异步工作真的完成；buffer reuse 最后还要做 execution rendezvous。",
+        producer: isSM100 ? "Warp-specialized producer Warp Group。" : "负责写 stage buffer 的 producer Warp。",
+        consumer: isSM100 ? "后续的 consumer Warp Group。" : "随后消费该 tile 的 consumer Warp。",
+        completion: isSM80
+          ? "cp.async Group 记录 outstanding async copy；CTA-wide consume / reuse 仍要通过 barrier 组织。"
+          : "mbarrier 只证明异步工作已完成。它不会让 producer / consumer 自动在 reuse 点会合。",
+        visibility: isSM80
+          ? "本页把 SM80 的 ordering 画成抽象 edge。语义上它仍然独立于 completion / rendezvous。"
+          : "Proxy Fence 只建立 generic -> async visibility；它不等待 TMA / tcgen05 结束。",
+        scope: meta.scope,
+        ptx: isSM80
+          ? ["cp.async", "cp.async.commit_group", "cp.async.wait_group", "bar.sync"]
+          : isSM100
+            ? ["fence.proxy.async", "cp.async.bulk.tensor", "tcgen05.commit", "mbarrier.try_wait.parity", "bar.sync"]
+            : ["fence.proxy.async.shared::cta", "cp.async.bulk.tensor", "mbarrier.try_wait.parity", "bar.sync"],
+        triton: isSM80
+          ? ["ttg.async_copy_global_to_local", "ttg.async_commit_group", "ttg.async_wait", "ttg.barrier"]
+          : isSM100
+            ? ["ttng.fence_async_shared", "ttng.async_tma_copy_global_to_local", "ttng.tc_gen5_commit", "ttng.wait_barrier", "ttg.barrier"]
+            : ["ttng.fence_async_shared", "ttng.async_tma_copy_global_to_local", "ttng.wait_barrier", "ttg.barrier"],
+        hardware: isSM80
+          ? "Ampere 常把 ordering、completion、CTA rendezvous 串成 cp.async group + barrier。即便 instruction 更少，语义仍然是三层分离。"
+          : isSM100
+            ? "Blackwell 把 Tensor Memory / tcgen05 接入同样的 completion chain，但 buffer reuse 仍要依赖独立 execution rendezvous。"
+            : "Hopper 最能清楚展示三层解耦：Proxy Fence 建 visibility，mbarrier 建 completion observation，bar.sync 建 reuse rendezvous。",
+        invariants: [
+          "Proxy Fence 不等待异步 engine。",
+          "Completion Object 不替代最后的 execution rendezvous。",
+          "Buffer reuse 只有在 consumer 完成且 rendezvous 满足后才合法。"
+        ]
+      },
+      view(time) {
+        const sweepP = progress(time, fenceStart, fenceEnd);
+        const engineP = progress(time, asyncIssue, completionReady - 0.08);
+        const ready = time >= completionReady;
+        const consumed = progress(time, completionReady, 5.32);
+        const cells = Array.from({ length: 8 }, (_, index) => {
+          const x = index / 8;
+          if (time < 0.90) return x < progress(time, 0.12, 0.90) ? "dirty" : "empty";
+          if (time < fenceEnd) return x < sweepP ? "visible" : "dirty";
+          if (time < completionReady) return x < engineP ? "inflight" : "visible";
+          if (time < 5.32) return x < consumed ? "consumed" : "visible";
+          if (time < reuseRelease) return "consumed";
+          return "reused";
+        });
+        return {
+          axes: [
+            {
+              tone: time < reuseRelease && time >= 5.32 ? "waiting" : "execution",
+              label: "Execution",
+              value: time < 2.90 ? "Independent" : time < completionReady ? "Consumer polling" : time < reuseRelease ? "Waiting for reuse" : "Reused",
+              desc: "execution 在两个地方会停：poll completion 和 reuse rendezvous。它不会在 Proxy Fence 处停住。"
+            },
+            {
+              tone: ready ? "visibility" : "completion",
+              label: "Completion",
+              value: ready ? "Ready observed" : "Outstanding",
+              desc: "completion 只证明异步 engine 的工作何时真正完成。"
+            },
+            {
+              tone: time < fenceEnd ? "dirty" : "visibility",
+              label: "Visibility",
+              value: time < fenceEnd ? "Ordering pending" : "Ordered",
+              desc: "producer 的 store 先经过 visibility handoff，之后 async engine / consumer 才应视为看到了最新数据。"
+            }
+          ],
+          targetFocus: {
+            label: "Current Target",
+            value: time < completionReady
+              ? (time < fenceEnd ? "Stage buffer ordering / fill is still in progress" : "Async target tile is still being processed")
+              : time < reuseRelease
+                ? "Consumer is using the target tile"
+                : "Stage buffer is now safe to reuse",
+            note: time < completionReady
+              ? "当前先盯住目标数据对象：它要么还在建立 visibility，要么还在被 async engine 写入/处理。"
+              : time < reuseRelease
+                ? "此刻目标 tile 已经可消费，协议关注点转为 consumer 使用何时结束。"
+                : "最后的目标从“可消费”切换成“可复用”：reuse barrier 满足后，stage buffer 才能进入下一轮。"
+          },
+          details: [
+            sharedCells(cells, { left: `${18 + sweepP * 52}%`, visible: time >= fenceStart && time <= fenceEnd }),
+            {
+              kind: "fields",
+              title: isSM80 ? "cp.async Group + Reuse State" : "mbarrier + Reuse State",
+              hint: "把 visibility、completion、reuse rendezvous 放在同一张表里看，最容易理解三层正交。",
+              fields: [
+                { label: "Visibility Fence", value: time < fenceStart ? "Not issued" : time < fenceEnd ? "Ordering" : "Done", note: "只负责 generic -> async ordering。" },
+                { label: "Async Engine", value: time < asyncIssue ? "Idle" : time < completionReady - 0.08 ? "Working" : "Done", note: "engine 完成不等于 observer 已看到 ready。" },
+                { label: "Completion Object", value: ready ? "Ready" : "Outstanding", note: isSM80 ? "Group scoreboard 仍在追踪 outstanding copy。" : "mbarrier 仍在等待 phase / transaction 条件满足。" },
+                { label: "Consumer", value: time < 2.90 ? "Not at wait" : time < completionReady ? "Polling" : time < 5.32 ? "Consuming" : "Done", note: "consumer 的可运行状态由 completion observation 决定。" },
+                { label: "Reuse Barrier", value: time < 5.32 ? "Not reached" : time < reuseRelease ? "Waiting" : "Released", note: "最终 reuse 仍需 execution rendezvous。" },
+                { label: "Protocol Verdict", value: ready && time >= reuseRelease ? "Safe to reuse" : "Not yet", note: "只有三层都满足，buffer reuse 才合法。" }
+              ]
+            }
+          ]
+        };
+      }
+    };
+  }
+
+  function buildModel(arch, protocol) {
+    if (protocol === "execution") return buildExecutionModel(arch);
+    if (protocol === "completion") return buildCompletionModel(arch);
+    if (protocol === "visibility") return buildVisibilityModel(arch);
+    return buildPipelineModel(arch);
+  }
+
+  function buildSelectors() {
+    els.archSelector.innerHTML = ARCHES.map((arch) => `
+      <button class="tone-hardware${state.arch === arch.id ? " active" : ""}" data-action="arch" data-value="${arch.id}" data-tooltip="${esc(arch.tooltip)}">${esc(arch.label)}</button>
+    `).join("");
+
+    els.protocolSelector.innerHTML = PROTOCOLS.map((item) => `
+      <button class="tone-${item.tone}${state.protocol === item.id ? " active" : ""}" data-action="protocol" data-value="${item.id}" data-tooltip="${esc(item.tooltip)}">${esc(item.label)}</button>
+    `).join("");
+
+    els.speedSelector.innerHTML = SPEEDS.map((speed) => `
+      <button class="${state.speed === speed.value ? "active " : ""}tone-hardware" data-action="speed" data-value="${speed.value}">${esc(speed.label)}</button>
+    `).join("");
+  }
+
+  function renderBadges(badges) {
+    return badges.map((badge) => `
+      <span class="badge"><strong>${esc(badge.label)}</strong> ${esc(badge.value)}</span>
+    `).join("");
+  }
+
+  function renderFlow(flow, time) {
+    const activeIndex = findCurrentStep(flow, time);
+    return flow.map((step, index) => `
+      <div class="flow-pill ${index === activeIndex ? `active ${step.tone}` : ""}" data-tooltip="${esc(step.desc)}">
+        <div class="kicker tone-${esc(step.tone)}">${esc(step.kicker)}</div>
+        <div class="name">${esc(step.name)}</div>
+        <div class="desc">${esc(step.desc)}</div>
+      </div>
+    `).join("");
+  }
+
+  function renderStatusCards(cards) {
+    return cards.map((card) => `
+      <div class="status-card" data-tooltip="${esc(card.desc)}">
+        <div class="label tone-${esc(card.tone)}">${esc(card.label)}</div>
+        <div class="value tone-${esc(card.tone)}">${esc(card.value)}</div>
+        <div class="desc">${esc(card.desc)}</div>
+      </div>
+    `).join("");
+  }
+
+  function renderTimeline(currentModel, time) {
+    const gridLines = Array.from({ length: 8 }, (_, index) => {
+      const left = (index / 7) * 100;
+      const tickValue = (currentModel.duration * index / 7).toFixed(1);
+      return `
+        <div class="tick" style="left:${left}%"><span>${tickValue}</span></div>
+      `;
+    }).join("");
+    const cursorX = progress(time, 0, currentModel.duration) * 100;
+
+    const scaleRow = `
+      <div class="scale-row">
+        <div class="scale-label">Time</div>
+        <div class="scale-track" data-scrub-track="scale">
+          ${gridLines}
+          <div class="global-cursor" style="left:${cursorX}%"></div>
+        </div>
+      </div>
+    `;
+
+    const rows = currentModel.lanes.map((lane, laneIndex) => {
+      const runner = lane.showRunner ? runnerState(lane, time) : null;
+      const currentSeg = runner ? runner.segment : (lane.segments.find((segment) => time >= segment.start && time < segment.end) || lane.segments[lane.segments.length - 1]);
+      const laneGrid = Array.from({ length: 8 }, (_, index) => {
+        const left = (index / 7) * 100;
+        return `<div class="grid-line" style="left:${left}%"></div>`;
+      }).join("");
+
+      const segments = lane.segments.map((segment) => {
+        const width = Math.max(2, Math.abs(segment.x1 - segment.x0));
+        const left = Math.min(segment.x0, segment.x1);
+        return `
+          <div class="lane-segment ${segment.tone}" style="left:${left}%; width:${width}%;" data-tooltip="${esc(segment.state)}">
+            ${width > 8 ? `<div class="segment-label">${esc(segment.state)}</div>` : ""}
+          </div>
+        `;
+      }).join("");
+
+      const markers = lane.markers.map((marker) => {
+        const left = progress(marker.time, 0, currentModel.duration) * 100;
+        const highlight = Math.abs(marker.time - time) < 0.18 ? "highlight" : "";
+        return `
+          <div class="lane-marker ${highlight}" style="left:${left}%;" data-tooltip="${esc(marker.tooltip)}">
+            <span>${esc(marker.label)}</span>
+          </div>
+        `;
+      }).join("");
+
+      const overlays = currentModel.laneDecorations.map((decor) => `
+        <div class="checkpoint ${decor.tone === "waiting" ? "waiting" : ""}" style="left:${decor.x}%;" data-tooltip="${esc(decor.tooltip)}">
+          ${laneIndex === 0 ? `<span>${esc(decor.label)}</span>` : ""}
+        </div>
+      `).join("");
+
+      return `
+        <div class="lane-row">
+          <div class="lane-label" data-tooltip="${esc(lane.tooltip)}">
+            <div class="name">${esc(lane.name)}</div>
+            <div class="sub">${esc(lane.subtitle)}</div>
+            <div class="state tone-${esc(currentSeg.tone)}">${esc(currentSeg.state)}</div>
+          </div>
+          <div class="lane-track" data-scrub-track="lane">
+            <div class="lane-grid">${laneGrid}</div>
+            ${segments}
+            ${markers}
+            <div class="lane-overlay">${overlays}</div>
+            ${runner ? `<div class="runner ${esc(currentSeg.tone)}" style="left:${runner.x}%"></div>` : ""}
+          </div>
+        </div>
+      `;
+    }).join("");
+
+    return scaleRow + rows;
+  }
+
+  function renderDetailCard(detail) {
+    if (detail.kind === "fields") {
+      return `
+        <div class="detail-card">
+          <div class="detail-head">
+            <div class="title">${esc(detail.title)}</div>
+            <div class="hint">${esc(detail.hint)}</div>
+          </div>
+          <div class="field-grid">
+            ${detail.fields.map((field) => `
+              <div class="field">
+                <div class="label">${esc(field.label)}</div>
+                <div class="value">${esc(field.value)}</div>
+                <div class="note">${esc(field.note)}</div>
+              </div>
+            `).join("")}
+          </div>
+        </div>
+      `;
+    }
+
+    if (detail.kind === "memory") {
+      return `
+        <div class="detail-card">
+          <div class="detail-head">
+            <div class="title">${esc(detail.title)}</div>
+            <div class="hint">${esc(detail.hint)}</div>
+          </div>
+          <div class="memory-grid">
+            <div class="memory-strip">
+              ${detail.cells.map((cell) => `
+                <div class="memory-cell ${cell.state}" data-tooltip="${esc(cell.label)}">${esc(cell.label)}</div>
+              `).join("")}
+              ${detail.sweep && detail.sweep.visible ? `<div class="memory-sweep" style="left:${detail.sweep.left}"></div>` : ""}
+            </div>
+            <div class="memory-legend">
+              <span><i style="background:linear-gradient(180deg,#fca5a5,#dc2626)"></i>Dirty</span>
+              <span><i style="background:linear-gradient(180deg,#86efac,#16a34a)"></i>Visible</span>
+              <span><i style="background:linear-gradient(180deg,#c4b5fd,#7c3aed)"></i>In-flight</span>
+              <span><i style="background:linear-gradient(180deg,#93c5fd,#2563eb)"></i>Consumed</span>
+              <span><i style="background:linear-gradient(180deg,#fde68a,#f59e0b)"></i>Reused</span>
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    return `
+      <div class="detail-card">
+        <div class="detail-head">
+          <div class="title">${esc(detail.title)}</div>
+          <div class="hint">${esc(detail.hint)}</div>
+        </div>
+        <div class="bullet-list">
+          ${detail.items.map((item) => `<div class="bullet">${esc(item)}</div>`).join("")}
+        </div>
+      </div>
+    `;
+  }
+
+  function getActiveLogIndex(logs, time) {
+    const currentIndex = logs.findIndex((item) => time < item.time);
+    return currentIndex === -1 ? logs.length - 1 : currentIndex - 1;
+  }
+
+  function renderTimelineSummary(currentModel, time, view) {
+    const activeLogIndex = getActiveLogIndex(currentModel.logs, time);
+    const activeLog = activeLogIndex >= 0 ? currentModel.logs[activeLogIndex] : null;
+    const path = currentModel.dataPath;
+    const targetFocus = view.targetFocus || {
+      label: "Current Target",
+      value: "No target summary",
+      note: "This protocol does not expose an additional target object summary."
+    };
+
+    const pathHtml = path.nodes.map((node, index) => `
+      ${index ? `<div class="path-arrow">→</div>` : ""}
+      <div class="path-node" data-tooltip="${esc(node.sub)}">
+        <div class="kicker tone-${esc(node.tone)}">${esc(node.kicker)}</div>
+        <div class="name">${esc(node.name)}</div>
+        <div class="sub">${esc(node.sub)}</div>
+      </div>
+    `).join("");
+
+    return `
+      <div class="path-grid">
+        <div class="path-card">
+          <div class="path-label">Data Path / Target Object</div>
+          <div class="path-strip">${pathHtml}</div>
+          <div class="path-note">${esc(path.note)}</div>
+        </div>
+        <div class="focus-card">
+          <div class="focus-label">${esc(targetFocus.label)}</div>
+          <div class="value">${esc(targetFocus.value)}</div>
+          <div class="note">${esc(targetFocus.note)}</div>
+          ${activeLog ? `<div class="note"><strong>[${formatTime(activeLog.time)}]</strong> ${esc(activeLog.text)}</div>` : ""}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCompiler(currentModel, time) {
+    const activeIndex = findCurrentStep(currentModel.compilerSteps, time);
+    const active = currentModel.compilerSteps[activeIndex];
+    els.compilerSteps.innerHTML = currentModel.compilerSteps.map((step, index) => `
+      <div class="compiler-step ${index === activeIndex ? "active" : ""}">${esc(step.title)}</div>
+    `).join("");
+    els.compilerGrid.innerHTML = [
+      ["TTIR", active.mapping.TTIR],
+      ["TTGIR", active.mapping.TTGIR],
+      ["PTX", active.mapping.PTX],
+      ["Hardware", active.mapping.Hardware]
+    ].map(([label, value]) => `
+      <div class="compiler-column">
+        <div class="label">${esc(label)}</div>
+        <div class="code">${esc(value)}</div>
+        <div class="desc">${label === "Hardware" ? "当前动画阶段对应的底层机制。" : "当前动画阶段最相关的 lowering / instruction 片段。"}</div>
+      </div>
+    `).join("");
+    els.compilerStepLabel.textContent = active.title;
+  }
+
+  function renderInfo(currentModel) {
+    const info = currentModel.info;
+    const list = (items) => items.filter(Boolean).map((item) => `<div class="stack-item">${esc(item)}</div>`).join("");
+    els.infoPanel.innerHTML = `
+      <div class="info-hero">
+        <div class="eyebrow">${esc(state.arch)} / ${esc(currentModel.title)}</div>
+        <div class="title">${esc(currentModel.title)}</div>
+        <div class="desc">${esc(info.purpose)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">Purpose</div>
+        <div class="value">${esc(info.purpose)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">Producer</div>
+        <div class="value">${esc(info.producer)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">Consumer</div>
+        <div class="value">${esc(info.consumer)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">Completion mechanism</div>
+        <div class="value">${esc(info.completion)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">Visibility mechanism</div>
+        <div class="value">${esc(info.visibility)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">Synchronization scope</div>
+        <div class="value">${esc(info.scope)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">PTX instructions</div>
+        <div class="stack-list">${list(info.ptx)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">Triton operations</div>
+        <div class="stack-list">${list(info.triton)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">Hardware explanation</div>
+        <div class="value">${esc(info.hardware)}</div>
+      </div>
+      <div class="info-section">
+        <div class="label">Non-negotiable invariants</div>
+        <div class="stack-list">${list(info.invariants)}</div>
+      </div>
+    `;
+  }
+
+  function renderConsole(currentModel, time) {
+    const activeIndex = getActiveLogIndex(currentModel.logs, time);
+    const activeLog = activeIndex >= 0 ? currentModel.logs[activeIndex] : null;
+    els.currentEvent.innerHTML = activeLog ? `
+      <div class="label">Current Event</div>
+      <div class="time">[${formatTime(activeLog.time)}]</div>
+      <div class="text tone-${esc(activeLog.tone)}">${esc(activeLog.text)}</div>
+    ` : `
+      <div class="label">Current Event</div>
+      <div class="text tone-muted">拖动时间轴后，这里会显示当前时刻对应的 protocol 事件。</div>
+    `;
+    els.consoleBody.innerHTML = currentModel.logs.map((log, index) => {
+      let klass = "future";
+      if (time >= log.time) klass = "past";
+      if (activeIndex >= 0 && index === activeIndex && time >= log.time) klass = "current";
+      return `
+        <div class="log-row ${klass}" data-log-index="${index}">
+          <div class="log-time">[${formatTime(log.time)}]</div>
+          <div class="log-text tone-${esc(log.tone)}">${esc(log.text)}</div>
+        </div>
+      `;
+    }).join("");
+    if (activeIndex >= 0) {
+      const activeRow = els.consoleBody.querySelector(`[data-log-index="${activeIndex}"]`);
+      if (activeRow) {
+        activeRow.scrollIntoView({ block: "nearest" });
+      }
+    }
+  }
+
+  function render() {
+    buildSelectors();
+    model = buildModel(state.arch, state.protocol);
+    state.time = clamp(state.time, 0, model.duration);
+    const view = model.view(state.time);
+
+    els.protocolTitle.textContent = model.title;
+    els.protocolSubtitle.textContent = model.subtitle;
+    els.protocolBadges.innerHTML = renderBadges(model.badges);
+    els.flowStrip.innerHTML = renderFlow(model.flow, state.time);
+    els.statusGrid.innerHTML = renderStatusCards(view.axes);
+    els.timelineSummary.innerHTML = renderTimelineSummary(model, state.time, view);
+    els.timelineMeta.textContent = `Clock ${formatTime(state.time)} / ${formatTime(model.duration)} · time flows from left to right`;
+    els.timeline.innerHTML = renderTimeline(model, state.time);
+    els.detailGrid.innerHTML = view.details.map(renderDetailCard).join("");
+    renderCompiler(model, state.time);
+    renderInfo(model);
+    renderConsole(model, state.time);
+
+    els.toolbarSummary.textContent = model.toolbarSummary;
+    els.clockSummary.textContent = `Clock ${formatTime(state.time)} / ${formatTime(model.duration)} · ${state.speed}x`;
+    els.playPauseBtn.textContent = state.playing ? "Pause" : "Play";
+  }
+
+  function stepToNextAnchor() {
+    const anchors = Array.from(new Set([
+      0,
+      model.duration,
+      ...model.logs.map((item) => item.time),
+      ...model.flow.map((item) => item.start),
+      ...model.flow.map((item) => item.end),
+      ...model.compilerSteps.map((item) => item.start),
+      ...model.compilerSteps.map((item) => item.end)
+    ])).sort((a, b) => a - b);
+    const next = anchors.find((item) => item > state.time + 0.001);
+    state.time = next == null ? model.duration : next;
+    render();
+  }
+
+  function resetPlayback() {
+    state.time = 0;
+    state.playing = false;
+    state.lastFrame = 0;
+    render();
+  }
+
+  function startScrub(trackEl, clientX) {
+    if (!model) model = buildModel(state.arch, state.protocol);
+    state.playing = false;
+    state.lastFrame = 0;
+    state.scrubbing = {
+      rect: trackEl.getBoundingClientRect()
+    };
+    const shell = trackEl.closest(".timeline-shell");
+    if (shell) shell.classList.add("scrubbing");
+    els.tooltip.classList.remove("visible");
+    state.time = timeFromClientX(clientX, state.scrubbing.rect, model.duration);
+    render();
+  }
+
+  function moveScrub(clientX) {
+    if (!state.scrubbing || !model) return;
+    state.time = timeFromClientX(clientX, state.scrubbing.rect, model.duration);
+    render();
+  }
+
+  function endScrub() {
+    if (!state.scrubbing) return;
+    const shell = document.querySelector(".timeline-shell.scrubbing");
+    if (shell) shell.classList.remove("scrubbing");
+    state.scrubbing = null;
+  }
+
+  function bindEvents() {
+    document.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-action]");
+      if (!button) return;
+      const { action, value } = button.dataset;
+      if (action === "arch") {
+        state.arch = value;
+        state.time = 0;
+      } else if (action === "protocol") {
+        state.protocol = value;
+        state.time = 0;
+      } else if (action === "speed") {
+        state.speed = Number(value);
+      }
+      state.playing = false;
+      state.lastFrame = 0;
+      render();
+    });
+
+    els.playPauseBtn.addEventListener("click", () => {
+      state.playing = !state.playing;
+      state.lastFrame = 0;
+      render();
+    });
+
+    els.stepBtn.addEventListener("click", () => {
+      state.playing = false;
+      stepToNextAnchor();
+    });
+
+    els.resetBtn.addEventListener("click", resetPlayback);
+
+    document.addEventListener("pointerdown", (event) => {
+      const track = event.target.closest("[data-scrub-track]");
+      if (!track) return;
+      event.preventDefault();
+      startScrub(track, event.clientX);
+    });
+
+    document.addEventListener("pointermove", (event) => {
+      if (state.scrubbing) {
+        event.preventDefault();
+        moveScrub(event.clientX);
+        return;
+      }
+
+      const target = event.target.closest("[data-tooltip]");
+      if (!target || !target.dataset.tooltip) {
+        els.tooltip.classList.remove("visible");
+        return;
+      }
+      els.tooltip.textContent = target.dataset.tooltip;
+      const pad = 16;
+      const x = Math.min(window.innerWidth - 300, event.clientX + 16);
+      const y = Math.min(window.innerHeight - 120, event.clientY + 18);
+      els.tooltip.style.left = `${Math.max(pad, x)}px`;
+      els.tooltip.style.top = `${Math.max(pad, y)}px`;
+      els.tooltip.classList.add("visible");
+    });
+
+    document.addEventListener("pointerup", endScrub);
+    document.addEventListener("pointercancel", endScrub);
+
+    document.addEventListener("mouseleave", () => {
+      endScrub();
+      els.tooltip.classList.remove("visible");
+    });
+  }
+
+  function frame(ts) {
+    if (!model) model = buildModel(state.arch, state.protocol);
+    if (state.playing) {
+      if (!state.lastFrame) state.lastFrame = ts;
+      const delta = (ts - state.lastFrame) / 1000;
+      state.lastFrame = ts;
+      state.time += delta * state.speed;
+      if (state.time >= model.duration) {
+        state.time = model.duration;
+        state.playing = false;
+        state.lastFrame = 0;
+      }
+      render();
+    } else {
+      state.lastFrame = ts;
+    }
+    requestAnimationFrame(frame);
+  }
+
+  bindEvents();
+  render();
+  requestAnimationFrame(frame);
+</script>
+</body>
+</html>
