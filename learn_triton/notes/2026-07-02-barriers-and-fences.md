@@ -17,14 +17,12 @@ CUDA Programming Guide（`learn_triton/reference/`）。凡属于 PTX 契约而�
 
 ## 可视化入口
 
-配套图放在 `learn_triton/docs/barrier_fence_visuals/`：
+当前工作树里的配套图放在 `learn_triton/visuals/`：
 
-- [总览与索引](../docs/barrier_fence_visuals/README.md)
-- [协议总览教学页](../docs/barrier_fence_visuals/protocol-overview.html)
-- [sm80 `cp.async` 教学页](../docs/barrier_fence_visuals/sm80-cp-async.html)
-- [sm90 TMA `mbarrier` 教学页](../docs/barrier_fence_visuals/sm90-tma-mbarrier.html)
-- [sm90 WGMMA 教学页](../docs/barrier_fence_visuals/sm90-wgmma.html)
-- [sm100 `tcgen05` / TMEM 教学页](../docs/barrier_fence_visuals/sm100-tcgen05.html)
+- [Barrier / Fence scope + fan-in/fan-out 总览页](../visuals/barrier_fence_scope_visual.html)
+
+> 说明：这篇笔记早期引用过 `learn_triton/docs/barrier_fence_visuals/`；但当前工作树里的
+> 可视化入口已经改到 `learn_triton/visuals/`。
 
 ---
 

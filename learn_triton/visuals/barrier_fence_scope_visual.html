@@ -1,0 +1,1665 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Barrier / Fence Scope Visual</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #eef3f8;
+    --panel: #ffffff;
+    --panel-2: #f4f7fb;
+    --line: #d7e0ea;
+    --ink: #17202f;
+    --muted: #5d6b7f;
+    --blue: #2563eb;
+    --blue-soft: #dbeafe;
+    --teal: #0f8a8a;
+    --teal-soft: #d7f5f2;
+    --green: #16794d;
+    --green-soft: #daf5e6;
+    --amber: #b7791f;
+    --amber-soft: #fff1d6;
+    --rose: #b42318;
+    --rose-soft: #fee4e2;
+    --violet: #6d4aff;
+    --violet-soft: #ece7ff;
+    --slate: #475569;
+    --slate-soft: #ebf0f6;
+    --shadow: 0 16px 40px rgba(24, 39, 75, 0.08);
+    --font: "Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, "Microsoft YaHei", sans-serif;
+    font-family: var(--font);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    min-height: 100%;
+    background: var(--bg);
+    color: var(--ink);
+  }
+
+  body {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+
+  header {
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--line);
+    background: linear-gradient(180deg, #ffffff, #eaf0f7);
+  }
+
+  .header-top {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    align-items: center;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 18px;
+    letter-spacing: 0.2px;
+  }
+
+  .header-copy {
+    color: var(--muted);
+    font-size: 12.5px;
+    flex: 1 1 280px;
+  }
+
+  .tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .tab {
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 10px;
+    padding: 6px 12px;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    cursor: pointer;
+    transition: border-color 0.15s ease, transform 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .tab:hover {
+    border-color: #a8b7ca;
+    transform: translateY(-1px);
+  }
+
+  .tab.active {
+    border-color: var(--blue);
+    box-shadow: inset 0 0 0 1px rgba(37, 99, 235, 0.18);
+  }
+
+  .tab-num {
+    width: 22px;
+    height: 22px;
+    display: grid;
+    place-items: center;
+    border-radius: 999px;
+    background: #e5ebf3;
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+    flex: none;
+  }
+
+  .tab.active .tab-num {
+    background: var(--blue);
+    color: #ffffff;
+  }
+
+  .tab-title {
+    font-size: 13px;
+    font-weight: 700;
+  }
+
+  .tab-sub {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .stage-copy {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 14px;
+    align-items: center;
+    color: var(--muted);
+    font-size: 12px;
+  }
+
+  .stage-copy strong {
+    color: var(--ink);
+  }
+
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    padding: 4px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    font-size: 11.5px;
+    font-weight: 700;
+    color: var(--muted);
+  }
+
+  main {
+    flex: 1;
+    display: flex;
+    gap: 8px;
+    padding: 8px;
+    min-height: 0;
+  }
+
+  .left-region {
+    flex: 1;
+    min-width: 0;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .top-row {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+    gap: 8px;
+  }
+
+  .panel {
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    overflow: hidden;
+    box-shadow: var(--shadow);
+  }
+
+  .combo {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .combo-body {
+    flex: 1;
+    min-height: 0;
+    display: flex;
+  }
+
+  .sub-flow {
+    flex: 0 0 42%;
+    border-right: 1px dashed var(--line);
+  }
+
+  .sub-scope {
+    flex: 1;
+  }
+
+  .panel-head {
+    padding: 8px 12px;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-2);
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    font-size: 12.5px;
+    font-weight: 700;
+    flex: none;
+  }
+
+  .panel-tag {
+    font-size: 10.5px;
+    font-weight: 800;
+    color: #ffffff;
+    background: var(--blue);
+    border-radius: 999px;
+    padding: 2px 8px;
+  }
+
+  .panel-hint {
+    margin-left: auto;
+    color: var(--muted);
+    font-weight: 500;
+    font-size: 11px;
+  }
+
+  .panel-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    position: relative;
+  }
+
+  .sub-flow .panel-body,
+  .sub-scope .panel-body {
+    padding: 10px;
+  }
+
+  .flow-summary {
+    color: var(--muted);
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    margin-bottom: 8px;
+  }
+
+  .legend-item {
+    display: inline-flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 10.5px;
+    color: var(--muted);
+    font-weight: 700;
+  }
+
+  .legend-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+    border: 1px solid rgba(23, 32, 47, 0.08);
+  }
+
+  .flow-wrap,
+  .scope-wrap {
+    border: 1px solid #e4ebf3;
+    border-radius: 10px;
+    background: #fbfdff;
+    padding: 6px;
+  }
+
+  .flow-wrap svg,
+  .scope-card svg,
+  #timelineSvg {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+
+  .scope-grid {
+    display: grid;
+    gap: 10px;
+  }
+
+  .scope-header {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .scope-header strong {
+    font-size: 13px;
+  }
+
+  .scope-badge {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .scope-badge.blue { background: var(--blue-soft); color: var(--blue); }
+  .scope-badge.green { background: var(--green-soft); color: var(--green); }
+  .scope-badge.amber { background: var(--amber-soft); color: var(--amber); }
+  .scope-badge.rose { background: var(--rose-soft); color: var(--rose); }
+  .scope-badge.violet { background: var(--violet-soft); color: var(--violet); }
+
+  .scope-card {
+    border: 1px solid #e4ebf3;
+    border-radius: 10px;
+    background: #ffffff;
+    padding: 10px;
+  }
+
+  .scope-card-head {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-bottom: 8px;
+  }
+
+  .scope-card-title {
+    font-size: 12.5px;
+    font-weight: 800;
+  }
+
+  .scope-card-note {
+    color: var(--muted);
+    font-size: 11px;
+  }
+
+  .timeline {
+    flex: none;
+    height: 338px;
+  }
+
+  .timeline-head {
+    padding: 8px 12px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 10px;
+    align-items: center;
+    border-bottom: 1px solid var(--line);
+    background: var(--panel-2);
+    flex: none;
+  }
+
+  .timeline-title {
+    font-size: 12.5px;
+    font-weight: 700;
+  }
+
+  .btn {
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #ffffff;
+    color: var(--ink);
+    font: inherit;
+    font-size: 12px;
+    font-weight: 700;
+    min-height: 32px;
+    padding: 0 12px;
+    cursor: pointer;
+  }
+
+  .btn:hover {
+    border-color: #9fb1c7;
+  }
+
+  .btn.play {
+    background: var(--blue);
+    color: #ffffff;
+    border-color: var(--blue);
+  }
+
+  .timeline-meta {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 11.5px;
+  }
+
+  .timeline-body {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    padding: 8px;
+  }
+
+  .timeline-foot {
+    padding: 6px 12px;
+    border-top: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 11px;
+    background: #fbfdff;
+  }
+
+  .code-panel {
+    flex: 0 0 32%;
+    min-width: 360px;
+  }
+
+  .explain {
+    padding: 10px 12px;
+    background: #eef6ff;
+    border-bottom: 1px solid var(--line);
+    font-size: 12px;
+    line-height: 1.6;
+  }
+
+  .explain strong {
+    color: #11305c;
+  }
+
+  .meta-rows {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 8px;
+    margin-top: 8px;
+  }
+
+  .meta-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 24px;
+    padding: 3px 8px;
+    border-radius: 999px;
+    font-size: 10.5px;
+    font-weight: 800;
+    border: 1px solid transparent;
+  }
+
+  .meta-pill.blue { background: var(--blue-soft); color: var(--blue); }
+  .meta-pill.green { background: var(--green-soft); color: var(--green); }
+  .meta-pill.amber { background: var(--amber-soft); color: var(--amber); }
+  .meta-pill.rose { background: var(--rose-soft); color: var(--rose); }
+  .meta-pill.violet { background: var(--violet-soft); color: var(--violet); }
+  .meta-pill.slate { background: var(--slate-soft); color: var(--slate); }
+
+  .narrative {
+    padding: 8px 12px;
+    background: #fffaf2;
+    border-bottom: 1px solid var(--line);
+    color: #674700;
+    font-size: 11.5px;
+    line-height: 1.5;
+  }
+
+  .codewrap {
+    padding: 8px;
+  }
+
+  .cblock {
+    border: 1px solid #e4ebf3;
+    border-radius: 10px;
+    overflow: hidden;
+    background: #ffffff;
+    margin-bottom: 10px;
+  }
+
+  .cbhead {
+    padding: 6px 10px;
+    border-bottom: 1px solid #e4ebf3;
+    background: #f6f9fd;
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    flex-wrap: wrap;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .cbtone {
+    width: 11px;
+    height: 11px;
+    border-radius: 3px;
+    flex: none;
+  }
+
+  .cbnote {
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 600;
+  }
+
+  pre {
+    margin: 0;
+    padding: 4px 0;
+    font-family: "Cascadia Code", Consolas, Menlo, monospace;
+    font-size: 13px;
+    line-height: 1.6;
+  }
+
+  .cl {
+    white-space: pre;
+    padding: 1px 12px 1px 14px;
+    border-left: 3px solid transparent;
+    color: #344256;
+  }
+
+  .cl.on {
+    background: #fff3d2;
+    border-left-color: var(--amber);
+    color: #17202f;
+    font-weight: 700;
+  }
+
+  .kw { color: #b42318; }
+  .fn { color: #0550ae; }
+  .cm { color: #8693a5; }
+  .st { color: #0a6e3b; }
+  .nm { color: #7c3aed; }
+
+  @media (max-width: 1220px) {
+    main {
+      flex-direction: column;
+    }
+
+    .code-panel {
+      min-width: 0;
+      flex: none;
+    }
+  }
+
+  @media (max-width: 900px) {
+    .combo-body {
+      flex-direction: column;
+    }
+
+    .sub-flow {
+      border-right: 0;
+      border-bottom: 1px dashed var(--line);
+    }
+  }
+</style>
+</head>
+<body>
+<header>
+  <div class="header-top">
+    <h1>Barrier / Fence 协议可视化</h1>
+    <div class="tabs" id="tabs"></div>
+    <div class="header-copy" id="headerCopy"></div>
+  </div>
+  <div class="stage-copy">
+    <span class="chip" id="scopeChip"></span>
+    <span class="chip" id="waitChip"></span>
+    <span class="chip" id="asyncChip"></span>
+    <span id="stageDesc"></span>
+  </div>
+</header>
+
+<main>
+  <div class="left-region">
+    <div class="top-row">
+      <div class="panel combo">
+        <div class="panel-head">
+          <span class="panel-tag">视角 1·2</span>
+          协议链条与同步层级
+          <span class="panel-hint">左边看 data / engine / wait / consumer，右边看 barrier 等待时的 scope-specific fan-in / fan-out</span>
+        </div>
+        <div class="combo-body">
+          <div class="sub-flow">
+            <div class="panel-body">
+              <div class="flow-summary" id="flowSummary"></div>
+              <div class="legend" id="legend"></div>
+              <div class="flow-wrap" id="flowPanel"></div>
+            </div>
+          </div>
+          <div class="sub-scope">
+            <div class="panel-body">
+              <div class="scope-header">
+                <strong id="scopeTitle"></strong>
+                <span class="scope-badge blue" id="scopeBadge"></span>
+              </div>
+              <div class="scope-card-note" id="scopeSummary"></div>
+              <div class="scope-grid" id="scopePanel" style="margin-top:10px;"></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel timeline">
+      <div class="timeline-head">
+        <span class="timeline-title">视角 3 · 异步时间线</span>
+        <button class="btn play" id="playBtn" type="button">▶ 播放</button>
+        <button class="btn" id="prevBtn" type="button">◀</button>
+        <button class="btn" id="nextBtn" type="button">▶</button>
+        <button class="btn" id="resetBtn" type="button">⟲</button>
+        <span class="timeline-meta" id="timelineMeta"></span>
+      </div>
+      <div class="timeline-body">
+        <svg id="timelineSvg" viewBox="0 0 1200 280" role="img" aria-label="Protocol timeline"></svg>
+      </div>
+      <div class="timeline-foot" id="timelineFoot"></div>
+    </div>
+  </div>
+
+  <div class="panel code-panel">
+    <div class="panel-head">
+      <span class="panel-tag">视角 4</span>
+      当前步骤、伪代码与误区
+      <span class="panel-hint">高亮行 = 当前阶段真正起作用的那条同步边</span>
+    </div>
+    <div class="explain" id="explain"></div>
+    <div class="narrative" id="narrative"></div>
+    <div class="panel-body">
+      <div class="codewrap" id="codePanel"></div>
+    </div>
+  </div>
+</main>
+
+<script>
+const COLORS = {
+  source: { fill: '#dbeafe', stroke: '#2563eb', ink: '#1d4ed8' },
+  engine: { fill: '#d7f5f2', stroke: '#0f8a8a', ink: '#0f6f70' },
+  output: { fill: '#ece7ff', stroke: '#6d4aff', ink: '#5b34db' },
+  sync: { fill: '#fff1d6', stroke: '#b7791f', ink: '#8e5e12' },
+  consumer: { fill: '#e6effa', stroke: '#4b6b94', ink: '#365173' },
+  hazard: { fill: '#fee4e2', stroke: '#b42318', ink: '#9a2015' },
+  thread: { fill: '#dbeafe', stroke: '#2563eb', ink: '#1d4ed8' },
+  warp: { fill: '#d7f5f2', stroke: '#0f8a8a', ink: '#0f6f70' },
+  cta: { fill: '#daf5e6', stroke: '#16794d', ink: '#12603d' },
+  cluster: { fill: '#ece7ff', stroke: '#6d4aff', ink: '#5b34db' },
+  wg: { fill: '#fff1d6', stroke: '#b7791f', ink: '#8e5e12' },
+};
+
+function esc(text) {
+  return String(text)
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;');
+}
+
+function fmtTone(tone) {
+  return COLORS[tone] || COLORS.source;
+}
+
+const SCENARIOS = [
+  {
+    id: 'warp',
+    short: 'Warp',
+    title: 'Warp 级 rendezvous',
+    subtitle: '单个 warp 的 32 lanes 先各做一段工作，再通过 `bar.warp.sync` reconverge。这里的 fan-in / fan-out 只发生在 warp 内部。',
+    headerCopy: '这页把“当前同步到底管到哪一层”直接画出来。切换场景后，右上角会把等待点的参与者换成 thread / warp / CTA / cluster / warp-group 视角。',
+    scopeChip: '当前主同步层级：warp（32 lanes）',
+    waitChip: 'wait object：bar.warp.sync',
+    asyncChip: '异步性：无独立异步引擎，重点是执行会合',
+    flowSummary: '目标不是等待某个 copy engine 完成，而是把一个 warp 里发生分歧的 lanes 再次对齐，让后续寄存器 / shared 使用边界成立。',
+    scopeTitle: 'Warp fan-in / fan-out',
+    scopeBadge: { text: 'scope = warp', cls: 'blue' },
+    scopeSummary: '当当前同步是 warp 级时，只画这 32 个 lanes。其它 warps、其它 CTA 都不会出现在 fan-in / fan-out 图里。',
+    timelineFoot: '这里没有独立硬件异步引擎；时间线上强调的是“同一 warp 的 lanes 在不同分支里先散开，再在 barrier 处收敛”。',
+    flow: {
+      width: 620,
+      height: 360,
+      nodes: [
+        { id: 'laneWork', x: 34, y: 146, w: 148, h: 74, label: 'lane-local work', sub: 'predicated branch', tone: 'source' },
+        { id: 'diverge', x: 222, y: 82, w: 136, h: 64, label: 'divergent path A', sub: 'lanes 0..15', tone: 'engine' },
+        { id: 'divergeB', x: 222, y: 216, w: 136, h: 64, label: 'divergent path B', sub: 'lanes 16..31', tone: 'engine' },
+        { id: 'barrier', x: 404, y: 148, w: 150, h: 72, label: 'bar.warp.sync', sub: 'warp rendezvous', tone: 'sync' },
+        { id: 'next', x: 578, y: 148, w: 150, h: 72, label: 'next warp op', sub: 'reconverged lanes', tone: 'consumer' }
+      ],
+      edges: [
+        { id: 'splitA', from: 'laneWork', to: 'diverge', label: 'lane subset A', tone: 'engine' },
+        { id: 'splitB', from: 'laneWork', to: 'divergeB', label: 'lane subset B', tone: 'engine' },
+        { id: 'joinA', from: 'diverge', to: 'barrier', label: 'fan-in', tone: 'sync' },
+        { id: 'joinB', from: 'divergeB', to: 'barrier', label: 'fan-in', tone: 'sync' },
+        { id: 'fanout', from: 'barrier', to: 'next', label: 'fan-out', tone: 'consumer' }
+      ]
+    },
+    scopeSteps: [
+      {
+        title: '进入 warp barrier 前',
+        note: '32 lanes 先各自完成分支内部的工作。',
+        barrier: 'bar.warp.sync',
+        phase: 'fanin',
+        left: { kind: 'lanes', count: 32, label: 'warp 0 lanes', tone: 'thread' },
+        right: { kind: 'lanes', count: 32, label: '下一条 warp 指令', tone: 'consumer' },
+        barrierTone: 'sync'
+      }
+    ],
+    codeBlocks: [
+      {
+        title: 'Warp-local pseudo code',
+        tone: 'source',
+        note: '重点是 warp 内 reconverge，不是 CTA publish',
+        lines: [
+          { id: 'W1', html: '<span class="kw">if</span> (<span class="nm">lane_id</span> &lt; 16) { <span class="cm">// path A</span>' },
+          { id: 'W2', html: '  <span class="fn">do_path_a</span>();' },
+          { id: 'W3', html: '} <span class="kw">else</span> { <span class="cm">// path B</span>' },
+          { id: 'W4', html: '  <span class="fn">do_path_b</span>();' },
+          { id: 'W5', html: '}' },
+          { id: 'W6', html: '<span class="fn">bar_warp_sync</span>(mask);' },
+          { id: 'W7', html: '<span class="fn">consume_reconverged_state</span>();' }
+        ]
+      }
+    ],
+    timeline: {
+      lanes: [
+        { id: 'lanesA', label: 'lanes 0..15', note: 'warp half A', bg: '#f8fbff' },
+        { id: 'lanesB', label: 'lanes 16..31', note: 'warp half B', bg: '#f8fbff' },
+        { id: 'sync', label: 'bar.warp.sync', note: 'warp rendezvous', bg: '#fffaf2' },
+        { id: 'next', label: 'next op', note: 'reconverged', bg: '#f6fbf8' }
+      ],
+      events: [
+        { lane: 'lanesA', start: 0, end: 2.4, label: 'path A work', tone: 'engine' },
+        { lane: 'lanesB', start: 0.4, end: 3.2, label: 'path B work', tone: 'engine' },
+        { lane: 'sync', start: 3.2, end: 4.2, label: 'wait all lanes', tone: 'sync' },
+        { lane: 'next', start: 4.2, end: 5.1, label: 'reconverged op', tone: 'consumer' }
+      ]
+    },
+    steps: [
+      {
+        label: 'lane divergence',
+        explain: '同一个 warp 的 lanes 分别跑 path A / path B。还没有形成公共可继续点。',
+        insight: '这里只是执行分歧，跟异步 copy / completion tracking 无关。',
+        code: ['W1', 'W2', 'W3', 'W4'],
+        scopeRefs: [0],
+        activeNodes: ['laneWork', 'diverge', 'divergeB'],
+        activeEdges: ['splitA', 'splitB'],
+        timelineTick: 1.8,
+        meta: [
+          { text: 'scope: warp', cls: 'blue' },
+          { text: 'kind: rendezvous', cls: 'amber' },
+          { text: 'async engine: none', cls: 'slate' }
+        ]
+      },
+      {
+        label: 'warp fan-in',
+        explain: '32 lanes 向 `bar.warp.sync` 收敛。等待点只看这个 warp，不关心 CTA 内其它 warps。',
+        insight: '你看到的 inward arrows 就是 warp 内线程的 fan-in；这正是用户关心的“如果当前同步是 warp 级，就只展示 warp 内线程”的情况。',
+        code: ['W6'],
+        scopeRefs: [0],
+        activeNodes: ['diverge', 'divergeB', 'barrier'],
+        activeEdges: ['joinA', 'joinB'],
+        timelineTick: 3.6,
+        meta: [
+          { text: 'scope: warp', cls: 'blue' },
+          { text: 'wait object: bar.warp.sync', cls: 'amber' },
+          { text: 'fan-in: 32 lanes', cls: 'green' }
+        ]
+      },
+      {
+        label: 'warp fan-out',
+        explain: 'barrier 满足后，同一 warp 的 lanes 重新作为一个执行组继续往下走。',
+        insight: 'fan-out 不是“复制数据”，而是 barrier 释放后，原来那批 lanes 可以一起执行下一条 warp-synchronous 指令。',
+        code: ['W6', 'W7'],
+        scopeRefs: [0],
+        activeNodes: ['barrier', 'next'],
+        activeEdges: ['fanout'],
+        timelineTick: 4.6,
+        meta: [
+          { text: 'scope: warp', cls: 'blue' },
+          { text: 'release: same warp only', cls: 'green' },
+          { text: 'CTA untouched', cls: 'slate' }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'sm80',
+    short: 'sm80',
+    title: 'sm80 cp.async：thread wait 之后还要 CTA publish',
+    subtitle: '`cp.async.wait_group` 先由 issuing thread 看到完成，但 shared tile 要给整个 CTA 用，所以后面还必须再过一次 `ttg.barrier` / `bar.sync`。',
+    headerCopy: '这条链专门回答一个容易混淆的问题：为什么 `wait_group` 返回了，别的 warps 还是不能立刻读这块 shared tile。',
+    scopeChip: '当前主同步层级：thread -> CTA',
+    waitChip: 'wait object：wait_group + bar.sync',
+    asyncChip: '异步性：cp.async groups 与 consumer 计算重叠',
+    flowSummary: 'Ampere 的关键不是“有没有 wait”，而是先 thread-local completion，再把 shared tile 对整个 CTA 发布。',
+    scopeTitle: '先 thread wait，再 CTA fan-in / fan-out',
+    scopeBadge: { text: 'scope = thread -> CTA', cls: 'green' },
+    scopeSummary: '这个场景会同时画两张同步卡片：第一张只显示 issuing thread 的 completion observe；第二张才显示整个 CTA 在 barrier 处的 fan-in / fan-out。',
+    timelineFoot: '底部时间线把多个 `cp.async` group 画成并行搬运条带。你可以直接看见：async copy 已经在跑，但 consumer warp 仍然被 CTA publish 挡住。',
+    flow: {
+      width: 760,
+      height: 360,
+      nodes: [
+        { id: 'hbm', x: 22, y: 148, w: 138, h: 74, label: 'HBM tile', sub: '.global', tone: 'source' },
+        { id: 'issuer', x: 188, y: 38, w: 154, h: 64, label: 'issuing thread', sub: 'warp leader', tone: 'source' },
+        { id: 'cp', x: 198, y: 152, w: 164, h: 74, label: 'cp.async pipe', sub: 'async copy groups', tone: 'engine' },
+        { id: 'smem', x: 404, y: 152, w: 170, h: 74, label: 'stage buffer', sub: '.shared::cta', tone: 'output' },
+        { id: 'wait', x: 412, y: 38, w: 160, h: 64, label: 'wait_group', sub: 'issuing thread sees done', tone: 'sync' },
+        { id: 'barrier', x: 612, y: 38, w: 166, h: 64, label: 'ttg.barrier', sub: 'CTA publish gate', tone: 'sync' },
+        { id: 'consumer', x: 614, y: 156, w: 164, h: 74, label: 'CTA consumers', sub: 'other warps read smem', tone: 'consumer' }
+      ],
+      edges: [
+        { id: 'issue', from: 'issuer', to: 'cp', label: 'issue async groups', tone: 'engine' },
+        { id: 'copy', from: 'hbm', to: 'cp', label: 'copy bytes', tone: 'engine' },
+        { id: 'land', from: 'cp', to: 'smem', label: 'arrive in shared', tone: 'output' },
+        { id: 'observe', from: 'cp', to: 'wait', label: 'thread-local completion', tone: 'sync' },
+        { id: 'publish', from: 'wait', to: 'barrier', label: 'CTA fan-in', tone: 'sync' },
+        { id: 'fanout', from: 'barrier', to: 'consumer', label: 'CTA fan-out', tone: 'consumer' },
+        { id: 'read', from: 'smem', to: 'consumer', label: 'read shared tile', tone: 'consumer' }
+      ]
+    },
+    scopeSteps: [
+      {
+        title: 'Step A · issuing thread waits',
+        note: '`wait_group` 只证明 issuing thread 发出的 async group 完成。',
+        barrier: 'cp.async.wait_group',
+        phase: 'fanin',
+        left: { kind: 'thread', count: 1, label: 'issuing thread', tone: 'thread' },
+        right: { kind: 'thread', count: 1, label: 'same thread resumes', tone: 'consumer' },
+        barrierTone: 'sync'
+      },
+      {
+        title: 'Step B · CTA publish',
+        note: '真正让其它 warps 能读共享缓冲的是 CTA barrier。',
+        barrier: 'ttg.barrier / bar.sync',
+        phase: 'fanin',
+        left: { kind: 'warps', count: 4, label: 'CTA warps', tone: 'cta' },
+        right: { kind: 'warps', count: 4, label: 'CTA consumers', tone: 'consumer' },
+        barrierTone: 'sync'
+      }
+    ],
+    codeBlocks: [
+      {
+        title: 'Producer side',
+        tone: 'engine',
+        note: 'completion 先发生在 thread 视角',
+        lines: [
+          { id: 'S1', html: '<span class="fn">cp_async</span>(smem0, gmem0);' },
+          { id: 'S2', html: '<span class="fn">cp_async</span>(smem1, gmem1);' },
+          { id: 'S3', html: '<span class="fn">cp_async_commit_group</span>();' },
+          { id: 'S4', html: '<span class="fn">cp_async_wait_group</span>(0);' }
+        ]
+      },
+      {
+        title: 'CTA publish + consume',
+        tone: 'sync',
+        note: 'publish scope 才扩到整个 CTA',
+        lines: [
+          { id: 'S5', html: '<span class="fn">ttg_barrier_local</span>(); <span class="cm">// bar.sync</span>' },
+          { id: 'S6', html: '<span class="fn">local_load</span>(smem_stage);' },
+          { id: 'S7', html: '<span class="fn">mma_sync</span>(a, b);' }
+        ]
+      }
+    ],
+    timeline: {
+      lanes: [
+        { id: 'issuer', label: 'issuing thread', note: 'launch / wait', bg: '#f8fbff' },
+        { id: 'pipe', label: 'cp.async pipe', note: 'T0 / T1 / T2 overlap', bg: '#f6fbf8' },
+        { id: 'smem', label: 'shared stage', note: 'bytes arrive before publish', bg: '#faf7ff' },
+        { id: 'sync', label: 'wait / barrier', note: 'thread wait then CTA barrier', bg: '#fffaf2' },
+        { id: 'consumer', label: 'consumer warps', note: 'blocked until publish', bg: '#f8fbff' }
+      ],
+      events: [
+        { lane: 'issuer', start: 0.2, end: 1.3, label: 'issue T0', tone: 'engine' },
+        { lane: 'issuer', start: 1.3, end: 2.2, label: 'issue T1', tone: 'engine' },
+        { lane: 'issuer', start: 2.2, end: 3.0, label: 'issue T2 + commit', tone: 'engine' },
+        { lane: 'pipe', start: 0.6, end: 3.6, label: 'T0 in flight', tone: 'engine' },
+        { lane: 'pipe', start: 1.6, end: 4.3, label: 'T1 in flight', tone: 'engine' },
+        { lane: 'pipe', start: 2.4, end: 5.0, label: 'T2 in flight', tone: 'engine' },
+        { lane: 'smem', start: 3.6, end: 5.0, label: 'shared buffers filled', tone: 'output' },
+        { lane: 'sync', start: 5.0, end: 5.8, label: 'wait_group', tone: 'sync' },
+        { lane: 'sync', start: 5.8, end: 6.7, label: 'CTA barrier', tone: 'sync' },
+        { lane: 'consumer', start: 6.7, end: 7.8, label: 'local_load + mma', tone: 'consumer' }
+      ]
+    },
+    steps: [
+      {
+        label: 'async issue',
+        explain: 'issuing thread 连续发出多个 `cp.async` group。搬运已经异步开始，但 consumer 还没被 release。',
+        insight: '“任务怎么异步”在这里最直观：底部三条 copy bar 是并行悬挂的，而 consumer lane 仍然空着。',
+        code: ['S1', 'S2', 'S3'],
+        scopeRefs: [0, 1],
+        activeNodes: ['issuer', 'cp', 'hbm'],
+        activeEdges: ['issue', 'copy'],
+        timelineTick: 2.4,
+        meta: [
+          { text: 'scope: thread launch', cls: 'blue' },
+          { text: 'async groups: 3 in flight', cls: 'green' },
+          { text: 'CTA consumers blocked', cls: 'slate' }
+        ]
+      },
+      {
+        label: 'thread-local completion',
+        explain: '`wait_group` 返回时，知道的是 issuing thread 自己发出的 group 已完成，不是整个 CTA 已经统一看到这块 tile。',
+        insight: '所以右上第一张卡片开始 fan-in，但第二张 CTA 卡片还没有 fan-out。',
+        code: ['S4'],
+        scopeRefs: [0, 1],
+        activeNodes: ['cp', 'wait', 'smem'],
+        activeEdges: ['land', 'observe'],
+        timelineTick: 5.3,
+        meta: [
+          { text: 'scope: thread', cls: 'blue' },
+          { text: 'wait object: wait_group', cls: 'amber' },
+          { text: 'publish not done', cls: 'rose' }
+        ]
+      },
+      {
+        label: 'CTA fan-in',
+        explain: '接下来整个 CTA 在 `ttg.barrier` 处汇合。此时 fan-in 的参与者已经从单线程升级成 CTA 内各个 warps。',
+        insight: '这一步才是“其它 warp 能不能安全读 shared tile”的真正答案。',
+        code: ['S5'],
+        scopeRefs: [1],
+        activeNodes: ['wait', 'barrier'],
+        activeEdges: ['publish'],
+        timelineTick: 6.2,
+        meta: [
+          { text: 'scope: CTA', cls: 'green' },
+          { text: 'fan-in: 4 warps', cls: 'amber' },
+          { text: 'barrier type: publish', cls: 'violet' }
+        ]
+      },
+      {
+        label: 'CTA fan-out',
+        explain: 'barrier 满足后，CTA consumer warps 一起被放行，开始 `local_load` / `mma_sync`。',
+        insight: 'fan-out 发生在 CTA 维度，不再局限于 issuing thread。',
+        code: ['S5', 'S6', 'S7'],
+        scopeRefs: [1],
+        activeNodes: ['barrier', 'consumer', 'smem'],
+        activeEdges: ['fanout', 'read'],
+        timelineTick: 7.1,
+        meta: [
+          { text: 'scope: CTA', cls: 'green' },
+          { text: 'release: whole CTA', cls: 'blue' },
+          { text: 'async overlap complete', cls: 'slate' }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'sm90',
+    short: 'sm90',
+    title: 'sm90 TMA + mbarrier：cluster 级 completion observe',
+    subtitle: 'TMA 负责搬运，`mbarrier` 负责把“这批 bytes 真写完了”变成 CTA / cluster 内可共享观察的完成条件。',
+    headerCopy: '这里把 cluster 级 fan-in / fan-out 直接画出来：等待点不是一个 warp，而是多个 CTA 共享的 barrier object phase。',
+    scopeChip: '当前主同步层级：cluster',
+    waitChip: 'wait object：mbarrier phase / wait_barrier',
+    asyncChip: '异步性：TMA engine 与多个 CTA readers 并行',
+    flowSummary: 'TMA 场景最重要的区分是：leader thread 只是发起者，真正搬 bytes 的是 TMA engine；reader 等的是 mbarrier phase，不是“某条线程结束了”。',
+    scopeTitle: 'Cluster fan-in / fan-out',
+    scopeBadge: { text: 'scope = cluster', cls: 'violet' },
+    scopeSummary: '右上角会把两个 CTA 画成两个独立群组。当前同步层级一旦是 cluster，fan-in / fan-out 就扩到这两个 CTA，而不是只画其中一个 warp。',
+    timelineFoot: '时间线里，TMA transport 持续运行时，两个 CTA 的 consumer warps 仍停在同一个 cluster-visible `wait_barrier` 前面。',
+    flow: {
+      width: 800,
+      height: 360,
+      nodes: [
+        { id: 'desc', x: 20, y: 42, w: 138, h: 64, label: 'TensorMap', sub: 'descriptor', tone: 'source' },
+        { id: 'hbm', x: 20, y: 158, w: 138, h: 74, label: 'HBM tile', sub: '.global payload', tone: 'source' },
+        { id: 'leader', x: 196, y: 38, w: 148, h: 64, label: 'leader thread', sub: 'init + expect', tone: 'source' },
+        { id: 'tma', x: 196, y: 156, w: 166, h: 78, label: 'TMA engine', sub: 'async bulk copy', tone: 'engine' },
+        { id: 'shared', x: 402, y: 158, w: 166, h: 74, label: 'cluster shared', sub: '.shared::cluster', tone: 'output' },
+        { id: 'mbar', x: 410, y: 38, w: 160, h: 64, label: 'mbarrier', sub: 'phase + expected bytes', tone: 'sync' },
+        { id: 'wait', x: 610, y: 38, w: 166, h: 64, label: 'wait_barrier', sub: 'cluster readers wait', tone: 'sync' },
+        { id: 'reader', x: 614, y: 156, w: 164, h: 74, label: 'cluster readers', sub: 'CTA0 + CTA1', tone: 'consumer' }
+      ],
+      edges: [
+        { id: 'arm', from: 'leader', to: 'mbar', label: 'init + expect', tone: 'sync' },
+        { id: 'descEdge', from: 'desc', to: 'tma', label: 'address / shape', tone: 'engine' },
+        { id: 'payload', from: 'hbm', to: 'tma', label: 'payload bytes', tone: 'engine' },
+        { id: 'transport', from: 'tma', to: 'shared', label: 'fill cluster shared', tone: 'output' },
+        { id: 'complete', from: 'tma', to: 'mbar', label: 'completion bookkeeping', tone: 'sync' },
+        { id: 'observe', from: 'mbar', to: 'wait', label: 'phase visible to readers', tone: 'sync' },
+        { id: 'fanout', from: 'wait', to: 'reader', label: 'cluster fan-out', tone: 'consumer' },
+        { id: 'consume', from: 'shared', to: 'reader', label: 'read shared tile', tone: 'consumer' }
+      ]
+    },
+    scopeSteps: [
+      {
+        title: 'Cluster-visible completion object',
+        note: '多个 CTA 共享同一个 barrier object 视图。',
+        barrier: 'wait_barrier(phase)',
+        phase: 'fanin',
+        left: { kind: 'ctas', count: 2, label: 'cluster readers', tone: 'cluster' },
+        right: { kind: 'ctas', count: 2, label: 'CTA0 / CTA1 proceed', tone: 'consumer' },
+        barrierTone: 'sync'
+      }
+    ],
+    codeBlocks: [
+      {
+        title: 'TMA arm + issue',
+        tone: 'source',
+        note: 'leader thread 负责设置协议，不负责搬所有 bytes',
+        lines: [
+          { id: 'H1', html: '<span class="fn">init_barrier</span>(bar, 1);' },
+          { id: 'H2', html: '<span class="fn">barrier_expect</span>(bar, bytes);' },
+          { id: 'H3', html: '<span class="fn">async_tma_copy_global_to_local</span>(desc, gmem, smem, bar);' }
+        ]
+      },
+      {
+        title: 'Reader side',
+        tone: 'sync',
+        note: 'wait 的对象是 barrier phase，不是 issuing thread',
+        lines: [
+          { id: 'H4', html: '<span class="fn">wait_barrier</span>(bar, phase);' },
+          { id: 'H5', html: '<span class="fn">local_load</span>(cluster_smem);' },
+          { id: 'H6', html: '<span class="fn">warp_group_dot</span>(tile);' }
+        ]
+      }
+    ],
+    timeline: {
+      lanes: [
+        { id: 'leader', label: 'leader thread', note: 'init / expect / issue', bg: '#f8fbff' },
+        { id: 'tma', label: 'TMA engine', note: 'transport in flight', bg: '#f6fbf8' },
+        { id: 'bar', label: 'mbarrier state', note: 'armed -> pending -> ready', bg: '#fffaf2' },
+        { id: 'cta0', label: 'CTA0 readers', note: 'waiting on same phase', bg: '#faf7ff' },
+        { id: 'cta1', label: 'CTA1 readers', note: 'same cluster barrier view', bg: '#faf7ff' }
+      ],
+      events: [
+        { lane: 'leader', start: 0.2, end: 0.9, label: 'init', tone: 'source' },
+        { lane: 'leader', start: 0.9, end: 1.7, label: 'expect bytes', tone: 'sync' },
+        { lane: 'leader', start: 1.7, end: 2.4, label: 'issue TMA', tone: 'engine' },
+        { lane: 'tma', start: 2.0, end: 5.1, label: 'bulk copy in flight', tone: 'engine' },
+        { lane: 'bar', start: 1.0, end: 2.0, label: 'armed', tone: 'sync' },
+        { lane: 'bar', start: 2.0, end: 5.1, label: 'phase pending', tone: 'sync' },
+        { lane: 'bar', start: 5.1, end: 5.8, label: 'phase ready', tone: 'consumer' },
+        { lane: 'cta0', start: 2.4, end: 5.8, label: 'wait_barrier', tone: 'sync' },
+        { lane: 'cta0', start: 5.8, end: 6.9, label: 'consume', tone: 'consumer' },
+        { lane: 'cta1', start: 2.6, end: 5.8, label: 'wait_barrier', tone: 'sync' },
+        { lane: 'cta1', start: 5.8, end: 6.9, label: 'consume', tone: 'consumer' }
+      ]
+    },
+    steps: [
+      {
+        label: 'arm barrier',
+        explain: '`init_barrier + barrier_expect` 先把 shared 里的 barrier object armed。此时还没有 payload 完成，但 cluster-visible completion 条件已经建立。',
+        insight: 'cluster scope 的等待对象首先是一个 object，不是一群线程先会合。',
+        code: ['H1', 'H2'],
+        scopeRefs: [0],
+        activeNodes: ['leader', 'mbar'],
+        activeEdges: ['arm'],
+        timelineTick: 1.2,
+        meta: [
+          { text: 'scope: cluster', cls: 'violet' },
+          { text: 'barrier state: armed', cls: 'amber' },
+          { text: 'payload not started', cls: 'slate' }
+        ]
+      },
+      {
+        label: 'async TMA in flight',
+        explain: 'leader thread 已经发起 TMA，真正的 transport 在 TMA engine 上异步进行，reader CTA 还在等 phase 满足。',
+        insight: '“任务怎么异步”在这里是 TMA engine 自己在搬，而两个 CTA reader 已经先挂在同一个 barrier 上。',
+        code: ['H3'],
+        scopeRefs: [0],
+        activeNodes: ['desc', 'hbm', 'tma', 'shared'],
+        activeEdges: ['descEdge', 'payload', 'transport'],
+        timelineTick: 3.7,
+        meta: [
+          { text: 'scope: cluster', cls: 'violet' },
+          { text: 'async engine: TMA', cls: 'green' },
+          { text: '2 CTAs waiting', cls: 'amber' }
+        ]
+      },
+      {
+        label: 'cluster fan-in',
+        explain: '当两个 CTA 的 readers 都停在 `wait_barrier` 前时，右上图会把它们作为 cluster 级参与者画向同一个 barrier object。',
+        insight: '这里的 fan-in 不是 “两个 CTA 都执行 arrive”，而是“它们都以同一 cluster-visible phase 作为继续条件”。',
+        code: ['H4'],
+        scopeRefs: [0],
+        activeNodes: ['mbar', 'wait'],
+        activeEdges: ['complete', 'observe'],
+        timelineTick: 5.0,
+        meta: [
+          { text: 'scope: cluster', cls: 'violet' },
+          { text: 'wait object: mbarrier phase', cls: 'amber' },
+          { text: 'fan-in: CTA0 + CTA1', cls: 'green' }
+        ]
+      },
+      {
+        label: 'cluster fan-out',
+        explain: 'phase 满足后，cluster readers 一起被 release，可以去读 `.shared::cluster` 里的 tile。',
+        insight: '这时 fan-out 是跨 CTA 的；如果你只画一个 warp，就会把 scope 理解错。',
+        code: ['H4', 'H5', 'H6'],
+        scopeRefs: [0],
+        activeNodes: ['wait', 'reader', 'shared'],
+        activeEdges: ['fanout', 'consume'],
+        timelineTick: 6.2,
+        meta: [
+          { text: 'scope: cluster', cls: 'violet' },
+          { text: 'release: multiple CTAs', cls: 'green' },
+          { text: 'consumer sees cluster shared', cls: 'blue' }
+        ]
+      }
+    ]
+  },
+  {
+    id: 'sm100',
+    short: 'sm100',
+    title: 'sm100 tcgen05：warp-group completion，再叠一层 TMEM hazard barrier',
+    subtitle: '`tc_gen5_mma` 是异步 compute。`tc_gen5_commit -> wait_barrier` 先解决 completion，若 TMEM reuse 还有 RAW / WAR / WAW 风险，再由 `ttg.barrier local` 补 legality。',
+    headerCopy: '这个场景故意把 completion gate 和 hazard gate 分成两张卡片，因为它们是两类不同的同步：前者是 warp-group 级完成观察，后者是 CTA 级修补。',
+    scopeChip: '当前主同步层级：warp-group -> CTA',
+    waitChip: 'wait object：wait_barrier + TMEM hazard barrier',
+    asyncChip: '异步性：tcgen05 MMA groups 挂起后再回到 mbarrier',
+    flowSummary: 'Blackwell 的关键不是又多了一个 wait，而是 compute completion 也被接回 mbarrier 世界，同时 TMEM reuse 还可能要求额外 CTA barrier。',
+    scopeTitle: '先 warp-group wait，再 CTA legality repair',
+    scopeBadge: { text: 'scope = WG -> CTA', cls: 'amber' },
+    scopeSummary: '右上图会先画 4 个 warps 作为一个 warp-group fan-in 到 `wait_barrier`，再画 CTA 范围的 hazard barrier，用来说明“完成”和“合法复用”不是同一件事。',
+    timelineFoot: '时间线里最重要的是两层等待：`tcgen05` 的异步 compute 先在 Tensor Core 5 路径里飞行，完成后再过 `wait_barrier`，最后如果 TMEM 复用有风险，再过一道 CTA barrier。',
+    flow: {
+      width: 800,
+      height: 360,
+      nodes: [
+        { id: 'smem', x: 20, y: 156, w: 146, h: 74, label: 'shared operands', sub: '.shared::cta', tone: 'source' },
+        { id: 'wg', x: 196, y: 42, w: 150, h: 64, label: 'warp-group', sub: '4 warps issue mma', tone: 'source' },
+        { id: 'tc', x: 196, y: 154, w: 170, h: 78, label: 'tcgen05 set', sub: 'async MMA pipeline', tone: 'engine' },
+        { id: 'tmem', x: 408, y: 156, w: 158, h: 74, label: 'TMEM', sub: 'result body', tone: 'output' },
+        { id: 'commit', x: 414, y: 42, w: 156, h: 64, label: 'tc_gen5_commit', sub: 'completion -> mbarrier', tone: 'sync' },
+        { id: 'wait', x: 608, y: 42, w: 164, h: 64, label: 'wait_barrier', sub: 'WG observes completion', tone: 'sync' },
+        { id: 'hazard', x: 608, y: 154, w: 164, h: 74, label: 'ttg.barrier local', sub: 'TMEM hazard repair', tone: 'hazard' },
+        { id: 'next', x: 608, y: 260, w: 164, h: 64, label: 'next reader', sub: 'tmem_load / next phase', tone: 'consumer' }
+      ],
+      edges: [
+        { id: 'feed', from: 'smem', to: 'tc', label: 'shared operands', tone: 'engine' },
+        { id: 'issue', from: 'wg', to: 'tc', label: 'async issue', tone: 'engine' },
+        { id: 'write', from: 'tc', to: 'tmem', label: 'result to TMEM', tone: 'output' },
+        { id: 'complete', from: 'tc', to: 'commit', label: 'completion bookkeeping', tone: 'sync' },
+        { id: 'observe', from: 'commit', to: 'wait', label: 'WG waits on mbarrier', tone: 'sync' },
+        { id: 'repair', from: 'wait', to: 'hazard', label: 'if reuse hazard exists', tone: 'hazard' },
+        { id: 'fanout', from: 'hazard', to: 'next', label: 'CTA release', tone: 'consumer' },
+        { id: 'consume', from: 'tmem', to: 'next', label: 'TMEM reader', tone: 'consumer' }
+      ]
+    },
+    scopeSteps: [
+      {
+        title: 'Step A · warp-group completion',
+        note: '一个 warp-group = 4 个 warps。先等异步 tcgen05 完成。',
+        barrier: 'wait_barrier',
+        phase: 'fanin',
+        left: { kind: 'warpgroup', count: 4, label: 'warp-group', tone: 'wg' },
+        right: { kind: 'warpgroup', count: 4, label: 'same WG continues', tone: 'consumer' },
+        barrierTone: 'sync'
+      },
+      {
+        title: 'Step B · CTA hazard repair',
+        note: 'completion 满足后，若 TMEM reuse 有风险，再加 CTA barrier。',
+        barrier: 'ttg.barrier local',
+        phase: 'fanin',
+        left: { kind: 'warps', count: 4, label: 'CTA warps touching TMEM', tone: 'cta' },
+        right: { kind: 'warps', count: 4, label: 'next legal readers', tone: 'consumer' },
+        barrierTone: 'hazard'
+      }
+    ],
+    codeBlocks: [
+      {
+        title: 'tcgen05 issue',
+        tone: 'engine',
+        note: '先发异步 MMA，再把 completion 记到 barrier',
+        lines: [
+          { id: 'B1', html: '<span class="fn">tc_gen5_mma</span>(a, b, tmem);' },
+          { id: 'B2', html: '<span class="fn">tc_gen5_commit</span>(bar);' },
+          { id: 'B3', html: '<span class="fn">wait_barrier</span>(bar, phase);' }
+        ]
+      },
+      {
+        title: 'TMEM legality repair',
+        tone: 'hazard',
+        note: 'completion != 自动消除 reuse hazard',
+        lines: [
+          { id: 'B4', html: '<span class="fn">ttg_barrier_local</span>(); <span class="cm">// inserted by TMemBarrierInsertion</span>' },
+          { id: 'B5', html: '<span class="fn">tmem_load</span>(tmem);' },
+          { id: 'B6', html: '<span class="fn">next_phase</span>();' }
+        ]
+      }
+    ],
+    timeline: {
+      lanes: [
+        { id: 'wg', label: 'warp-group issuer', note: 'issue + wait', bg: '#f8fbff' },
+        { id: 'tc', label: 'tcgen05 pipeline', note: 'async MMA in flight', bg: '#f6fbf8' },
+        { id: 'tmem', label: 'TMEM state', note: 'result arrives after completion', bg: '#faf7ff' },
+        { id: 'wait', label: 'wait / repair', note: 'wait_barrier then hazard barrier', bg: '#fffaf2' },
+        { id: 'next', label: 'next reader', note: 'released only after both gates', bg: '#f8fbff' }
+      ],
+      events: [
+        { lane: 'wg', start: 0.2, end: 1.4, label: 'issue mma set', tone: 'engine' },
+        { lane: 'tc', start: 1.0, end: 4.8, label: 'async tcgen05', tone: 'engine' },
+        { lane: 'wait', start: 4.8, end: 5.7, label: 'wait_barrier', tone: 'sync' },
+        { lane: 'tmem', start: 4.8, end: 6.4, label: 'TMEM result ready', tone: 'output' },
+        { lane: 'wait', start: 5.7, end: 6.6, label: 'CTA hazard barrier', tone: 'hazard' },
+        { lane: 'next', start: 6.6, end: 7.7, label: 'tmem_load / next phase', tone: 'consumer' }
+      ]
+    },
+    steps: [
+      {
+        label: 'async tcgen05 issue',
+        explain: 'warp-group 先把一组 `tc_gen5_mma` 发出去。计算此时在独立的 async compute 路径中飞行。',
+        insight: '异步性在这里不再是 copy engine，而是 tensor core 5 上的 compute pipeline。',
+        code: ['B1'],
+        scopeRefs: [0, 1],
+        activeNodes: ['wg', 'tc', 'smem'],
+        activeEdges: ['feed', 'issue'],
+        timelineTick: 2.6,
+        meta: [
+          { text: 'scope: warp-group launch', cls: 'amber' },
+          { text: 'async compute: in flight', cls: 'green' },
+          { text: 'TMEM not consumable yet', cls: 'slate' }
+        ]
+      },
+      {
+        label: 'warp-group fan-in',
+        explain: '`tc_gen5_commit` 把 completion 记到 barrier，随后同一个 warp-group 在 `wait_barrier` 前 fan-in。',
+        insight: '这一步回答的是“此前异步 MMA 做完没有”，不是“TMEM hazard 已经全清了没有”。',
+        code: ['B2', 'B3'],
+        scopeRefs: [0],
+        activeNodes: ['tc', 'commit', 'wait'],
+        activeEdges: ['complete', 'observe'],
+        timelineTick: 5.1,
+        meta: [
+          { text: 'scope: warp-group', cls: 'amber' },
+          { text: 'wait object: mbarrier', cls: 'blue' },
+          { text: 'fan-in: 4 warps', cls: 'green' }
+        ]
+      },
+      {
+        label: 'CTA legality repair',
+        explain: '如果下一段对 TMEM 的使用还有 reuse hazard，就要再过一次 CTA barrier。它不是 completion 本体，而是 legality patch。',
+        insight: '同一个页面里出现两种 scope，是为了说明 barrier/fence/protocol 不是单层结构。',
+        code: ['B4'],
+        scopeRefs: [1],
+        activeNodes: ['wait', 'hazard'],
+        activeEdges: ['repair'],
+        timelineTick: 6.0,
+        meta: [
+          { text: 'scope: CTA', cls: 'green' },
+          { text: 'kind: hazard repair', cls: 'rose' },
+          { text: 'completion already satisfied', cls: 'slate' }
+        ]
+      },
+      {
+        label: 'final fan-out',
+        explain: '两道门都过完后，下一位 TMEM reader 才真正被 release。',
+        insight: 'completion gate 和 legality gate 合起来，才构成最终可消费条件。',
+        code: ['B4', 'B5', 'B6'],
+        scopeRefs: [1],
+        activeNodes: ['hazard', 'next', 'tmem'],
+        activeEdges: ['fanout', 'consume'],
+        timelineTick: 7.0,
+        meta: [
+          { text: 'scope: CTA release', cls: 'green' },
+          { text: 'TMEM consumer active', cls: 'blue' },
+          { text: 'both gates cleared', cls: 'violet' }
+        ]
+      }
+    ]
+  }
+];
+
+const state = {
+  scenarioIndex: 0,
+  stepIndex: 0,
+  timer: null
+};
+
+const tabsEl = document.getElementById('tabs');
+const headerCopyEl = document.getElementById('headerCopy');
+const scopeChipEl = document.getElementById('scopeChip');
+const waitChipEl = document.getElementById('waitChip');
+const asyncChipEl = document.getElementById('asyncChip');
+const stageDescEl = document.getElementById('stageDesc');
+const flowSummaryEl = document.getElementById('flowSummary');
+const legendEl = document.getElementById('legend');
+const flowPanelEl = document.getElementById('flowPanel');
+const scopeTitleEl = document.getElementById('scopeTitle');
+const scopeBadgeEl = document.getElementById('scopeBadge');
+const scopeSummaryEl = document.getElementById('scopeSummary');
+const scopePanelEl = document.getElementById('scopePanel');
+const explainEl = document.getElementById('explain');
+const narrativeEl = document.getElementById('narrative');
+const codePanelEl = document.getElementById('codePanel');
+const timelineSvgEl = document.getElementById('timelineSvg');
+const timelineMetaEl = document.getElementById('timelineMeta');
+const timelineFootEl = document.getElementById('timelineFoot');
+const playBtn = document.getElementById('playBtn');
+const prevBtn = document.getElementById('prevBtn');
+const nextBtn = document.getElementById('nextBtn');
+const resetBtn = document.getElementById('resetBtn');
+
+function currentScenario() {
+  return SCENARIOS[state.scenarioIndex];
+}
+
+function currentStep() {
+  return currentScenario().steps[state.stepIndex];
+}
+
+function buildTabs() {
+  tabsEl.innerHTML = SCENARIOS.map((scenario, index) => `
+    <button class="tab ${index === state.scenarioIndex ? 'active' : ''}" data-index="${index}" type="button">
+      <span class="tab-num">${index + 1}</span>
+      <span>
+        <span class="tab-title">${esc(scenario.title)}</span><br>
+        <span class="tab-sub">${esc(scenario.short)}</span>
+      </span>
+    </button>
+  `).join('');
+  tabsEl.querySelectorAll('.tab').forEach((tab) => {
+    tab.addEventListener('click', () => {
+      stopPlayback();
+      state.scenarioIndex = Number(tab.dataset.index);
+      state.stepIndex = 0;
+      render();
+    });
+  });
+}
+
+function renderHeader() {
+  const scenario = currentScenario();
+  const step = currentStep();
+  document.title = `${scenario.title} · Barrier / Fence Scope Visual`;
+  headerCopyEl.textContent = scenario.headerCopy;
+  scopeChipEl.textContent = scenario.scopeChip;
+  waitChipEl.textContent = scenario.waitChip;
+  asyncChipEl.textContent = scenario.asyncChip;
+  stageDescEl.innerHTML = `<strong>${esc(step.label)}</strong>：${esc(step.explain)}`;
+}
+
+function renderLegend() {
+  const items = [
+    { label: 'source / initiator', tone: 'source' },
+    { label: 'async engine', tone: 'engine' },
+    { label: 'destination state', tone: 'output' },
+    { label: 'wait / barrier', tone: 'sync' },
+    { label: 'consumer / release', tone: 'consumer' },
+    { label: 'hazard repair', tone: 'hazard' }
+  ];
+  legendEl.innerHTML = items.map((item) => {
+    const c = fmtTone(item.tone);
+    return `<span class="legend-item"><span class="legend-swatch" style="background:${c.fill}"></span>${esc(item.label)}</span>`;
+  }).join('');
+}
+
+function renderFlow() {
+  const scenario = currentScenario();
+  const step = currentStep();
+  const nodeMap = Object.fromEntries(scenario.flow.nodes.map((node) => [node.id, node]));
+  const activeNodes = new Set(step.activeNodes);
+  const activeEdges = new Set(step.activeEdges);
+  flowSummaryEl.textContent = scenario.flowSummary;
+
+  const svg = [];
+  svg.push(`<svg viewBox="0 0 ${scenario.flow.width} ${scenario.flow.height}" role="img" aria-label="${esc(scenario.title)} flow">`);
+  svg.push(flowDefs());
+
+  scenario.flow.edges.forEach((edge) => {
+    const from = nodeMap[edge.from];
+    const to = nodeMap[edge.to];
+    const sx = from.x + from.w;
+    const sy = from.y + from.h / 2;
+    const tx = to.x;
+    const ty = to.y + to.h / 2;
+    const mx = (sx + tx) / 2;
+    const active = activeEdges.has(edge.id);
+    const tone = fmtTone(edge.tone);
+    svg.push(`
+      <path d="M ${sx} ${sy} C ${mx} ${sy}, ${mx} ${ty}, ${tx} ${ty}" fill="none"
+        stroke="${active ? tone.stroke : '#c4cedb'}" stroke-width="${active ? 3 : 2}"
+        marker-end="url(#arrow-${active ? 'active' : 'idle'})"
+        opacity="${active ? 1 : 0.8}"></path>
+      <rect x="${mx - 48}" y="${((sy + ty) / 2) - 11}" width="96" height="22" rx="11" fill="#ffffff" stroke="#dbe4ee"></rect>
+      <text x="${mx}" y="${((sy + ty) / 2) + 4}" text-anchor="middle" fill="${active ? tone.ink : '#708094'}" font-size="11.5" font-weight="800">${esc(edge.label)}</text>
+    `);
+  });
+
+  scenario.flow.nodes.forEach((node) => {
+    const c = fmtTone(node.tone);
+    const active = activeNodes.has(node.id);
+    svg.push(`
+      <rect x="${node.x}" y="${node.y}" width="${node.w}" height="${node.h}" rx="14"
+        fill="${c.fill}" stroke="${active ? c.stroke : '#c8d2df'}" stroke-width="${active ? 3 : 1.6}"
+        opacity="${active ? 1 : 0.86}"></rect>
+      <text x="${node.x + 14}" y="${node.y + 28}" fill="${c.ink}" font-size="13" font-weight="800">${esc(node.label)}</text>
+      <text x="${node.x + 14}" y="${node.y + 46}" fill="#5d6b7f" font-size="11.5">${esc(node.sub)}</text>
+    `);
+  });
+
+  svg.push(`</svg>`);
+  flowPanelEl.innerHTML = svg.join('');
+}
+
+function renderScope() {
+  const scenario = currentScenario();
+  const step = currentStep();
+  scopeTitleEl.textContent = scenario.scopeTitle;
+  scopeBadgeEl.textContent = scenario.scopeBadge.text;
+  scopeBadgeEl.className = `scope-badge ${scenario.scopeBadge.cls}`;
+  scopeSummaryEl.textContent = scenario.scopeSummary;
+
+  scopePanelEl.innerHTML = step.scopeRefs.map((ref) => {
+    const card = scenario.scopeSteps[ref];
+    return `
+      <div class="scope-card">
+        <div class="scope-card-head">
+          <span class="scope-card-title">${esc(card.title)}</span>
+          <span class="scope-badge ${card.barrierTone === 'hazard' ? 'rose' : card.left.tone === 'cluster' ? 'violet' : card.left.tone === 'cta' ? 'green' : card.left.tone === 'wg' ? 'amber' : 'blue'}">${esc(card.barrier)}</span>
+        </div>
+        <div class="scope-card-note">${esc(card.note)}</div>
+        ${buildScopeSvg(card)}
+      </div>
+    `;
+  }).join('');
+}
+
+function buildScopeSvg(card) {
+  const width = 560;
+  const height = 190;
+  const leftX = 74;
+  const rightX = 458;
+  const barrierX = 282;
+  const centerY = 104;
+  const barrierTone = fmtTone(card.barrierTone || 'sync');
+
+  const left = drawGroup(card.left, leftX, centerY);
+  const right = drawGroup(card.right, rightX, centerY);
+  const inwardStroke = barrierTone.stroke;
+  const outwardStroke = fmtTone('consumer').stroke;
+
+  return `
+    <svg viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(card.title)}">
+      <defs>
+        <marker id="scope-in" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M 0 0 L 8 4 L 0 8 z" fill="${inwardStroke}"></path>
+        </marker>
+        <marker id="scope-out" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+          <path d="M 0 0 L 8 4 L 0 8 z" fill="${outwardStroke}"></path>
+        </marker>
+      </defs>
+      <rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="14" fill="#fbfdff" stroke="#e2e8f0"></rect>
+      ${left.svg}
+      ${right.svg}
+      <path d="M ${left.anchorX} ${left.anchorY} C ${left.anchorX + 80} ${left.anchorY}, ${barrierX - 52} ${centerY}, ${barrierX - 18} ${centerY}"
+        fill="none" stroke="${inwardStroke}" stroke-width="2.6" marker-end="url(#scope-in)"></path>
+      <path d="M ${barrierX + 18} ${centerY} C ${barrierX + 54} ${centerY}, ${right.anchorX - 80} ${right.anchorY}, ${right.anchorX} ${right.anchorY}"
+        fill="none" stroke="${outwardStroke}" stroke-width="2.6" marker-end="url(#scope-out)"></path>
+      <rect x="${barrierX - 70}" y="${centerY - 34}" width="140" height="68" rx="18" fill="${barrierTone.fill}" stroke="${barrierTone.stroke}" stroke-width="2.4"></rect>
+      <text x="${barrierX}" y="${centerY - 2}" text-anchor="middle" fill="${barrierTone.ink}" font-size="13" font-weight="800">${esc(card.barrier)}</text>
+      <text x="${barrierX}" y="${centerY + 18}" text-anchor="middle" fill="#5d6b7f" font-size="11.5">fan-in 观察点 → fan-out release</text>
+      <text x="${barrierX}" y="28" text-anchor="middle" fill="#6b7280" font-size="11" font-weight="700">当前同步层级决定参与者集合</text>
+    </svg>
+  `;
+}
+
+function drawGroup(group, cx, cy) {
+  const tone = fmtTone(group.tone);
+  let svg = '';
+  let anchorX = cx;
+  const anchorY = cy;
+
+  if (group.kind === 'thread') {
+    svg += `<circle cx="${cx}" cy="${cy}" r="18" fill="${tone.fill}" stroke="${tone.stroke}" stroke-width="2.2"></circle>`;
+    svg += `<text x="${cx}" y="${cy + 4}" text-anchor="middle" fill="${tone.ink}" font-size="11" font-weight="800">T</text>`;
+  } else if (group.kind === 'lanes') {
+    const startX = cx - 46;
+    const startY = cy - 34;
+    for (let row = 0; row < 4; row += 1) {
+      for (let col = 0; col < 8; col += 1) {
+        const x = startX + col * 13;
+        const y = startY + row * 14;
+        svg += `<circle cx="${x}" cy="${y}" r="4.3" fill="${tone.fill}" stroke="${tone.stroke}" stroke-width="1.2"></circle>`;
+      }
+    }
+  } else if (group.kind === 'warps' || group.kind === 'warpgroup') {
+    const count = group.count;
+    const rows = count > 2 ? 2 : 1;
+    const cols = rows === 1 ? count : 2;
+    const startX = cx - (cols === 1 ? 0 : 54);
+    const startY = cy - (rows === 1 ? 18 : 36);
+    let idx = 0;
+    for (let row = 0; row < rows; row += 1) {
+      for (let col = 0; col < cols; col += 1) {
+        if (idx >= count) break;
+        const x = startX + col * 56;
+        const y = startY + row * 40;
+        svg += `<rect x="${x}" y="${y}" width="40" height="24" rx="8" fill="${tone.fill}" stroke="${tone.stroke}" stroke-width="1.8"></rect>`;
+        svg += `<text x="${x + 20}" y="${y + 16}" text-anchor="middle" fill="${tone.ink}" font-size="10.5" font-weight="800">w${idx}</text>`;
+        idx += 1;
+      }
+    }
+  } else if (group.kind === 'ctas') {
+    const startX = cx - 62;
+    for (let i = 0; i < group.count; i += 1) {
+      const boxX = startX + i * 74;
+      svg += `<rect x="${boxX}" y="${cy - 40}" width="58" height="58" rx="12" fill="${tone.fill}" stroke="${tone.stroke}" stroke-width="2"></rect>`;
+      svg += `<text x="${boxX + 29}" y="${cy - 16}" text-anchor="middle" fill="${tone.ink}" font-size="11.5" font-weight="800">CTA${i}</text>`;
+      for (let j = 0; j < 4; j += 1) {
+        const wx = boxX + 10 + (j % 2) * 20;
+        const wy = cy + 2 + Math.floor(j / 2) * 14;
+        svg += `<rect x="${wx}" y="${wy}" width="16" height="10" rx="4" fill="#ffffff" stroke="${tone.stroke}" stroke-width="1"></rect>`;
+      }
+    }
+  }
+
+  svg += `<text x="${cx}" y="${cy + 62}" text-anchor="middle" fill="${tone.ink}" font-size="11.5" font-weight="800">${esc(group.label)}</text>`;
+  anchorX = cx + (cx < 280 ? 54 : -54);
+  return { svg, anchorX, anchorY };
+}
+
+function renderCode() {
+  const scenario = currentScenario();
+  const step = currentStep();
+  const active = new Set(step.code);
+
+  explainEl.innerHTML = `
+    <strong>${esc(step.label)}</strong><br>
+    ${esc(step.explain)}
+    <div class="meta-rows">
+      ${step.meta.map((item) => `<span class="meta-pill ${item.cls}">${esc(item.text)}</span>`).join('')}
+    </div>
+  `;
+  narrativeEl.textContent = step.insight;
+
+  codePanelEl.innerHTML = scenario.codeBlocks.map((block) => {
+    const tone = fmtTone(block.tone);
+    return `
+      <div class="cblock">
+        <div class="cbhead">
+          <span class="cbtone" style="background:${tone.fill}"></span>
+          <span>${esc(block.title)}</span>
+          <span class="cbnote">${esc(block.note)}</span>
+        </div>
+        <pre>${block.lines.map((line) => `<div class="cl ${active.has(line.id) ? 'on' : ''}">${line.html}</div>`).join('')}</pre>
+      </div>
+    `;
+  }).join('');
+}
+
+function renderTimeline() {
+  const scenario = currentScenario();
+  const step = currentStep();
+  const ticks = Math.max(...scenario.timeline.events.map((event) => event.end)) + 0.5;
+  const laneGap = 52;
+  const left = 168;
+  const top = 44;
+  const width = 1160;
+  const innerWidth = 920;
+  const tickX = (v) => left + (v / ticks) * innerWidth;
+  const height = top + laneGap * scenario.timeline.lanes.length + 28;
+  timelineSvgEl.setAttribute('viewBox', `0 0 ${width} ${height}`);
+  timelineMetaEl.textContent = `step ${state.stepIndex + 1} / ${scenario.steps.length} · playhead ${step.timelineTick.toFixed(1)}`;
+  timelineFootEl.textContent = scenario.timelineFoot;
+
+  const svg = [];
+  svg.push(flowDefs());
+  svg.push(`<rect x="0.5" y="0.5" width="${width - 1}" height="${height - 1}" rx="18" fill="#ffffff" stroke="#e4ebf3"></rect>`);
+  for (let i = 0; i <= Math.floor(ticks); i += 1) {
+    const x = tickX(i);
+    svg.push(`<line x1="${x}" y1="${top - 12}" x2="${x}" y2="${height - 18}" stroke="#dbe3ed" stroke-width="1.2"></line>`);
+    svg.push(`<text x="${x}" y="22" text-anchor="middle" fill="#7a8799" font-size="10.5" font-weight="700">t${i}</text>`);
+  }
+
+  scenario.timeline.lanes.forEach((lane, laneIndex) => {
+    const y = top + laneIndex * laneGap;
+    svg.push(`<rect x="18" y="${y - 20}" width="${width - 36}" height="40" rx="12" fill="${lane.bg}" stroke="#e4ebf3"></rect>`);
+    svg.push(`<text x="32" y="${y - 3}" fill="#17202f" font-size="12.5" font-weight="800">${esc(lane.label)}</text>`);
+    svg.push(`<text x="32" y="${y + 12}" fill="#7a8799" font-size="10.5">${esc(lane.note)}</text>`);
+  });
+
+  scenario.timeline.events.forEach((event) => {
+    const laneIndex = scenario.timeline.lanes.findIndex((lane) => lane.id === event.lane);
+    const y = top + laneIndex * laneGap - 12;
+    const x = tickX(event.start);
+    const w = Math.max(42, tickX(event.end) - x);
+    const c = fmtTone(event.tone);
+    const active = step.timelineTick >= event.start && step.timelineTick <= event.end + 0.05;
+    svg.push(`
+      <rect x="${x}" y="${y}" width="${w}" height="24" rx="8"
+        fill="${c.fill}" stroke="${active ? c.stroke : '#bfcbd8'}" stroke-width="${active ? 2.4 : 1.3}"
+        opacity="${active ? 1 : 0.9}"></rect>
+      <text x="${x + 8}" y="${y + 16}" fill="${active ? c.ink : '#49586b'}" font-size="11" font-weight="800">${esc(event.label)}</text>
+    `);
+  });
+
+  const playX = tickX(step.timelineTick);
+  svg.push(`<line x1="${playX}" y1="${top - 16}" x2="${playX}" y2="${height - 16}" stroke="#b42318" stroke-width="3"></line>`);
+  svg.push(`<circle cx="${playX}" cy="${top - 16}" r="6" fill="#b42318"></circle>`);
+
+  timelineSvgEl.innerHTML = svg.join('');
+}
+
+function flowDefs() {
+  return `
+    <defs>
+      <marker id="arrow-active" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+        <path d="M 0 0 L 8 4 L 0 8 z" fill="#64748b"></path>
+      </marker>
+      <marker id="arrow-idle" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+        <path d="M 0 0 L 8 4 L 0 8 z" fill="#c4cedb"></path>
+      </marker>
+    </defs>
+  `;
+}
+
+function render() {
+  buildTabs();
+  renderHeader();
+  renderLegend();
+  renderFlow();
+  renderScope();
+  renderCode();
+  renderTimeline();
+}
+
+function stopPlayback() {
+  if (state.timer) {
+    window.clearInterval(state.timer);
+    state.timer = null;
+  }
+  playBtn.textContent = '▶ 播放';
+}
+
+function playPlayback() {
+  if (state.timer) {
+    stopPlayback();
+    return;
+  }
+  playBtn.textContent = '⏸ 暂停';
+  state.timer = window.setInterval(() => {
+    const scenario = currentScenario();
+    if (state.stepIndex >= scenario.steps.length - 1) {
+      stopPlayback();
+      return;
+    }
+    state.stepIndex += 1;
+    render();
+  }, 1650);
+}
+
+playBtn.addEventListener('click', playPlayback);
+prevBtn.addEventListener('click', () => {
+  stopPlayback();
+  state.stepIndex = Math.max(0, state.stepIndex - 1);
+  render();
+});
+nextBtn.addEventListener('click', () => {
+  stopPlayback();
+  state.stepIndex = Math.min(currentScenario().steps.length - 1, state.stepIndex + 1);
+  render();
+});
+resetBtn.addEventListener('click', () => {
+  stopPlayback();
+  state.stepIndex = 0;
+  render();
+});
+
+render();
+</script>
+</body>
+</html>
