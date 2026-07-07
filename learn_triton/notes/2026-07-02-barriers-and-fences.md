@@ -15,6 +15,17 @@ CUDA Programming Guide（`learn_triton/reference/`）。凡属于 PTX 契约而�
 > 说明：本笔记融合了两轮分析。所有具体的 op 名、行号、pass 名均已对当前源码
 > 核实。若源码注释与结论冲突，以源码为准。
 
+## 可视化入口
+
+配套图放在 `learn_triton/docs/barrier_fence_visuals/`：
+
+- [总览与索引](../docs/barrier_fence_visuals/README.md)
+- [协议总览教学页](../docs/barrier_fence_visuals/protocol-overview.html)
+- [sm80 `cp.async` 教学页](../docs/barrier_fence_visuals/sm80-cp-async.html)
+- [sm90 TMA `mbarrier` 教学页](../docs/barrier_fence_visuals/sm90-tma-mbarrier.html)
+- [sm90 WGMMA 教学页](../docs/barrier_fence_visuals/sm90-wgmma.html)
+- [sm100 `tcgen05` / TMEM 教学页](../docs/barrier_fence_visuals/sm100-tcgen05.html)
+
 ---
 
 ## 0. 先建立 protocol 视角

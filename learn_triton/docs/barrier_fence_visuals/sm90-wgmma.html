@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sm90 WGMMA Protocol Teaching View</title>
+  <link rel="stylesheet" href="./protocol-teaching.css">
+</head>
+<body>
+  <main class="page-shell">
+    <header class="hero" id="hero"></header>
+
+    <section class="layout-top">
+      <article class="panel">
+        <div class="panel-header">
+          <div class="panel-title"><span class="panel-index">1</span>WGMMA 这页不再从 HBM 开始，而是从 shared tile 开始</div>
+          <div class="panel-hint">这里最关键的是：WGMMA 的输入已经在 `.shared::cta`。这页主要讲两个不同的问题：proxy publish 与 async MMA completion。</div>
+        </div>
+        <div class="panel-body" id="journey"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <div class="panel-title"><span class="panel-index">2</span>哪个 scope 负责 publish，哪个 scope 负责 wait</div>
+          <div class="panel-hint">producer warps 往 shared 写 tile，真正做 WGMMA 和 `wait_group` 的是同一个 warp-group。CTA 并不会因为 `wait_group` 自动同步。</div>
+        </div>
+        <div class="panel-body" id="scope"></div>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-bottom:16px;">
+      <div class="panel-header">
+        <div class="panel-title"><span class="panel-index">3</span>更偏硬件位置感的微架构剖面图</div>
+        <div class="panel-hint">这张图强调 Hopper WGMMA 的几个物理块：shared SRAM 在 SM 内，proxy fence 更像 ordering 门，warp-group issue front-end 在 compute 侧，结果暂时留在 accumulator register file，而不是写回 shared。</div>
+      </div>
+      <div class="panel-body" id="topology"></div>
+    </section>
+
+    <section class="layout-main">
+      <div class="left-stack">
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">4</span>多个 mma_async 先发，再由 wait_group 在 warp-group 汇合</div>
+            <div class="controls">
+              <button class="btn" id="step-prev" type="button">上一步</button>
+              <button class="btn" id="play-toggle" type="button">播放</button>
+              <button class="btn" id="step-next" type="button">下一步</button>
+              <input class="step-slider" id="step-slider" type="range" min="0" max="0" value="0">
+              <span class="step-caption">步骤 <span id="step-counter">1 / 1</span></span>
+            </div>
+          </div>
+          <div class="panel-body" id="timeline"></div>
+        </article>
+      </div>
+
+      <aside class="right-stack">
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">5</span>当前这一步在做什么</div>
+            <div class="panel-hint">`fence.proxy.async` 解决可见性，`wait_group` 解决 async MMA completion。它们不是一回事。</div>
+          </div>
+          <div class="panel-body" id="current-step"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">6</span>完整协议步骤</div>
+            <div class="panel-hint">注意中间先 publish shared tile，后面才是 async MMA set 的 commit / wait。</div>
+          </div>
+          <div class="panel-body" id="step-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">7</span>最容易误解的点</div>
+            <div class="panel-hint">这页专门用来拆开“ordering fence”和“completion wait”两个概念。</div>
+          </div>
+          <div class="panel-body" id="notes"></div>
+        </article>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    window.PROTOCOL_PAGE = {
+      eyebrow: "sm90 · Hopper compute protocol",
+      title: "WGMMA 的两段式交接：先 publish，再 wait",
+      subtitle: "这里没有 HBM -> shared 的搬运链；输入 tile 已经在 `.shared::cta`。协议真正要解决的是：generic proxy 写进 shared 的 tile 如何被 async proxy 安全读取，以及同一个 warp-group 发出的多个 `wgmma.mma_async` 何时真正完成。",
+      chips: [
+        "<strong>输入内存</strong> .shared::cta",
+        "<strong>可见性修复</strong> fence.proxy.async",
+        "<strong>异步计算模块</strong> wgmma.mma_async",
+        "<strong>输出状态</strong> accumulator registers",
+        "<strong>等待对象</strong> committed async MMA groups",
+        "<strong>最终 consumer</strong> 同一 warp-group 的下一阶段"
+      ],
+      quickFacts: [
+        { label: "数据起点", value: ".shared::cta tile", note: "这页默认 tile 已经由别的 producer warps 放进 shared。" },
+        { label: "先解决的问题", value: "proxy publish", note: "generic store 写进去的 tile，要先经 `fence.proxy.async` 发布给 async side。" },
+        { label: "异步引擎", value: "wgmma set", note: "多条 `mma_async` 先发出，再由 `commit_group` 封组。" },
+        { label: "输出状态", value: "accumulator regs", note: "结果先落在寄存器累加器里，不是 shared 或 HBM。" },
+        { label: "等待 scope", value: "warp-group", note: "`wait_group` 只对发出这些 WGMMA 的同一个 warp-group 成立。" },
+        { label: "最终 consumer", value: "same warp-group", note: "通常是同一个 warp-group 继续复用这些 accumulators。" }
+      ],
+      links: [
+        { href: "./protocol-overview.html", label: "返回协议总览" },
+        { href: "./README.md", label: "查看目录说明" }
+      ],
+      legend: [
+        { label: "producer / source tile", color: "#dcecff" },
+        { label: "proxy publish object", color: "#dff6fa" },
+        { label: "async compute module", color: "#daf8ea" },
+        { label: "output accumulators", color: "#ece5ff" },
+        { label: "completion wait", color: "#fff1d2" },
+        { label: "same WG next stage", color: "#e6effa" }
+      ],
+      journey: {
+        width: 980,
+        height: 364,
+        ariaLabel: "sm90 WGMMA data journey",
+        regions: [
+          { id: "cta", x: 42, y: 96, w: 428, h: 214, label: "CTA shared 域：producer warps 把 tile 写在这里", fill: "rgba(237, 242, 247, 0.48)", stroke: "#8ea0ba" },
+          { id: "wg", x: 488, y: 28, w: 450, h: 286, label: "同一个 warp-group：issue / commit / wait / 下一阶段都在这里闭环", fill: "rgba(220, 255, 247, 0.18)", stroke: "#6fae92" }
+        ],
+        nodes: [
+          { id: "prod", x: 68, y: 128, w: 170, h: 76, label: "producer warps", sub: "generic store / stmatrix", meta: "先把 operand tile 写入 shared", tone: "actor" },
+          { id: "smem", x: 264, y: 128, w: 172, h: 78, label: "operand tile", sub: ".shared::cta", meta: "WGMMA 直接读这里", tone: "source" },
+          { id: "fence", x: 516, y: 52, w: 174, h: 70, label: "proxy fence", sub: "fence.proxy.async", meta: "解决 generic -> async 可见性", tone: "descriptor" },
+          { id: "wgmma", x: 518, y: 160, w: 178, h: 86, label: "WGMMA set", sub: "mma_async k0 / k1 / k2", meta: "warp-group async compute", tone: "engine" },
+          { id: "acc", x: 736, y: 166, w: 170, h: 82, label: "accumulators", sub: "register fragments", meta: "输出状态在寄存器里", tone: "output" },
+          { id: "wait", x: 736, y: 54, w: 170, h: 70, label: "wait_group", sub: "after commit_group", meta: "completion scope = same WG", tone: "sync" },
+          { id: "next", x: 736, y: 270, w: 170, h: 72, label: "WG next stage", sub: "reuse accum / rotate", meta: "同一 warp-group 继续前进", tone: "consumer" }
+        ],
+        arrows: [
+          { id: "build", from: "prod", to: "smem", label: "build shared tile", tone: "data", fromSide: "right", toSide: "left", labelAt: { x: 252, y: 156, w: 138 } },
+          { id: "publish", from: "smem", to: "fence", label: "publish to async proxy", tone: "control", fromSide: "right", toSide: "left", via: [{ x: 470, y: 166 }, { x: 470, y: 86 }], labelAt: { x: 470, y: 74, w: 170 } },
+          { id: "feed", from: "fence", to: "wgmma", label: "async side may read", tone: "control", fromSide: "bottom", toSide: "top", labelAt: { x: 604, y: 140, w: 150 } },
+          { id: "mma", from: "wgmma", to: "acc", label: "update accumulators", tone: "data", fromSide: "right", toSide: "left", labelAt: { x: 718, y: 196, w: 150 } },
+          { id: "join", from: "wgmma", to: "wait", label: "commit -> wait_group", tone: "sync", fromSide: "top", toSide: "bottom", via: [{ x: 716, y: 144 }], labelAt: { x: 676, y: 130, w: 152 } },
+          { id: "advance", from: "wait", to: "next", label: "same WG released", tone: "publish", fromSide: "bottom", toSide: "top", labelAt: { x: 822, y: 258, w: 150 } },
+          { id: "reuse", from: "acc", to: "next", label: "reuse accum state", tone: "publish", fromSide: "bottom", toSide: "top", labelAt: { x: 822, y: 252, w: 140 } }
+        ],
+        notes: [
+          { x: 46, y: 78, text: "这页故意把两种同步拆开：先 proxy publish，再 async completion wait" }
+        ]
+      },
+      scope: {
+        summary: "WGMMA 的核心 scope 是 warp-group，不是 CTA。CTA 范围只负责更早一步的“谁写 shared tile”；真正的 `commit_group` / `wait_group` 配对只约束发出这些 `mma_async` 的同一个 warp-group。",
+        rows: [
+          { id: "thread", scope: "thread", role: "unused", roleClass: "unused", detail: "这里没有像 cp.async 那样以单 thread completion 为核心的协议链。" },
+          { id: "warp", scope: "warp", role: "optional", roleClass: "optional", detail: "单个 warp 是 warp-group 的组成部分，但最终 `wait_group` 保证并不是按单 warp 独立成立。" },
+          { id: "warpgroup", scope: "warp-group", role: "wait", roleClass: "wait", detail: "`wgmma.mma_async`、`commit_group`、`wait_group` 和 accumulators 的继续复用，都以同一个 warp-group 为中心闭环。" },
+          { id: "cta", scope: "CTA", role: "produce", roleClass: "produce", detail: "CTA 中的 producer warps 先把 shared tile 写好并发布，但 `wait_group` 本身不会把整个 CTA 一起 rendezvous。" },
+          { id: "cluster", scope: "cluster", role: "unused", roleClass: "unused", detail: "这条主计算协议默认不靠 cluster scope 完成 join。" }
+        ],
+        callouts: [
+          { title: "第一个必须先解决的问题", body: "不是 completion，而是 shared tile 对 async proxy 的可见性。所以先有 `fence.proxy.async`。" },
+          { title: "最终谁可以接着往下做", body: "是同一个 warp-group，不是整个 CTA。`wait_group` 释放的是 committed async MMA set 的 issuing WG。" }
+        ]
+      },
+      topology: {
+        width: 1080,
+        height: 404,
+        ariaLabel: "sm90 WGMMA microarchitecture cross section",
+        legend: [
+          { label: "shared tile / producer side", color: "#dcecff" },
+          { label: "ordering / proxy gate", color: "#dff6fa" },
+          { label: "WGMMA compute path", color: "#daf8ea" },
+          { label: "accumulator state", color: "#ece5ff" },
+          { label: "wait_group join", color: "#fff1d2" },
+          { label: "same WG next stage", color: "#e6effa" }
+        ],
+        bands: [
+          { id: "shared", y: 18, h: 90, label: "SM 共享存储层", sub: "operand tile 已经在 `.shared::cta`，这页不再从 HBM 开始", fill: "rgba(220,236,255,0.45)", stroke: "#afc8ef" },
+          { id: "ordering", y: 124, h: 78, label: "ordering / proxy 层", sub: "generic proxy -> async proxy 的可见性门", fill: "rgba(223,246,250,0.5)", stroke: "#b7dfe7" },
+          { id: "compute", y: 216, h: 96, label: "warp-group compute 层", sub: "WGMMA issue front-end 与 tensor core path 都更接近这层", fill: "rgba(218,248,234,0.42)", stroke: "#c0ead4" },
+          { id: "state", y: 326, h: 62, label: "寄存器状态层", sub: "accumulator fragments 留在寄存器，wait_group 释放同一个 WG 的下一阶段", fill: "rgba(236,229,255,0.48)", stroke: "#d5c6fb" }
+        ],
+        frames: [
+          { id: "sm-shell", x: 34, y: 12, w: 1012, h: 382, label: "同一个 SM / 同一个 CTA", fill: "rgba(255,255,255,0.16)", stroke: "#9eb2ce", dash: "8 7" },
+          { id: "wg-shell", x: 516, y: 116, w: 500, h: 270, label: "同一个 warp-group", fill: "rgba(220,255,247,0.16)", stroke: "#6fae92", dash: "5 7" }
+        ],
+        modules: [
+          { id: "prod", x: 68, y: 34, w: 172, h: 56, label: "producer warps", sub: "generic store", meta: "CTA producer side", tone: "actor" },
+          { id: "smem", x: 286, y: 34, w: 206, h: 56, label: "shared SRAM tile", sub: ".shared::cta", meta: "WGMMA 输入就放在这里", tone: "source" },
+          { id: "fence", x: 556, y: 136, w: 182, h: 52, label: "proxy fence gate", sub: "fence.proxy.async", meta: "ordering, not completion", tone: "descriptor" },
+          { id: "wgmma", x: 560, y: 238, w: 186, h: 58, label: "WG issue + tensor core path", sub: "mma_async / commit_group", meta: "warp-group async compute", tone: "engine" },
+          { id: "acc", x: 798, y: 238, w: 176, h: 58, label: "accumulator register file", sub: "fragment state", meta: "结果留在寄存器", tone: "output" },
+          { id: "wait", x: 802, y: 144, w: 172, h: 52, label: "wait_group gate", sub: "same WG join", meta: "completion only", tone: "sync" },
+          { id: "next", x: 806, y: 336, w: 170, h: 42, label: "same WG next stage", sub: "reuse accum", meta: "仍是同一 WG", tone: "consumer" }
+        ],
+        arrows: [
+          { id: "build", from: "prod", to: "smem", label: "tile lands in shared", tone: "data", fromSide: "right", toSide: "left", labelAt: { x: 262, y: 104, w: 138 } },
+          { id: "publish", from: "smem", to: "fence", label: "publish to async proxy", tone: "control", fromSide: "right", toSide: "left", via: [{ x: 520, y: 62 }, { x: 520, y: 162 }], labelAt: { x: 520, y: 104, w: 168 } },
+          { id: "feed", from: "fence", to: "wgmma", label: "WG may read tile", tone: "control", fromSide: "bottom", toSide: "top", labelAt: { x: 646, y: 200, w: 128 } },
+          { id: "mma", from: "wgmma", to: "acc", label: "tensor core updates accum", tone: "data", fromSide: "right", toSide: "left", labelAt: { x: 712, y: 314, w: 148 } },
+          { id: "join", from: "wgmma", to: "wait", label: "commit -> wait_group", tone: "sync", fromSide: "top", toSide: "bottom", labelAt: { x: 792, y: 214, w: 154 } },
+          { id: "reuse", from: "acc", to: "next", label: "same WG reuses registers", tone: "publish", fromSide: "bottom", toSide: "top", labelAt: { x: 886, y: 318, w: 174 } },
+          { id: "advance", from: "wait", to: "next", label: "WG released", tone: "sync", fromSide: "bottom", toSide: "top", via: [{ x: 988, y: 226 }, { x: 988, y: 324 }], labelAt: { x: 1038, y: 312, w: 104 } }
+        ],
+        notes: [
+          { x: 36, y: 398, text: "物理位置感关键词：shared SRAM 在 SM 内；proxy fence 是可见性门；WGMMA 结果先停在 accumulator register file，而不是 shared。" }
+        ],
+        caption: "这张剖面图把 `fence.proxy.async` 画成 shared tile 与 WGMMA 之间的 ordering gate，把 `wait_group` 画成 warp-group 内部的 completion gate，帮助区分两者的职责。"
+      },
+      timeline: {
+        ariaLabel: "sm90 WGMMA timeline",
+        ticks: [
+          { label: "shared write" },
+          { label: "fence" },
+          { label: "mma k0" },
+          { label: "mma k1" },
+          { label: "mma k2" },
+          { label: "commit" },
+          { label: "wait" },
+          { label: "reuse" }
+        ],
+        lanes: [
+          { id: "producer", label: "producer warps", note: "generic side builds operand tile in shared", bg: "#f8fbff" },
+          { id: "proxy", label: "proxy publish", note: "让 async side 可以安全读取 shared tile", bg: "#f2fbfd" },
+          { id: "wg", label: "warp-group issue", note: "连续发出多个 mma_async", bg: "#f6fbf8" },
+          { id: "async", label: "async MMA set", note: "k0 / k1 / k2 在 tensor core 路径里重叠执行", bg: "#faf7ff" },
+          { id: "wait", label: "wait_group", note: "只释放同一 warp-group", bg: "#fffaf2" },
+          { id: "next", label: "WG next stage", note: "完成后继续复用 accumulators", bg: "#f8fbff" }
+        ],
+        bars: [
+          { lane: "producer", start: 0, end: 1, label: "store shared tile", tone: "source" },
+          { lane: "proxy", start: 1, end: 2, label: "fence.proxy.async", sub: "publish tile", tone: "descriptor" },
+          { lane: "wg", start: 2, end: 3, label: "issue k0", tone: "engine" },
+          { lane: "wg", start: 3, end: 4, label: "issue k1", tone: "engine" },
+          { lane: "wg", start: 4, end: 5, label: "issue k2", tone: "engine" },
+          { lane: "async", start: 2, end: 5.8, label: "WGMMA set", sub: "k slices overlap", tone: "engine" },
+          { lane: "wait", start: 5, end: 6, label: "commit + wait_group", sub: "same WG join", tone: "sync" },
+          { lane: "next", start: 6.1, end: 7.2, label: "reuse accum", sub: "WG continues", tone: "consumer" }
+        ],
+        markers: [
+          { lane: "proxy", at: 1, label: "publish", kind: "fence", tone: "descriptor" },
+          { lane: "wg", at: 2, label: "launch", kind: "issue", tone: "engine" },
+          { lane: "wg", at: 3, label: "launch", kind: "issue", tone: "engine" },
+          { lane: "wg", at: 4, label: "launch", kind: "issue", tone: "engine" },
+          { lane: "wait", at: 5, label: "commit", kind: "commit", tone: "sync" },
+          { lane: "wait", at: 6, label: "wait", kind: "wait", tone: "sync" }
+        ],
+        caption: "这里的时间线要传达两层意思：先让 shared tile 对 async proxy 可见，然后同一个 warp-group 可以先连续发出多个 `mma_async`，最后再统一 `wait_group`。"
+      },
+      steps: [
+        {
+          tick: 0,
+          short: "0. producer warps 先写 shared tile",
+          title: "这条协议的输入已经在 `.shared::cta`",
+          summary: "和 cp.async / TMA 不同，这一页不从 HBM 开始。此刻 producer warps 正在把 operand tile 写进 shared。",
+          meta: ["输入位置 = shared", "producer scope = CTA warps", "async side 还不能读"],
+          activeNodes: ["prod", "smem"],
+          activeTopologyLayers: ["shared"],
+          activeArrows: ["build"],
+          activeScopeRows: ["cta"],
+          activeRegions: ["cta"]
+        },
+        {
+          tick: 1,
+          short: "1. 先做 proxy publish",
+          title: "在发 WGMMA 之前，先把 shared tile 发布给 async proxy",
+          summary: "`fence.proxy.async` 解决的是“generic store 写进去的 tile 是否对 async 读取端可见”。这是 ordering / visibility 问题，不是 completion 问题。",
+          meta: ["问题类型 = proxy visibility", "不是 wait", "CTA shared -> async side"],
+          activeNodes: ["smem", "fence"],
+          activeTopologyLayers: ["shared", "ordering"],
+          activeArrows: ["publish", "feed"],
+          activeScopeRows: ["cta", "warpgroup"],
+          activeRegions: ["cta", "wg"]
+        },
+        {
+          tick: 3,
+          short: "2. 同一 WG 连续发多个 mma_async",
+          title: "warp-group 可以先把多个 K-slice 异步发出去",
+          summary: "这里的重点是 fan-out：先 issue k0、k1、k2，而不是每发一次就立刻等待。这样 tensor core async path 才能真正 overlap。",
+          meta: ["issue scope = same WG", "k0/k1/k2 overlap", "还没等 completion"],
+          activeNodes: ["wgmma", "fence", "acc"],
+          activeTopologyLayers: ["compute", "state"],
+          activeArrows: ["feed", "mma"],
+          activeScopeRows: ["warpgroup"],
+          activeRegions: ["wg"]
+        },
+        {
+          tick: 5,
+          short: "3. 用 commit_group 封闭 async set",
+          title: "这一步开始从“先发”转到“准备等”",
+          summary: "`commit_group` 把前面发出去的一批 `mma_async` 封成一个可以等待的 async set，但结果还没被同一 WG 正式收回。",
+          meta: ["async set closed", "下一步才能 wait", "等待对象是 committed set"],
+          activeNodes: ["wgmma", "wait"],
+          activeTopologyLayers: ["compute"],
+          activeArrows: ["join"],
+          activeScopeRows: ["warpgroup"],
+          activeRegions: ["wg"]
+        },
+        {
+          tick: 6,
+          short: "4. wait_group 在 warp-group 汇合",
+          title: "真正的 completion wait 发生在同一个 warp-group 内部",
+          summary: "`wait_group` 回收的是刚才那组 committed async MMA。它不会替代 CTA barrier，也不会给别的 warp-group 发放许可。",
+          meta: ["completion scope = same WG", "CTA 并未一起同步", "ordering 与 completion 已分离"],
+          activeNodes: ["wait", "acc"],
+          activeTopologyLayers: ["state"],
+          activeArrows: ["advance"],
+          activeScopeRows: ["warpgroup"],
+          activeRegions: ["wg"]
+        },
+        {
+          tick: 7,
+          short: "5. 同一 WG 继续复用 accumulators",
+          title: "wait 返回后，还是这个 warp-group 自己继续推进下一阶段",
+          summary: "到这里可以安全复用 accumulator fragments，或者旋转到下一轮 tile / epilogue 阶段。consumer 仍是同一 WG。",
+          meta: ["legal consumer = same WG", "输出状态 = accumulators", "protocol 闭环完成"],
+          activeNodes: ["acc", "next"],
+          activeTopologyLayers: ["state"],
+          activeArrows: ["reuse", "advance"],
+          activeScopeRows: ["warpgroup"],
+          activeRegions: ["wg"]
+        }
+      ],
+      notes: [
+        {
+          title: "误区 1：`fence.proxy.async` 就是在等待 WGMMA 完成",
+          body: "不是。它只负责 generic proxy 写 shared 后，对 async proxy 的可见性与顺序。"
+        },
+        {
+          title: "误区 2：`wait_group` 会同步整个 CTA",
+          body: "也不是。它释放的是发出这批 async MMA 的同一个 warp-group。"
+        },
+        {
+          title: "读图口诀",
+          items: [
+            "先问输入在哪：这里已经在 `.shared::cta`。",
+            "再问 fence 解决什么：答案是 proxy visibility。",
+            "最后问谁等 completion：答案是同一个 warp-group。"
+          ]
+        }
+      ],
+      footerNote: "如果你只记一件事：WGMMA 里 `fence.proxy.async` 和 `wait_group` 分别在解决“看得见”与“做完了”这两件不同的事。"
+    };
+  </script>
+  <script src="./protocol-teaching.js"></script>
+</body>
+</html>

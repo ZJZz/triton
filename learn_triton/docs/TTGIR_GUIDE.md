@@ -1,19 +1,18 @@
 # Triton TTGIR 学习指南
 
-## 1. 范围
+## 1. 范围和边界
 
-这篇文档只讨论 TTGIR 学习需要抓住的主线：
+这篇文档只讨论 TTGIR。
 
-- `TTIR -> TTGIR -> LLVM IR` 之间，编译器建立了哪些 GPU-level contract。
-- `make_ttgir` 里的 pass 各自负责什么，边界在哪里。
-- 如何从 TTGIR dump 和 pass dump 读出 ownership、carrier、schedule 的变化。
+- 关注 `TTIR -> TTGIR -> LLVM IR` 之间，编译器建立了哪些 GPU-level contract。
+- 关注 `make_ttgir` 里的 pass 分工，以及它们和 `make_llir` 的边界。
+- 关注如何从 TTGIR dump / pass dump 读出 `mapping / organization / scheduling / legality / cleanup`。
 
 不系统展开 Python API、autotune、runtime、LLVM IR、PTX、SASS。这些放到
 [GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/GUIDE.md)。
 
 NVIDIA backend 的 stage wiring 在
-[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:579)。
-这里把 `ttgir` 绑定到 `make_ttgir`，把 `llir` 绑定到 `make_llir`：
+[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:579)：
 
 ```text
 TTIR
@@ -23,146 +22,201 @@ TTIR
   -> LLVM IR
 ```
 
-## 2. TTGIR 在哪一层
+三层边界：
 
-### 2.1 TTIR / TTGIR / LLVM IR
+- TTIR：logical tensor program，还没有 CTA / warp / thread 级执行分发 encoding。
+- TTGIR：开始显式携带 GPU-level contract，例如 `#ttg.blocked`、`#ttg.slice`、`#ttg.dot_op`、`ttg.convert_layout`、`ttg.local_alloc`、pipeline metadata、`ttng` target protocol。
+- LLVM IR：不再讨论 Triton tensor contract，而是讨论 lane-level 地址计算、控制流和目标指令选择。
 
-- TTIR 主要保留 logical tensor 语义，还没有 CTA / warp / thread 级执行分发 encoding。
-- TTGIR 开始显式携带 GPU-level contract，例如 `#ttg.blocked`、`#ttg.slice`、`#ttg.dot_op`、`ttg.convert_layout`、`ttg.local_alloc`、pipeline metadata、`ttng` target-specific protocol。
-- LLVM IR 不再讨论 Triton tensor contract，而是讨论每个 lane 的地址计算、控制流和目标指令选择。
+另一个要分清的边界是 `ttg` 和 `ttng`：
 
-所以学 TTGIR 时，重点不是“某个 Triton op 最后变成哪条 PTX”，而是“lower 到 LLVM 之前，编译器先建立了哪些 GPU contract”。
+- `ttg` = TritonGPU dialect，负责 generic GPU tensor execution contract。
+- `ttng` = TritonNvidiaGPU dialect，负责 NVIDIA-specific transport / barrier / fence / TMEM / cluster protocol。
 
-### 2.2 TTGIR 的三条主轴
-
-TTGIR 最好压成下面这个模型：
-
-```text
-TTGIR
-  = distributed execution mapping
-  + layout / data-movement organization
-  + target-driven scheduling
-```
-
-- `distributed execution mapping`：决定哪些 CTA / warp / thread / per-thread values 拥有哪些 logical tensor elements。这里的 `execution` 指执行层级上的分工，不是映射到某个具体硬件功能单元。
-- `layout / data-movement organization`：决定这些值在 producer 和 consumer 之间以什么 form 存在、通过什么 carrier 流动。
-- `target-driven scheduling`：决定这些工作何时发生、如何 overlap、何时需要 wait / barrier / fence。
-
-记忆时可以压成一句话：
-
-```text
-mapping = 分工
-organization = 衔接
-scheduling = 时序
-```
-
-`ConvertTritonToTritonGPU` 的 pass 描述直接说明，TTIR tensor type 会被增强为带 layout encoding 的 GPU tensor type，而 encoding 一般包含 `numWarps`、`threadsPerWarp`、`numCTAs`，见
-[Passes.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Conversion/TritonToTritonGPU/Passes.td:6)。
-
-所以看到：
-
-```text
-tensor<..., #ttg.blocked<...>>
-```
-
-不要只把它读成“内存布局变了”。更准确的读法是：
-
-```text
-编译器已经为这批 logical elements 选择了 GPU 执行分发 / ownership contract，
-并把这份 contract 编码进 tensor type
-```
-
-### 2.3 `ttg` 和 `ttng`
-
-NVIDIA backend 上还要分清另一个边界：
-
-- `ttg` = TritonGPU dialect，负责 generic GPU tensor 执行分发语义。
-- `ttng` = TritonNvidiaGPU dialect，负责 NVIDIA-specific transport / barrier / fence / TMEM / cluster 协议。
-
-相关定义和 pass 入口分别在：
+相关定义和 pass 入口：
 
 - [TritonNvidiaGPUOps.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonNvidiaGPU/IR/TritonNvidiaGPUOps.td:52)
 - [TritonNvidiaGPU Passes.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonNvidiaGPU/Transforms/Passes.td:109)
 
-因此在 NVIDIA backend 上，“学习 TTGIR”通常要同时读 `ttg` 和还没 lower 掉的 `ttng`，但不要把责任混在一起：
+## 2. 五类问题总图
 
-- `ttg` 先建立 generic ownership / layout / schedule contract。
-- `ttng` 再把 target-specific transport / TMEM / barrier / fence 协议显式化。
+TTGIR 里最稳定的阅读框架就是这五类：
 
-## 3. 统一阅读框架
-
-### 3.1 先问三个问题
-
-读任何 TTGIR dump，先不要从“这个 pass 改了什么 op”开始，先问：
-
-| 问题 | 核心含义 | 展开文档 |
+| 类别 | 核心问题 | 典型输出 |
 |---|---|---|
-| 谁算、谁拥有这些元素 | distributed execution mapping | [DISTRIBUTED_EXECUTION_MAPPING.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/DISTRIBUTED_EXECUTION_MAPPING.md) |
-| 这些值以什么 form / carrier 在 producer 和 consumer 之间流动 | layout / data-movement organization | [LAYOUT_DATA_MOVEMENT_ORGANIZATION.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/LAYOUT_DATA_MOVEMENT_ORGANIZATION.md) |
-| 这些工作何时发生、如何 overlap、何时需要同步 | target-driven scheduling | [TARGET_DRIVEN_SCHEDULING.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/TARGET_DRIVEN_SCHEDULING.md) |
+| distributed execution mapping | 谁算，谁拥有这些 elements | execution distribution encoding |
+| layout / data-movement organization | 值以什么 form / carrier 在 producer 和 consumer 之间流动 | `convert_layout`、local memory、descriptor、TMA、TMEM |
+| target-driven scheduling | 这些工作何时发生，如何 overlap，靠什么 protocol 交接 | `loop.stage`、async op、wait / barrier |
+| legality repair | 当前 IR 还缺什么约束才能继续 lower | fence / barrier / proxy / TMEM ordering |
+| cleanup | 哪些中间表示噪音可以删除 | 冗余 convert、死代码、重复链、canonical form |
 
-这三个问题的顺序也很重要：
-
-```text
-先决定谁工作
-  -> 再决定值以什么 form / carrier 存在
-  -> 最后决定这些工作何时发生、如何交接
-```
-
-很多人把 TTGIR 误读成“主要就是在改 layout”。更准确的说法是：
+读任何 TTGIR dump，按这个顺序看：
 
 ```text
-layout attr 和 convert_layout
-往往只是更深一层 contract 的可见载体
+mapping
+  -> organization
+  -> scheduling
+  -> legality
+  -> cleanup
 ```
 
-### 3.2 抽象边界
+## 2.1 阅读 TTGIR Pass 的固定模板
 
-一个 pass 的抽象边界，就是四件事：
+这节只给阅读顺序。
 
-- 它负责哪一类问题。
-- 它允许自己修改哪类 contract。
-- 它依赖哪些事实已经成立。
-- 它明确不替别的 pass 做什么。
+如果你要把一个 pass 真正写成完整分析，包含 `Class / Boundary / Problem / Decision / Contract / Invariant / Deferred work / If absent` 这些栏目，展开版模板在
+[IR_PASS_DIFF_LEARNING_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/IR_PASS_DIFF_LEARNING_GUIDE.md)。
 
-固定写法：
+看任意一个 pass，固定按下面顺序读：
 
-- `Input contract`：before IR 必须已经满足什么。
-- `Output contract`：after IR 新建立了什么事实。
-- `Non-goal`：它明确不负责什么。
+```text
+先定类
+  -> 再定边界
+  -> 再问为什么需要它存在
+  -> 再看相关 IR diff
+  -> 再回答这个样本里为什么这样改
+  -> 最后看 after IR 被谁消费
+```
 
-读任何 TTGIR pass，都先问这三件事：
+### 2.1.1 定类
 
-1. 它在回答 `who computes`、`what form / carrier`、还是 `when / how`？
-2. 它是在建立新 contract、把 contract 显式化、补 legality，还是只做 cleanup？
-3. 如果拿掉它，坏掉的是 ownership、carrier、schedule、legality，还是只是优化质量？
+先判断它主要属于哪一类：
 
-这套框架能挡住一个常见误判：两个 pass 都改了 `ttg.convert_layout`，不代表它们属于同一类问题。要看它改的是 ownership、consumer form、representation chain，还是 legality。
+- distributed execution mapping
+- layout / data-movement organization
+- target-driven scheduling
+- legality repair
+- cleanup
 
-## 4. 先认对象，再看 pass
+不要一上来就看 diff。先定类，后面的信号才不会看乱。
 
-### 4.1 execution mapping 的载体
+### 2.1.2 抽象边界
 
-先认承载执行分发 contract 的 encoding 家族：
+对每个 pass，先强行回答这三句：
+
+1. 输入时，IR 里应该已经有什么 contract？
+2. 输出后，新建立了什么 contract？
+3. 哪些东西不是它的责任？
+
+也就是把 pass 先读成：
+
+```text
+input contract
+  -> pass responsibility
+  -> output contract
+  -> non-goal
+```
+
+### 2.1.3 两个“为什么”
+
+一定要把这两个问题分开：
+
+1. 为什么有这个 pass？
+2. 为什么这个 pass 在这个样本里这样改？
+
+前者是设计问题，后者是实例问题。
+
+更准确地说：
+
+- `为什么有这个 pass`：
+  上游 IR + 下游 consumer / lowering / hardware constraint
+  为什么逼出了这一层独立 pass
+- `为什么这个样本里这样改`：
+  当前 IR pattern + pass analysis / heuristic / matching rule
+  为什么产生了这次具体 diff
+
+很多“我看懂 diff 了，但还没看懂这个 pass 为啥存在”的情况，就是只回答了第二个，没有回答第一个。
+
+读具体样本时，先看和该类直接相关的 diff 信号，再回答第二个“为什么”。
+
+### 2.1.4 看相关 IR diff
+
+这一步不要泛看全部变化，而是只看和它那一类问题相关的信号。
+
+| 类别 | 看 diff 时先盯什么 |
+|---|---|
+| mapping | encoding、ownership、`#ttg.blocked`、`CGAEncodingAttr`、`#ttg.slice` |
+| organization | `ttg.convert_layout`、`ttg.local_alloc`、descriptor、TMA、TMEM |
+| scheduling | `loop.stage`、async op、wait、barrier protocol |
+| legality | fence、proxy ordering、TMEM reuse barrier |
+| cleanup | 冗余链、死代码、token、canonical form |
+
+如果没先定类和边界，就很容易：
+
+- 把 `RemoveLayoutConversions` 误读成 organization
+- 把 `FenceInsertion` 误读成 scheduling
+- 把穿插在主链里的 cleanup / legality 位置关系误读成分类关系
+
+### 2.1.5 看 downstream consumer
+
+每次都要补问一句：
+
+```text
+after IR 建立的这份 contract，后面到底是谁来消费？
+```
+
+常见答案有：
+
+- 后续 layout / dot / descriptor pass
+- `Pipeline` / `TMALowering`
+- `FenceInsertion` / `ProxyFenceInsertion` / `TMemBarrierInsertion`
+- `RemoveLayoutConversions` / `LoopAwareCSE` / `SymbolDCE`
+- `LowerMMA`
+- `to_llvmir`
+
+不补这一问，很容易把 pass 读成“只是改了一下 IR 形状”。
+
+### 2.1.6 最短版 checklist
+
+真正常用时，可以压成这 6 问：
+
+1. 它主要属于五类里的哪一类？
+2. 它的 input / output / non-goal 是什么？
+3. 为什么 pipeline 里需要它单独存在？
+4. 和这类问题直接相关的 IR diff 信号是什么？
+5. 这个样本里为什么做了这次具体改写？
+6. after IR 会被谁继续消费？
+
+## 3. Distributed Execution Mapping
+
+这一类回答：谁拥有哪些 logical tensor elements。
+
+最常见的载体：
 
 - module attrs：`ttg.num-warps`、`ttg.num-ctas`、`ttg.threads-per-warp`、`ttg.target`
   定义见 [Dialect.h](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/IR/Dialect.h:50)
 - distributed hierarchy：`CTAs Per CGA -> Warps Per CTA -> Threads Per Warp -> Values Per Thread`
   定义见 [TritonGPUAttrInterfaces.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/IR/TritonGPUAttrInterfaces.td:46)
-- `#ttg.blocked`：最常见的 ownership contract
+- `#ttg.blocked`
   定义见 [TritonGPUAttrDefs.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td:738)
-- `CGAEncodingAttr`：CTA-level split
+- `CGAEncodingAttr`
   定义见 [CGAEncodingAttr.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/IR/CGAEncodingAttr.td:14)
-- `#ttg.slice`：对 parent layout 的投影
+- `#ttg.slice`
   定义见 [TritonGPUAttrDefs.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td:1381)
-- `#ttg.dot_op`：依附于 dot result parent 的面向 compute 的分发表达
+- `#ttg.dot_op`
   定义见 [TritonGPUAttrDefs.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/IR/TritonGPUAttrDefs.td:1431)
 
-这些对象回答的是：谁拥有哪些元素。
+代表 pass：
 
-### 4.2 form / carrier 的载体
+- `ConvertTritonToTritonGPU`
+- `PlanCTA`
 
-再看 values 在 producer 和 consumer 之间如何换形态、换 carrier：
+这一类 pass 的输出是 ownership contract，不是 memory layout 的局部改写。看到
+
+```text
+tensor<..., #ttg.blocked<...>>
+```
+
+更准确的读法是：这批 logical elements 已经被分配给特定的 CTA / warp / thread / per-thread values。
+
+展开见
+[DISTRIBUTED_EXECUTION_MAPPING.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/DISTRIBUTED_EXECUTION_MAPPING.md)。
+
+## 4. Layout / Data-Movement Organization
+
+这一类回答：值以什么 form 存在，通过什么 carrier 在 producer 和 consumer 之间交接。
+
+最常见的载体：
 
 - `ttg.convert_layout`
 - `ttg.local_alloc`
@@ -170,80 +224,70 @@ layout attr 和 convert_layout
 - `ttg.local_store`
 - `memdesc_subslice` / `memdesc_trans` / `memdesc_reshape` / `memdesc_reinterpret`
 - descriptor / TMA 路径
-- Blackwell 的 TMEM carrier
+- TMEM carrier
 
-这些对象回答的是：值以什么形式存在，通过什么 carrier 交接。
+代表 pass 可以再分成三组：
+
+- memory-facing organization：`Coalesce`、`CoalesceAsyncCopy`
+- locality-oriented organization：`OptimizeThreadLocality`
+- compute / consumer-facing organization：`AccelerateMatmul`、`OptimizeDotOperands`、`OptimizeDescriptorEncoding`、`PromoteLHSToTMem`、`OptimizeTMemLayouts`
+- loop 内 data-movement organization：`Prefetch`
+
+这一类 pass 常见现象是都可能改 `ttg.convert_layout`，但原因不同：
+
+- `Coalesce`：为了 memory path。
+- `OptimizeDotOperands`：为了 dot / MMA consumer。
+- `OptimizeDescriptorEncoding`：为了 descriptor consumer。
+- `Prefetch`：为了把 loop 内下一轮 operand 构造和当前轮执行衔接起来。
+
+看这类 pass，不要先问“语法上改了几个 convert”，要先问“哪个 consumer 想要这个 form / carrier”。
 
 展开见
 [LAYOUT_DATA_MOVEMENT_ORGANIZATION.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/LAYOUT_DATA_MOVEMENT_ORGANIZATION.md)。
 
-### 4.3 schedule / protocol 的载体
+## 5. Target-Driven Scheduling
 
-最后看调度和交接协议：
+这一类回答：这些工作何时发生，如何 overlap，靠什么 protocol 交接。
+
+最常见的载体：
 
 - `loop.stage`
 - `loop.cluster`
 - async load / async MMA / async tcgen05
-- `wait` / `barrier` / `fence`
+- `wait` / `barrier`
 - warp specialization partition region
 
-这些对象回答的是：何时发生、如何 overlap、靠什么协议交接。
+代表 pass：
+
+- schedule decision：`FuseNestedLoops`、`AssignLatencies`、`ScheduleLoops`、`AutomaticWarpSpecialization`、`OptimizePartitionWarps`
+- protocol materialization：`Pipeline`、`TMALowering`
+
+这一类 pass 的输出不是新的 ownership，而是时序 contract：
+
+- 哪些操作可以提前
+- 哪些 producer / consumer 可以 overlap
+- 何时切 stage
+- 何时 wait
+- 何时进入 target-specific async protocol
+
+看 `Pipeline` 时，重点不是“它插了多少 async op”，而是“前面的 schedule decision 在这里怎样被展开成实际协议”。
 
 展开见
 [TARGET_DRIVEN_SCHEDULING.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/TARGET_DRIVEN_SCHEDULING.md)。
 
-## 5. pass 主链
+## 6. Legality Repair
 
-### 5.1 `make_ttgir` 主干
+这一类回答：核心 contract 已经基本确定后，还缺哪些合法性条件才能继续 lower。
 
-对 NVIDIA backend，最值得背下来的不是 pass 名字本身，而是 contract 的因果链：
+常见信号：
 
-```text
-ConvertTritonToTritonGPU
-  -> Coalesce
-  -> PlanCTA
-  -> RemoveLayoutConversions / AccelerateMatmul / OptimizeDotOperands / Prefetch
-  -> AssignLatencies -> ScheduleLoops -> (AutomaticWarpSpecialization) -> Pipeline
-  -> TTGIR-side descriptor / TMA / TMEM / fence passes
-  -> make_llir
-```
+- `fence`
+- `barrier`
+- proxy ordering
+- TMEM reuse ordering
+- target-specific lowering hazard
 
-主干顺序在
-[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:261)，
-target 分叉在
-[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:282)
-和
-[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:292)。
-
-读这条链时，重点不是“哪个 pass 更重要”，而是“它消耗前一个 contract，建立下一个 contract”。
-
-### 5.2 按抽象边界分组
-
-| 抽象边界 | 代表 pass | Output contract | Non-goal |
-|---|---|---|---|
-| 初始 execution mapping | `ConvertTritonToTritonGPU` | tensor type 获得 GPU execution distribution encoding | 不挑 memory-facing 最优 form，不做 pipeline |
-| CTA-level ownership | `PlanCTA` | multi-CTA split、`CGAEncodingAttr`、around-dot ownership | 不决定 TMA / TMEM / barrier protocol |
-| memory-facing organization | `Coalesce`、`CoalesceAsyncCopy` | load/store 或 async copy 周围的 access form 更适合 memory path | 不改 logical ownership |
-| compute / consumer-facing organization | `AccelerateMatmul`、`OptimizeDotOperands`、`OptimizeDescriptorEncoding`、`PromoteLHSToTMem`、`OptimizeTMemLayouts` | 为 dot、descriptor、TMA、TMEM consumer 选更合适的 operand / carrier form | 不决定 loop 时序 |
-| representation-chain cleanup | `RemoveLayoutConversions`、`ReduceDataDuplication` | 压缩表示链、减少无效中间形态、提升共享和复用 | 不定义新的 ownership 或 schedule |
-| loop 内 data-movement / prefetch 衔接 | `Prefetch` | 把 loop 内 `tt.dot` 的 shared-memory operand 预取和下一迭代 operand 构造前移 | 不改 ownership，也不是通用 cross-thread communication 优化 |
-| 局部执行形状优化 | `OptimizeThreadLocality`、`OptimizePartitionWarps` | 降低局部 cross-thread 同步 / 通信成本，改善 warp / register 使用 | 不拥有主 pipeline 策略 |
-| schedule decision | `FuseNestedLoops`、`AssignLatencies`、`ScheduleLoops`、`AutomaticWarpSpecialization` | 选择 latency anchor、loop stage、partition schedule | 还没最终展开完整 async protocol |
-| protocol materialization / lowering | `Pipeline`、`TMALowering` | 把调度或 carrier 决策展开成 async op、wait、multi-buffer、TMA protocol | 不解决全部 proxy / TMEM legality |
-| TTGIR-side legality repair | `FenceInsertion` | 补当前仍在 TTGIR 层可见的 ordering legality | 不重新选择 ownership / carrier / schedule |
-| late cleanup | `ReorderInstructions`、`LoopAwareCSE`、`Canonicalizer`、`CSE`、`SCCP`、`SymbolDCE` | 清理 IR、减寄存器压力、删冗余 | 不应该成为语义解释起点 |
-
-不要按表面语法给 pass 归类。一个常见误区是把所有改了 `ttg.convert_layout` 的 pass 都看成“layout pass”。实际上：
-
-- `Coalesce` 改的是 memory-facing access form。
-- `RemoveLayoutConversions` 改的是 representation chain。
-- `OptimizeDotOperands` 改的是 dot consumer 想要的 operand form。
-
-表面上都可能出现 `convert_layout` 变化，但抽象边界完全不同。
-
-### 5.3 不属于 TTGIR 主链的 lowering-side legality
-
-`ProxyFenceInsertion` 和 `TMemBarrierInsertion` 不在 `make_ttgir`。
+要分清 TTGIR 内和 lowering 边界上的 legality：
 
 - `FenceInsertion` 在 `make_ttgir`，见
   [compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:325)
@@ -252,56 +296,113 @@ target 分叉在
   和
   [compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:391)
 
-它们执行的位置也很关键：是在 `allocate_shared_memory_nv` / `allocate_tensor_memory` 之后，为 lowering 阶段补 proxy 和 TMEM reuse legality。所以它们不应该被混进 TTGIR pass 因果链里。
+后两者执行在 `allocate_shared_memory_nv` / `allocate_tensor_memory` 之后，所以它们属于 lowering-side legality repair，不属于 TTGIR pass 主链本身。
 
-## 6. dump 学习路径
+看这类 pass，重点不是“它是不是也影响时序”，而是“如果没有这一步，lowering 或 target protocol 会在哪个约束上变得不合法”。
 
-### 6.1 先看 `vecadd`
+展开见
+[LEGALITY_REPAIR.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/LEGALITY_REPAIR.md)。
 
-先看
-[018_Before_ConvertTritonToTritonGPU.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/vecadd/sm86/mlir-pass-dump.split/018_Before_ConvertTritonToTritonGPU.mlir:12)，
-这里还没有执行分发 encoding。
+具体 barrier / fence / async protocol 细节再看
+[2026-07-02-barriers-and-fences.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/notes/2026-07-02-barriers-and-fences.md)。
 
-再看
-[019_After_ConvertTritonToTritonGPU.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/vecadd/sm86/mlir-pass-dump.split/019_After_ConvertTritonToTritonGPU.mlir:2)，
-这里开始出现 `#ttg.blocked`，同一份 ownership contract 被传播到 `tt.make_range`、`tt.load`、`arith.addf`、`tt.store` 的 tensor type 上。
+## 7. Cleanup
 
-最后看
-[021_After_TritonGPUCoalesce.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/vecadd/sm86/mlir-pass-dump.split/021_After_TritonGPUCoalesce.mlir:3)，
-观察 `Coalesce` 如何只在 memory-facing 路径局部改写 form。
+这一类回答：在不改变核心 ownership / carrier / schedule contract 的前提下，哪些表示噪音可以清掉。
 
-### 6.2 再看 `matmul`
+代表 pass：
 
-Hopper 路径先看
-[061_After_TritonGPUPipeline.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm90_num_ctas1/mlir-pass-dump.split/061_After_TritonGPUPipeline.mlir:69)，
-这里已经能看到 `ttg.local_alloc -> ttng.warp_group_dot {isAsync = true} -> ttng.warp_group_dot_wait` 的结构。
+- representation cleanup：`RemoveLayoutConversions`、`ReduceDataDuplication`
+- target-specific cleanup：`InterleaveTMem`、`RemoveTMEMTokens`
+- IR cleanup：`ReorderInstructions`、`LoopAwareCSE`、`Canonicalizer`、`CSE`、`SCCP`、`SymbolDCE`
 
-Blackwell 路径先看
-[059_After_TritonGPUScheduleLoops.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/059_After_TritonGPUScheduleLoops.mlir:74)，
-先确认 `loop.stage` / `loop.cluster` 这类 coarse schedule contract。
+常见信号：
 
-然后看
-[085_After_TritonGPUPipeline.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas2/mlir-pass-dump.split/085_After_TritonGPUPipeline.mlir:90)，
-这里已经能看到 barrier slot init、async `tc_gen5_mma`、`wait_barrier`、phase rotation 等完整协议。
+- 冗余 `ttg.convert_layout`
+- 重复 producer chain
+- 临时 token / 临时依赖边
+- 死代码
+- 只为 canonical form 服务的 SSA 重排
 
-### 6.3 只读 `.ttgir` 不够
+看这类 pass，重点不是“它改没改语义上重要的对象”，而是“它有没有重新定义 ownership / carrier / schedule”。如果没有，那首先按 cleanup 读。
 
-对 TTGIR 学习，最有价值的材料通常是：
+展开见
+[CLEANUP.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/CLEANUP.md)。
+
+## 8. Pass 主链
+
+`make_ttgir` 主干在
+[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:261)，
+target 分叉在
+[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:282)
+和
+[compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:292)。
+
+按五类去看，主链可以压成：
+
+```text
+mapping
+  ConvertTritonToTritonGPU
+  -> PlanCTA
+
+organization
+  -> Coalesce / CoalesceAsyncCopy
+  -> OptimizeThreadLocality
+  -> AccelerateMatmul / OptimizeDotOperands / OptimizeDescriptorEncoding
+  -> PromoteLHSToTMem / OptimizeTMemLayouts / Prefetch
+
+scheduling
+  -> FuseNestedLoops / AssignLatencies / ScheduleLoops
+  -> AutomaticWarpSpecialization / Pipeline / OptimizePartitionWarps / TMALowering
+
+legality
+  -> FenceInsertion
+  -> make_llir 中的 ProxyFenceInsertion / TMemBarrierInsertion
+
+cleanup
+  -> RemoveLayoutConversions / ReduceDataDuplication / InterleaveTMem / RemoveTMEMTokens
+  -> ReorderInstructions / LoopAwareCSE / Canonicalizer / CSE / SCCP / SymbolDCE
+```
+
+真实 pipeline 不是先把一类完全做完再进下一类，但读 TTGIR 时按这五类归位，比背一串线性 pass 名字更稳。
+
+## 9. Dump 学习路径
+
+先看 `vecadd`：
+
+- [018_Before_ConvertTritonToTritonGPU.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/vecadd/sm86/mlir-pass-dump.split/018_Before_ConvertTritonToTritonGPU.mlir:12)
+  看 TTIR 还没有 execution mapping。
+- [019_After_ConvertTritonToTritonGPU.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/vecadd/sm86/mlir-pass-dump.split/019_After_ConvertTritonToTritonGPU.mlir:2)
+  看 `#ttg.blocked` 怎样把 ownership contract 传播到 tensor type。
+- [021_After_TritonGPUCoalesce.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/vecadd/sm86/mlir-pass-dump.split/021_After_TritonGPUCoalesce.mlir:3)
+  看 memory-facing organization 怎样局部改 form。
+
+再看 `matmul`：
+
+- [061_After_TritonGPUPipeline.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm90_num_ctas1/mlir-pass-dump.split/061_After_TritonGPUPipeline.mlir:69)
+  看 Hopper 路径上的 organization + scheduling。
+- [059_After_TritonGPUScheduleLoops.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas1/mlir-pass-dump.split/059_After_TritonGPUScheduleLoops.mlir:74)
+  看 Blackwell 路径上的 coarse schedule contract。
+- [085_After_TritonGPUPipeline.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul/sm100_num_ctas2/mlir-pass-dump.split/085_After_TritonGPUPipeline.mlir:90)
+  看 barrier slot、async `tc_gen5_mma`、`wait_barrier`、phase rotation 这些 protocol materialization。
+
+只读 `.ttgir` 不够。TTGIR 学习最有价值的材料通常是：
 
 - `stage_dump/.../*.ttgir`
 - `mlir-pass-dump.log`
 - `mlir-pass-dump.split/NNN_*.mlir`
 
-具体如何做邻接 diff、怎样判断一个 pass 真正改了什么，见
+具体怎么做邻接 diff，见
 [IR_PASS_DIFF_LEARNING_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/IR_PASS_DIFF_LEARNING_GUIDE.md)。
 
-## 7. 自检
+## 10. 自检
 
-至少要能稳定回答下面四个问题：
+至少要能稳定回答这五个问题：
 
-1. 这个 tensor 为什么带这个 encoding，而不是别的 encoding。
-2. 这次 `convert_layout` / `local_alloc` / descriptor / TMEM 切换，是哪个 consumer 逼出来的。
-3. 这段 `loop.stage` / async op / wait / barrier，是 schedule decision、协议显化，还是 hazard repair。
-4. 这个 contract 是在 `ttg` 层建立的，还是在 `ttng` 或 `make_llir` 边界补出来的。
+1. 这个 tensor 的 execution mapping 是怎么确定的。
+2. 这次 `convert_layout` / `local_alloc` / descriptor / TMEM 切换，是哪个 consumer 或 carrier 逼出来的。
+3. 这段 `loop.stage` / async op / wait / barrier，是怎样的 scheduling / protocol contract。
+4. 这一步是在补 legality，还是只在做 cleanup。
+5. 这件事发生在 `ttg`、`ttng`，还是 `make_llir` 边界。
 
-如果这四个问题还答不稳，不要先往 PTX/SASS 走，先回到对应的 TTGIR pass dump。
+如果这五个问题还答不稳，就先回到对应的 pass dump。

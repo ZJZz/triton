@@ -11,19 +11,21 @@ target-driven scheduling
     以及最终通过哪套协议交接。
 ```
 
-在 Triton 里，这件事不是单个 pass 完成的，而是三层职责链：
+围绕 scheduling 读 pass 时，经常会看到一条相邻职责链：
 
 ```text
 schedule decision
   -> 协议显化
-  -> hazard repair
+  -> legality repair
 ```
 
 - `schedule decision`：决定哪些 op 值得 overlap，哪些 op 属于哪个 stage / partition。
 - `协议显化`：把这些决策变成 async copy、async MMA、multi-buffer、warp-specialize region、barrier protocol。
-- `hazard repair`：补齐 generic-vs-async proxy、TMEM reuse、shared memory RAW/WAR/WAW 等合法性约束。
+- `legality repair`：补齐 generic-vs-async proxy、TMEM reuse、shared memory RAW/WAR/WAW 等合法性约束。
 
-如果把 TTGIR 三层压成一句短记忆：
+在 [TTGIR_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/TTGIR_GUIDE.md) 的五类框架里，前两段归 scheduling，最后一段应单独归到 legality repair。
+
+如果只记前面三类的短记忆：
 
 ```text
 mapping = 分工
@@ -31,21 +33,36 @@ organization = 衔接
 scheduling = 时序
 ```
 
-那么本文只负责第三层：`scheduling = 时序`。
+但完整框架是：
 
-## 2. 和另外两层的边界
+```text
+mapping
+  -> organization
+  -> scheduling
+  -> legality
+  -> cleanup
+```
+
+本文只负责第三类：`target-driven scheduling`。
+
+## 2. 和另外四类的边界
 
 | 主题 | 核心问题 | 典型载体 |
 |---|---|---|
 | distributed execution mapping | 谁拥有这些元素 | `#blocked`、`CGAEncodingAttr`、`#ttg.slice` |
 | layout / data-movement organization | 这些值以什么 form / carrier 流动 | `ttg.convert_layout`、`ttg.local_alloc`、descriptor、TMEM |
 | target-driven scheduling | 这些工作何时发生、如何 overlap、何时同步 | `loop.stage`、`loop.cluster`、async op、wait、barrier |
+| legality repair | 还缺什么约束才能继续 lower | fence、proxy ordering、TMEM reuse barrier |
+| cleanup | 哪些中间表示噪音可以删除 | token、死代码、冗余链、canonical form |
 
-有三个容易混淆的点：
+有五个容易混淆的点：
 
 - 它不是 barrier / fence 的别名。barrier、wait、fence 往往是 scheduling 之后的协议部件。
 - 它不是“看到 async op 就算理解 scheduling”。async op 只是调度已经显式化之后的结果。
 - 它从 pass pipeline 组织层面就是 target-sensitive，不是所有架构都走同一套调度主干。
+- 它不是 legality repair。fence、proxy ordering、TMEM reuse barrier 是在已有时序 / 协议之后补合法性约束，见
+  [LEGALITY_REPAIR.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/LEGALITY_REPAIR.md)。
+- 它也不是 cleanup。token、死代码、临时状态的压缩和清理要单独按 cleanup 读。
 
 `TTGIR_GUIDE.md` 把第三问定义为 `这些工作何时发生、如何 overlap、何时需要同步`，见
 [TTGIR_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/TTGIR_GUIDE.md)。
@@ -253,23 +270,23 @@ AssignStagePhase = 给这个抽象分配 stage / phase
 LowerAref = 把抽象展开成 barrier / wait / buffer views
 ```
 
-## 5. `wait / barrier / fence` 在三层职责链里的位置
+## 5. `wait / barrier / fence` 在五类框架里的位置
 
 这三个词本身不能只按名字归类，要看它们是在“实现协议”，还是在“补 legality”。
 
 | IR 载体 | 更常见归类 | 什么时候会落在这一层 |
 |---|---|---|
 | `wait` | `协议显化` | 调度已经决定要 overlap，`wait` 作为 async pipeline / async MMA / barrier protocol 的组成部分被显式生成 |
-| `barrier` | 多数是 `协议显化`，有时是 `hazard repair` | 如果它是 stage / partition / barrier object 协议的一部分，更偏显化；如果它是后面为 shared-memory legality 补插的 `ttg.barrier local`，更偏 repair |
-| `fence` | 多数是 `hazard repair` | 前面的 producer / consumer 关系已经成立，但 proxy / visibility / memory-order legality 还不完整，需要再补 fence |
+| `barrier` | 多数是 `协议显化`，有时是 `legality repair` | 如果它是 stage / partition / barrier object 协议的一部分，更偏显化；如果它是后面为 shared-memory legality 补插的 `ttg.barrier local`，更偏 repair |
+| `fence` | 多数是 `legality repair` | 前面的 producer / consumer 关系已经成立，但 proxy / visibility / memory-order legality 还不完整，需要再补 fence |
 
 可以用这三问快速判断：
 
 - 它是在决定时序吗：那是 `schedule decision`，通常还不是 `wait / barrier / fence` 本身。
 - 它是在把已有调度决定展开成 async / token / barrier protocol 吗：更偏 `协议显化`。
-- 它是在补 shared memory、proxy、TMEM reuse 之类的合法性缺口吗：更偏 `hazard repair`。
+- 它是在补 shared memory、proxy、TMEM reuse 之类的合法性缺口吗：更偏 `legality repair`。
 
-## 6. 为什么调度之后还要再补同步
+## 6. 为什么 scheduling 之后还要再进 legality repair
 
 即使 schedule 已经成形，后面仍然需要 target-specific sync repair。这不是重复工作，而是另一层合法性问题。
 
@@ -364,5 +381,5 @@ Hopper canonical matmul 里可以直接看到：
 1. 先分清这是在决定 `when / overlap`，还是在物化协议，还是在补合法性同步。
 2. 先问这个 target 的执行单元和 completion model 是什么，再看具体 barrier / wait。
 3. 看到 `loop.stage`、`loop.cluster` 时，把它们当 schedule contract，不要直接当 runtime protocol。
-4. 看到 `wait_barrier`、`warp_group_dot_wait`、`fence_async_shared` 时，先判断它们属于协议显化还是 repair。
-5. 只有把 `decision -> 协议显化 -> repair` 三层拆开，barrier/fence 才不会和 scheduling 本身混在一起。
+4. 看到 `wait_barrier`、`warp_group_dot_wait`、`fence_async_shared` 时，先判断它们属于协议显化还是 legality repair。
+5. 只有把 `decision -> 协议显化 -> legality repair` 三层拆开，barrier/fence 才不会和 scheduling 本身混在一起。

@@ -25,7 +25,7 @@ CTAs Per CGA -> Warps Per CTA -> Threads Per Warp -> Values Per Thread
 
 这里回答的是 `who owns / who computes these elements`，不是 `what form`，也不是 `when`.
 
-如果把 TTGIR 三层压成一句短记忆：
+如果只记前面三类的短记忆：
 
 ```text
 mapping = 分工
@@ -33,21 +33,36 @@ organization = 衔接
 scheduling = 时序
 ```
 
-那么本文只负责第一层：`mapping = 分工`。
+但在 [TTGIR_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/TTGIR_GUIDE.md) 的完整框架里，TTGIR 现在按五类来读：
 
-## 2. 和另外两层的边界
+```text
+mapping
+  -> organization
+  -> scheduling
+  -> legality
+  -> cleanup
+```
+
+本文只负责第一类：`distributed execution mapping`。
+
+## 2. 和另外四类的边界
 
 | 主题 | 核心问题 | 典型载体 |
 |---|---|---|
 | distributed execution mapping（执行层级上的分工映射） | 谁拥有这些元素 | `#blocked`、`CGAEncodingAttr`、`#ttg.slice`、`#ttg.dot_op` 的 parent |
 | layout / data-movement organization | 这些值以什么 form / carrier 流动 | `ttg.convert_layout`、`ttg.local_alloc`、descriptor、TMEM |
 | target-driven scheduling | 这些工作何时发生、如何 overlap、何时同步 | `loop.stage`、`loop.cluster`、async op、wait、barrier |
+| legality repair | 还缺什么约束才能继续 lower | fence、proxy ordering、TMEM reuse barrier |
+| cleanup | 哪些中间表示噪音可以删除 | 冗余 convert、死代码、token、canonical form |
 
-有三个容易混淆的点：
+有五个容易混淆的点：
 
 - 它不是 `memory layout` 的别名。`#blocked` 当然影响 memory access，但先回答的是 `哪些元素归哪个 CTA / warp / thread`。
 - 它不是 LLVM lowering 之后才决定。`ConvertTritonToTritonGPU` 已经把 encoding 写进 tensor type。
 - 它和 scheduling 有依赖关系，但职责不同。mapping 先决定谁工作，scheduling 再决定这些工作何时发生。
+- 它不是 legality repair。这里不回答 lowering 还缺什么顺序 / 可见性 / alias 隔离约束；那部分单独看
+  [LEGALITY_REPAIR.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/LEGALITY_REPAIR.md)。
+- 它也不是 cleanup。某些 cleanup pass 会大改 encoding 链，但主问题不是“谁拥有这些元素”。
 
 ## 3. 关键载体
 
@@ -136,7 +151,7 @@ dot operand 的分布不是孤立决定的，
 
 ## 4. 这份 mapping 是怎么建立和演化的
 
-NVIDIA backend 的 TTGIR 主干顺序是：
+NVIDIA backend 的 TTGIR 主干附近顺序是：
 
 ```text
 ConvertTritonToTritonGPU
@@ -147,6 +162,11 @@ ConvertTritonToTritonGPU
 
 见
 [compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:269)。
+
+但在这串 pass 里，真正建立 / 重写 ownership 主合同的，主要还是：
+
+- `ConvertTritonToTritonGPU`
+- `PlanCTA`
 
 ### 4.1 `ConvertTritonToTritonGPU`：把 logical tensor 变成带执行分发信息的 tensor
 
@@ -196,7 +216,7 @@ shape
     -> final #blocked ownership
 ```
 
-### 4.3 `Coalesce`：局部重写 memory-facing ownership
+### 4.3 `Coalesce`：容易和 mapping 混淆，但主类更稳地归到 organization
 
 `TritonGPUCoalesce` 的 pass 定义说得很清楚：
 
@@ -227,6 +247,10 @@ shape
 既然已经知道谁来 load，
 那让这些线程以什么 ownership 粒度访问更适合 memory system
 ```
+
+也就是说，它虽然会改 distributed encoding，看起来像在动 mapping，但在五类框架里更稳地归到
+`layout / data-movement organization`。更系统的展开见
+[LAYOUT_DATA_MOVEMENT_ORGANIZATION.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/LAYOUT_DATA_MOVEMENT_ORGANIZATION.md)。
 
 ### 4.4 `PlanCTA`：当 `num_ctas > 1` 时重写 CTA 级 ownership
 

@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sm100 tcgen05 TMEM Protocol Teaching View</title>
+  <link rel="stylesheet" href="./protocol-teaching.css">
+</head>
+<body>
+  <main class="page-shell">
+    <header class="hero" id="hero"></header>
+
+    <section class="layout-top">
+      <article class="panel">
+        <div class="panel-header">
+          <div class="panel-title"><span class="panel-index">1</span>Blackwell 这条链里，结果不落在 shared，而是落进 TMEM</div>
+          <div class="panel-hint">这一页要同时讲清两件事：tcgen05 async compute 的 completion，以及 TMEM reuse legality。它们相关，但不是同一个问题。</div>
+        </div>
+        <div class="panel-body" id="journey"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <div class="panel-title"><span class="panel-index">2</span>哪个 scope 负责等完成，哪个 scope 负责修复 TMEM hazard</div>
+          <div class="panel-hint">常见模型是 warp-group 或更大的 partition 发起 tcgen05；`wait_barrier` 证明完成，额外的 TMEM barrier 则在需要时修复 reuse hazard。</div>
+        </div>
+        <div class="panel-body" id="scope"></div>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-bottom:16px;">
+      <div class="panel-header">
+        <div class="panel-title"><span class="panel-index">3</span>更偏硬件位置感的微架构剖面图</div>
+        <div class="panel-hint">这张图强调 Blackwell 新出现的 TMEM：输入 tile 仍来自 shared，但 tcgen05 的结果主体会写到 TMEM。之后既要看 completion path，也要看 TMEM reuse hazard 是否被隔离。</div>
+      </div>
+      <div class="panel-body" id="topology"></div>
+    </section>
+
+    <section class="layout-main">
+      <div class="left-stack">
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">4</span>多个 tcgen05 先发，先等完成，再补 hazard barrier</div>
+            <div class="controls">
+              <button class="btn" id="step-prev" type="button">上一步</button>
+              <button class="btn" id="play-toggle" type="button">播放</button>
+              <button class="btn" id="step-next" type="button">下一步</button>
+              <input class="step-slider" id="step-slider" type="range" min="0" max="0" value="0">
+              <span class="step-caption">步骤 <span id="step-counter">1 / 1</span></span>
+            </div>
+          </div>
+          <div class="panel-body" id="timeline"></div>
+        </article>
+      </div>
+
+      <aside class="right-stack">
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">5</span>当前这一步在做什么</div>
+            <div class="panel-hint">这里要刻意分开“完成了”与“下一位 reader 现在合法吗”。</div>
+          </div>
+          <div class="panel-body" id="current-step"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">6</span>完整协议步骤</div>
+            <div class="panel-hint">中间会出现两个同步点：`wait_barrier` 和 TMEM barrier。</div>
+          </div>
+          <div class="panel-body" id="step-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">7</span>最容易误解的点</div>
+            <div class="panel-hint">completion wait 与 hazard repair 不是同一层含义。</div>
+          </div>
+          <div class="panel-body" id="notes"></div>
+        </article>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    window.PROTOCOL_PAGE = {
+      eyebrow: "sm100 · Blackwell compute protocol",
+      title: "tcgen05 / TMEM 的两段式收尾",
+      subtitle: "输入 tile 从 `.shared::cta` 或 `.shared::cluster` 喂给 tcgen05，结果先落入 TMEM。随后需要先用 `wait_barrier` 证明 async compute 已经完成，再视是否存在 TMEM reuse hazard 决定是否插入额外 barrier，下一位 reader 才真正合法。",
+      chips: [
+        "<strong>输入内存</strong> .shared::cta / ::cluster",
+        "<strong>异步计算模块</strong> tcgen05",
+        "<strong>结果落点</strong> TMEM",
+        "<strong>completion wait</strong> wait_barrier",
+        "<strong>hazard repair</strong> TMEM barrier",
+        "<strong>合法 consumer</strong> 下一位 TMEM reader"
+      ],
+      quickFacts: [
+        { label: "数据起点", value: "shared operand tile", note: "这页把前序搬运视为已完成，重点是 tcgen05 和 TMEM handoff。" },
+        { label: "发起 partition", value: "warp-group / CTA-group", note: "具体由 kernel partition 决定，常见是一个 compute group 连续 issue。" },
+        { label: "异步模块", value: "tcgen05 set", note: "多个 `tc_gen5_mma` 可先发出，再 commit。" },
+        { label: "结果位置", value: "TMEM", note: "结果主体在 tensor memory 中，不在 shared 中。" },
+        { label: "先证明什么", value: "async compute done", note: "`wait_barrier` 先回答“算完没有”。" },
+        { label: "再证明什么", value: "reuse legal", note: "如有 TMEM reuse hazard，还要 barrier 才能回答“下一位 reader 现在合法吗”。" }
+      ],
+      links: [
+        { href: "./protocol-overview.html", label: "返回协议总览" },
+        { href: "./README.md", label: "查看目录说明" }
+      ],
+      legend: [
+        { label: "source tile / producer group", color: "#dcecff" },
+        { label: "async compute engine", color: "#daf8ea" },
+        { label: "TMEM result state", color: "#ece5ff" },
+        { label: "completion wait path", color: "#fff1d2" },
+        { label: "hazard repair path", color: "#ffe3de" },
+        { label: "legal next reader", color: "#e6effa" }
+      ],
+      journey: {
+        width: 1040,
+        height: 392,
+        ariaLabel: "sm100 tcgen05 TMEM data journey",
+        regions: [
+          { id: "partition", x: 34, y: 118, w: 432, h: 220, label: "compute partition：负责 issue 多个 tcgen05 op", fill: "rgba(237, 242, 247, 0.48)", stroke: "#8ea0ba" },
+          { id: "handoff", x: 500, y: 24, w: 494, h: 314, label: "handoff 阶段：先证明完成，再修复 TMEM reuse legality", fill: "rgba(255, 243, 210, 0.18)", stroke: "#b7791f" }
+        ],
+        nodes: [
+          { id: "group", x: 60, y: 148, w: 178, h: 74, label: "producer / compute group", sub: "warp-group / CTA-group", meta: "连续 issue tcgen05", tone: "actor" },
+          { id: "shared", x: 266, y: 150, w: 172, h: 78, label: "operand tile", sub: ".shared::cta / ::cluster", meta: "tcgen05 读取这里", tone: "source" },
+          { id: "tc", x: 516, y: 154, w: 184, h: 88, label: "tcgen05 set", sub: "tc_gen5_mma k0 / k1 / k2", meta: "async tensor core 5 compute", tone: "engine" },
+          { id: "mbar", x: 522, y: 50, w: 172, h: 72, label: "mbarrier", sub: "commit completion state", meta: "wait_barrier 观察这里", tone: "sync" },
+          { id: "tmem", x: 744, y: 156, w: 170, h: 86, label: "TMEM result", sub: "tensor memory", meta: "结果主体在这里", tone: "output" },
+          { id: "wait", x: 738, y: 50, w: 164, h: 72, label: "wait_barrier", sub: "completion proven", meta: "先回答“算完了没”", tone: "sync" },
+          { id: "hazard", x: 742, y: 276, w: 168, h: 72, label: "TMEM barrier", sub: "repair reuse hazard", meta: "再回答“下一位合法吗”", tone: "hazard" },
+          { id: "reader", x: 934, y: 160, w: 88, h: 84, label: "next reader", sub: "tcgen05.ld / next stage", meta: "两道检查后才合法", tone: "consumer" }
+        ],
+        arrows: [
+          { id: "feed", from: "group", to: "shared", label: "prepare tile", tone: "data", fromSide: "right", toSide: "left", labelAt: { x: 252, y: 178, w: 126 } },
+          { id: "launch", from: "shared", to: "tc", label: "feed tcgen05", tone: "data", fromSide: "right", toSide: "left", labelAt: { x: 480, y: 186, w: 126 } },
+          { id: "write", from: "tc", to: "tmem", label: "write TMEM", tone: "data", fromSide: "right", toSide: "left", labelAt: { x: 722, y: 188, w: 116 } },
+          { id: "commit", from: "tc", to: "mbar", label: "commit arrival", tone: "sync", fromSide: "top", toSide: "bottom", via: [{ x: 728, y: 134 }], labelAt: { x: 708, y: 120, w: 130 } },
+          { id: "prove", from: "mbar", to: "wait", label: "wait on phase", tone: "sync", fromSide: "right", toSide: "left", labelAt: { x: 718, y: 66, w: 118 } },
+          { id: "repair", from: "wait", to: "hazard", label: "if hazard exists", tone: "hazard", fromSide: "bottom", toSide: "top", labelAt: { x: 822, y: 260, w: 126 } },
+          { id: "readdata", from: "tmem", to: "reader", label: "TMEM payload", tone: "publish", fromSide: "right", toSide: "left", labelAt: { x: 926, y: 192, w: 112 } },
+          { id: "legal", from: "hazard", to: "reader", label: "reader now legal", tone: "hazard", fromSide: "right", toSide: "left", labelAt: { x: 930, y: 284, w: 132 } },
+          { id: "done", from: "wait", to: "reader", label: "completion alone不够", tone: "sync", fromSide: "right", toSide: "left", via: [{ x: 920, y: 86 }, { x: 920, y: 132 }], labelAt: { x: 936, y: 122, w: 138 } }
+        ],
+        notes: [
+          { x: 42, y: 98, text: "这页有两道门：一道门证明完成，另一道门证明 TMEM 下一位 reader 现在合法" }
+        ]
+      },
+      scope: {
+        summary: "Blackwell 这里最容易错的点，是把 `wait_barrier` 当成“已经可以放心重用 TMEM”的全部结论。实际上 `wait_barrier` 只证明 async compute 完成；如果后续存在 TMEM reuse hazard，编译器还会再补一道 barrier。",
+        rows: [
+          { id: "thread", scope: "thread", role: "optional", roleClass: "optional", detail: "某些 init / commit / wait 动作可能由代表线程执行，但最终 protocol 不只服务于单 thread 语义。" },
+          { id: "warp", scope: "warp", role: "unused", roleClass: "unused", detail: "这条协议的关键 join point 不是独立的 warp 级 wait。" },
+          { id: "warpgroup", scope: "warp-group", role: "issue", roleClass: "issue", detail: "常见 compute partition 是 warp-group，它连续发出多个 `tc_gen5_mma`。" },
+          { id: "cta", scope: "CTA / CTA-group", role: "repair", roleClass: "repair", detail: "若 TMEM reuse 会影响同一 CTA 或 CTA-group 内别的 reader，就需要额外 barrier 修复 legality。" },
+          { id: "cluster", scope: "cluster", role: "optional", roleClass: "optional", detail: "输入 tile 可能来自 `.shared::cluster`，但 TMEM handoff 自身并不自动意味着 cluster-wide next-reader legality。" }
+        ],
+        callouts: [
+          { title: "先证明什么", body: "`wait_barrier` 先回答“这批 tcgen05 async compute 已经完成了吗”。" },
+          { title: "还差什么", body: "如果下一位 reader 与当前 writer 在 TMEM reuse 上存在 hazard，还必须再经过 compiler-inserted barrier 才完全合法。" }
+        ]
+      },
+      topology: {
+        width: 1120,
+        height: 418,
+        ariaLabel: "sm100 tcgen05 TMEM microarchitecture cross section",
+        legend: [
+          { label: "shared operand side", color: "#dcecff" },
+          { label: "tcgen05 compute path", color: "#daf8ea" },
+          { label: "TMEM result state", color: "#ece5ff" },
+          { label: "completion path", color: "#fff1d2" },
+          { label: "hazard repair gate", color: "#ffe3de" },
+          { label: "next legal reader", color: "#e6effa" }
+        ],
+        bands: [
+          { id: "shared", y: 18, h: 84, label: "shared / DSMEM 输入层", sub: "operand tile 仍来自 `.shared::cta` 或 `.shared::cluster`", fill: "rgba(220,236,255,0.45)", stroke: "#afc8ef" },
+          { id: "compute", y: 118, h: 88, label: "tcgen05 compute 层", sub: "issue front-end 与 tensor core 5 async path 更接近这一层", fill: "rgba(218,248,234,0.42)", stroke: "#c0ead4" },
+          { id: "tmem", y: 220, h: 90, label: "TMEM / completion 状态层", sub: "结果主体落在 TMEM，completion state 则经 mbarrier 表达", fill: "rgba(236,229,255,0.48)", stroke: "#d5c6fb" },
+          { id: "handoff", y: 324, h: 74, label: "handoff / legality 层", sub: "wait_barrier 先证明完成，hazard barrier 再证明下一位 reader 合法", fill: "rgba(255,227,222,0.45)", stroke: "#efc0b7" }
+        ],
+        frames: [
+          { id: "sm-shell", x: 42, y: 12, w: 1030, h: 392, label: "Blackwell SM / compute partition", fill: "rgba(255,255,255,0.16)", stroke: "#9eb2ce", dash: "8 7" },
+          { id: "handoff-shell", x: 512, y: 112, w: 534, h: 286, label: "TMEM ownership handoff", fill: "rgba(255,243,210,0.14)", stroke: "#b7791f", dash: "5 7" }
+        ],
+        modules: [
+          { id: "group", x: 76, y: 34, w: 188, h: 56, label: "compute group", sub: "warp-group / CTA-group", meta: "连续 issue tcgen05", tone: "actor" },
+          { id: "shared", x: 312, y: 34, w: 210, h: 56, label: "shared operand tile", sub: ".shared::cta / ::cluster", meta: "输入仍在 shared", tone: "source" },
+          { id: "tc", x: 564, y: 132, w: 196, h: 58, label: "tcgen05 issue + tensor core 5", sub: "tc_gen5_mma / commit", meta: "async compute path", tone: "engine" },
+          { id: "mbar", x: 566, y: 236, w: 170, h: 58, label: "mbarrier completion state", sub: "phase / arrival", meta: "先证明完成", tone: "sync" },
+          { id: "tmem", x: 794, y: 236, w: 176, h: 58, label: "TMEM bank", sub: "tensor memory result", meta: "结果主体", tone: "output" },
+          { id: "wait", x: 790, y: 136, w: 170, h: 52, label: "wait_barrier", sub: "completion gate", meta: "not enough for legality", tone: "sync" },
+          { id: "hazard", x: 800, y: 334, w: 166, h: 50, label: "TMEM hazard gate", sub: "compiler-inserted barrier", meta: "repair legality", tone: "hazard" },
+          { id: "reader", x: 986, y: 236, w: 88, h: 58, label: "next reader", sub: "tcgen05.ld", meta: "两道门之后", tone: "consumer" }
+        ],
+        arrows: [
+          { id: "feed", from: "shared", to: "tc", label: "feed tcgen05", tone: "data", fromSide: "right", toSide: "left", via: [{ x: 548, y: 62 }, { x: 548, y: 160 }], labelAt: { x: 566, y: 112, w: 124 } },
+          { id: "launch", from: "group", to: "tc", label: "issue k-slices", tone: "control", fromSide: "right", toSide: "left", via: [{ x: 438, y: 62 }, { x: 438, y: 160 }], labelAt: { x: 426, y: 108, w: 116 } },
+          { id: "write", from: "tc", to: "tmem", label: "result body -> TMEM", tone: "data", fromSide: "bottom", toSide: "top", via: [{ x: 882, y: 208 }], labelAt: { x: 894, y: 222, w: 136 } },
+          { id: "commit", from: "tc", to: "mbar", label: "commit completion", tone: "sync", fromSide: "bottom", toSide: "top", labelAt: { x: 650, y: 214, w: 132 } },
+          { id: "prove", from: "mbar", to: "wait", label: "wait on phase", tone: "sync", fromSide: "top", toSide: "bottom", labelAt: { x: 780, y: 208, w: 90 } },
+          { id: "repair", from: "wait", to: "hazard", label: "if reuse hazard", tone: "hazard", fromSide: "bottom", toSide: "top", labelAt: { x: 888, y: 312, w: 126 } },
+          { id: "readdata", from: "tmem", to: "reader", label: "TMEM payload", tone: "publish", fromSide: "right", toSide: "left", labelAt: { x: 1020, y: 214, w: 92 } },
+          { id: "legal", from: "hazard", to: "reader", label: "reader now legal", tone: "hazard", fromSide: "right", toSide: "left", via: [{ x: 1020, y: 320 }, { x: 1020, y: 294 }], labelAt: { x: 1030, y: 322, w: 132 } }
+        ],
+        notes: [
+          { x: 36, y: 412, text: "物理位置感关键词：shared 是输入层；TMEM 是结果层；mbarrier 只先回答“算完了没”，hazard gate 再回答“下一位 reader 现在合法吗”。" }
+        ],
+        caption: "这张剖面图的重点不是单纯再画一条数据箭头，而是把 TMEM 作为单独的结果层拎出来，并把 completion gate 与 legality gate 物理上分成两道门。"
+      },
+      timeline: {
+        ariaLabel: "sm100 tcgen05 TMEM timeline",
+        ticks: [
+          { label: "tile ready" },
+          { label: "mma k0" },
+          { label: "mma k1" },
+          { label: "mma k2" },
+          { label: "commit" },
+          { label: "wait" },
+          { label: "repair" },
+          { label: "read" }
+        ],
+        lanes: [
+          { id: "group", label: "compute group", note: "先连续发出多个 tcgen05 op", bg: "#f8fbff" },
+          { id: "engine", label: "tcgen05 set", note: "多个 k-slice 在 async tensor core path 里重叠执行", bg: "#f6fbf8" },
+          { id: "tmem", label: "TMEM result", note: "结果逐步形成，但未必马上允许下一位 reader 使用", bg: "#faf7ff" },
+          { id: "wait", label: "completion wait", note: "先确认 async compute 已完成", bg: "#fffaf2" },
+          { id: "repair", label: "TMEM hazard repair", note: "必要时插额外 barrier 修复 legality", bg: "#fff4f2" },
+          { id: "reader", label: "next reader", note: "两道条件都满足后才能真正读取", bg: "#f8fbff" }
+        ],
+        bars: [
+          { lane: "group", start: 0, end: 1, label: "tile prepared", tone: "source" },
+          { lane: "group", start: 1, end: 2, label: "issue k0", tone: "engine" },
+          { lane: "group", start: 2, end: 3, label: "issue k1", tone: "engine" },
+          { lane: "group", start: 3, end: 4, label: "issue k2", tone: "engine" },
+          { lane: "engine", start: 1, end: 4.8, label: "tcgen05 set", sub: "k slices overlap", tone: "engine" },
+          { lane: "tmem", start: 3, end: 5.8, label: "TMEM gets result", sub: "结果已在 TMEM 累积", tone: "output" },
+          { lane: "wait", start: 4, end: 5, label: "commit + wait_barrier", sub: "completion proven", tone: "sync" },
+          { lane: "repair", start: 5, end: 6, label: "TMEM barrier", sub: "repair legality if needed", tone: "hazard" },
+          { lane: "reader", start: 6.1, end: 7.2, label: "next TMEM read", sub: "now legal", tone: "consumer" }
+        ],
+        markers: [
+          { lane: "group", at: 1, label: "launch", kind: "issue", tone: "engine" },
+          { lane: "group", at: 2, label: "launch", kind: "issue", tone: "engine" },
+          { lane: "group", at: 3, label: "launch", kind: "issue", tone: "engine" },
+          { lane: "wait", at: 4, label: "commit", kind: "commit", tone: "sync" },
+          { lane: "wait", at: 5, label: "wait", kind: "wait", tone: "sync" },
+          { lane: "repair", at: 6, label: "hazard", kind: "hazard", tone: "hazard" }
+        ],
+        caption: "这条时间线有意保留两个尾部同步阶段：先 `wait_barrier`，后 TMEM barrier。只有这样，读者才不会把“算完了”误解成“下一位 reader 一定已经合法”。"
+      },
+      steps: [
+        {
+          tick: 0,
+          short: "0. 输入 tile 已准备好",
+          title: "这页默认 shared operand tile 已经准备完成",
+          summary: "我们从 compute protocol 开始看：输入 tile 已在 shared 中，接下来关注的是 tcgen05 如何写 TMEM，以及写完后怎样把 TMEM 合法交给下一位 reader。",
+          meta: ["输入位置 = shared", "结果位置 = TMEM", "handoff 尚未开始"],
+          activeNodes: ["group", "shared"],
+          activeTopologyLayers: ["shared"],
+          activeArrows: ["feed"],
+          activeScopeRows: ["warpgroup"],
+          activeRegions: ["partition"]
+        },
+        {
+          tick: 2,
+          short: "1. 连续发出多个 tcgen05",
+          title: "compute partition 先把多个 tcgen05 task 扇出去",
+          summary: "和前面的异步协议一样，这里也先 fan-out 多个 k-slice。目的仍然是把 async compute 路径填满，而不是一发一等。",
+          meta: ["issue scope = compute group", "k0/k1 overlap", "还没进入 wait"],
+          activeNodes: ["group", "shared", "tc"],
+          activeTopologyLayers: ["shared", "compute"],
+          activeArrows: ["launch"],
+          activeScopeRows: ["warpgroup"],
+          activeRegions: ["partition"]
+        },
+        {
+          tick: 4,
+          short: "2. commit，完成状态写入 mbarrier",
+          title: "这一步开始把“先发”转成“准备证明完成”",
+          summary: "`tc_gen5_commit` 之后，reader 侧将来等待的 completion state 通过 mbarrier 表达出来。它回答的是 compute 是否完成，而不是 TMEM 下一位 reader 是否马上安全。",
+          meta: ["completion object = mbarrier", "TMEM 已经开始有结果", "还没处理 reuse legality"],
+          activeNodes: ["tc", "mbar", "tmem"],
+          activeTopologyLayers: ["compute", "tmem"],
+          activeArrows: ["write", "commit"],
+          activeScopeRows: ["warpgroup", "cta"],
+          activeRegions: ["handoff"]
+        },
+        {
+          tick: 5,
+          short: "3. wait_barrier 先证明完成",
+          title: "第一道门：这批 async compute 已经完成了吗",
+          summary: "`wait_barrier` 此时给出的结论是“这批 tcgen05 完成了”。但这个结论还不等于“所有 TMEM 后继 reader 都已经合法”。",
+          meta: ["completion proven", "还不能自动省略 hazard repair", "最容易误解的一步"],
+          activeNodes: ["mbar", "wait"],
+          activeTopologyLayers: ["tmem", "handoff"],
+          activeArrows: ["prove", "done"],
+          activeScopeRows: ["warpgroup", "cta"],
+          activeRegions: ["handoff"]
+        },
+        {
+          tick: 6,
+          short: "4. 必要时补 TMEM barrier",
+          title: "第二道门：如果存在 TMEM reuse hazard，再修一次 legality",
+          summary: "这一步通常是编译器自动插入的 barrier。它不重复证明完成，而是专门防止 TMEM 下一位 reader 过早踩到 hazard。",
+          meta: ["hazard repair stage", "不是重复 wait", "解决 reuse legality"],
+          activeNodes: ["hazard", "reader", "tmem"],
+          activeTopologyLayers: ["handoff"],
+          activeArrows: ["repair", "legal"],
+          activeScopeRows: ["cta"],
+          activeRegions: ["handoff"]
+        },
+        {
+          tick: 7,
+          short: "5. 下一位 reader 才正式读取 TMEM",
+          title: "等两道门都过完，TMEM handoff 才真正闭环",
+          summary: "到这里后继阶段才能把 TMEM 当成合法输入。若没有 hazard，repair 可能退化为空；但心智模型仍应保留“完成”和“legality”这两层。",
+          meta: ["legal reader now active", "TMEM handoff closed", "两层同步都要看"],
+          activeNodes: ["tmem", "hazard", "reader"],
+          activeTopologyLayers: ["tmem", "handoff"],
+          activeArrows: ["readdata", "legal"],
+          activeScopeRows: ["cta"],
+          activeRegions: ["handoff"]
+        }
+      ],
+      notes: [
+        {
+          title: "误区 1：`wait_barrier` 就等于 TMEM 完全安全了",
+          body: "不一定。它先回答 completion，TMEM reuse legality 还可能需要单独 barrier。"
+        },
+        {
+          title: "误区 2：结果仍然落在 shared",
+          body: "不是。这页最应该先建立的空间感是：结果主体在 TMEM，而不是回写 shared tile。"
+        },
+        {
+          title: "读图口诀",
+          items: [
+            "先看输入和输出：shared -> tcgen05 -> TMEM。",
+            "再看第一道门：`wait_barrier` 证明 async compute 完成。",
+            "最后问还有没有第二道门：若存在 reuse hazard，就还要 TMEM barrier。"
+          ]
+        }
+      ],
+      footerNote: "如果你只记一件事：在 Blackwell / TMEM 路径上，“做完了”与“下一位 TMEM reader 现在合法吗”必须分开想。"
+    };
+  </script>
+  <script src="./protocol-teaching.js"></script>
+</body>
+</html>

@@ -1,0 +1,71 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "sm80 / sm86 cp.async Protocol Explained",
+    "subtitle": "Input memory, output memory, hardware module, and synchronization scope are shown as separate lanes.",
+    "output": "learn_triton/docs/barrier_fence_visuals/sm80-cp-async.html",
+    "viewBox": [720, 860],
+    "animation": "trace"
+  },
+  "lanes": [
+    { "id": "input", "label": "Input Memory" },
+    { "id": "issuer", "label": "Issuing Scope" },
+    { "id": "engine", "label": "Async Module" },
+    { "id": "output", "label": "Output Memory" },
+    { "id": "sync", "label": "Synchronization" },
+    { "id": "consumer", "label": "Legal Consumer" }
+  ],
+  "phases": [
+    { "id": "where", "label": "Input memory", "fromCol": 0, "toCol": 0 },
+    { "id": "launch", "label": "Launch + module", "fromCol": 1, "toCol": 2, "variant": "emphasis" },
+    { "id": "land", "label": "Output memory", "fromCol": 3, "toCol": 3 },
+    { "id": "scope", "label": "Who must wait", "fromCol": 4, "toCol": 5, "variant": "security" }
+  ],
+  "nodes": [
+    { "id": "hbm", "lane": "input", "col": 0, "type": "external", "label": "HBM tile", "sublabel": ".global device memory", "tag": "input memory type" },
+    { "id": "warp", "lane": "issuer", "col": 1, "type": "frontend", "label": "issuing warp", "sublabel": "launches cp.async s0/s1/s2", "tag": "launch scope: thread / warp" },
+    { "id": "cp", "lane": "engine", "col": 2, "type": "cloud", "label": "cp.async group", "sublabel": "async copy pipe", "tag": "completion model: per thread" },
+    { "id": "smem", "lane": "output", "col": 3, "type": "database", "label": "stage buffer", "sublabel": ".shared::cta", "tag": "output memory type" },
+    { "id": "waitgroup", "lane": "sync", "col": 4, "type": "messagebus", "label": "wait_group", "sublabel": "thread observes issued copies", "tag": "sync scope: issuing thread only" },
+    { "id": "barrier", "lane": "consumer", "col": 4, "type": "security", "label": "CTA barrier", "sublabel": "ttg.barrier / bar.sync", "tag": "sync scope: whole CTA" },
+    { "id": "cta_consume", "lane": "consumer", "col": 5, "type": "backend", "label": "CTA readers", "sublabel": "local_load / mma.sync", "tag": "reads .shared::cta after barrier" }
+  ],
+  "edges": [
+    { "from": "hbm", "to": "warp", "variant": "default", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "warp", "to": "cp", "label": "launch cp.async xN", "variant": "emphasis", "labelDy": 18 },
+    { "from": "cp", "to": "smem", "variant": "emphasis" },
+    { "from": "cp", "to": "waitgroup", "label": "per-thread completion", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "bottom-channel", "labelDy": 22 },
+    { "from": "waitgroup", "to": "barrier", "label": "still not CTA-wide", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelDy": 18 },
+    { "from": "barrier", "to": "cta_consume", "label": "CTA scope", "variant": "emphasis", "labelDy": 52 }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What Moves Where",
+      "items": [
+        "Data starts in .global memory and lands in .shared::cta",
+        "The hardware mover is cp.async, not the consumer warp itself",
+        "The consumer side is CTA-wide even though the async completion is not"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Why Two Sync Steps Exist",
+      "items": [
+        "wait_group only tells the issuing thread that its async groups completed",
+        "The CTA barrier is separate because the tile is usually consumed by other warps in the same CTA",
+        "So the protocol is thread-level completion followed by CTA-level publish"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Scope Summary",
+      "items": [
+        "Launch scope: issuing thread / warp",
+        "Completion wait scope: issuing thread",
+        "Consumption scope after publish: whole CTA"
+      ]
+    }
+  ]
+}

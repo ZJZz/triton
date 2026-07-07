@@ -1,0 +1,341 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>sm80 cp.async Protocol Teaching View</title>
+  <link rel="stylesheet" href="./protocol-teaching.css">
+</head>
+<body>
+  <main class="page-shell">
+    <header class="hero" id="hero"></header>
+
+    <section class="layout-top">
+      <article class="panel">
+        <div class="panel-header">
+          <div class="panel-title"><span class="panel-index">1</span>数据从哪来，经过什么模块，最后落到哪里</div>
+          <div class="panel-hint">把源内存、异步拷贝引擎、目标缓冲、等待对象和最终 consumer 分开画。蓝色高亮表示当前步骤正在操作的模块。</div>
+        </div>
+        <div class="panel-body" id="journey"></div>
+      </article>
+
+      <article class="panel">
+        <div class="panel-header">
+          <div class="panel-title"><span class="panel-index">2</span>同步到底管到哪一层</div>
+          <div class="panel-hint">这里直接回答 thread / warp / CTA / cluster 哪一层参与 issue、哪一层负责 wait、哪一层在 wait 之后可以读。</div>
+        </div>
+        <div class="panel-body" id="scope"></div>
+      </article>
+    </section>
+
+    <section class="panel" style="margin-bottom:16px;">
+      <div class="panel-header">
+        <div class="panel-title"><span class="panel-index">3</span>更偏硬件位置感的微架构剖面图</div>
+        <div class="panel-hint">这张图不再强调步骤顺序，而是强调“这些对象物理上更像在哪一块”：HBM 在 SM 外，cp.async pipe 在 SM 入口，shared SRAM 在 SM 内，CTA barrier / consumer warp 都在同一个 CTA 作用域里。</div>
+      </div>
+      <div class="panel-body" id="topology"></div>
+    </section>
+
+    <section class="layout-main">
+      <div class="left-stack">
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">4</span>多个异步任务先发出，等到 barrier 再汇合</div>
+            <div class="controls">
+              <button class="btn" id="step-prev" type="button">上一步</button>
+              <button class="btn" id="play-toggle" type="button">播放</button>
+              <button class="btn" id="step-next" type="button">下一步</button>
+              <input class="step-slider" id="step-slider" type="range" min="0" max="0" value="0">
+              <span class="step-caption">步骤 <span id="step-counter">1 / 1</span></span>
+            </div>
+          </div>
+          <div class="panel-body" id="timeline"></div>
+        </article>
+      </div>
+
+      <aside class="right-stack">
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">5</span>当前这一步在做什么</div>
+            <div class="panel-hint">不要把 `wait_group` 和 `CTA barrier` 混成一件事。</div>
+          </div>
+          <div class="panel-body" id="current-step"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">6</span>完整协议步骤</div>
+            <div class="panel-hint">点击任一步可直接跳转。</div>
+          </div>
+          <div class="panel-body" id="step-list"></div>
+        </article>
+
+        <article class="panel">
+          <div class="panel-header">
+            <div class="panel-title"><span class="panel-index">7</span>读图时最容易误解的点</div>
+            <div class="panel-hint">这里把“谁完成”和“谁可以读”拆开说清楚。</div>
+          </div>
+          <div class="panel-body" id="notes"></div>
+        </article>
+      </aside>
+    </section>
+  </main>
+
+  <script>
+    window.PROTOCOL_PAGE = {
+      eyebrow: "sm80 / sm86 · Ampere transport protocol",
+      title: "cp.async 的真实交接链",
+      subtitle: "数据从 .global / HBM 搬到 .shared::cta。拷贝完成首先只被 issuing thread 看到，所以还必须再经过一次 CTA barrier，其他 warps 才能合法读取 shared tile。",
+      chips: [
+        "<strong>源内存</strong> .global / HBM",
+        "<strong>异步引擎</strong> cp.async",
+        "<strong>目标缓冲</strong> .shared::cta",
+        "<strong>第一个 wait</strong> issuing thread 的 wait_group",
+        "<strong>最终 publish</strong> CTA barrier",
+        "<strong>合法 consumer</strong> 同一 CTA 的任意 warp"
+      ],
+      quickFacts: [
+        { label: "数据起点", value: ".global / HBM", note: "copy 的 payload 在 device global memory 里。" },
+        { label: "发起者", value: "issuing warp", note: "通常由负责搬运的 warp 或其线程发出 `cp.async`。" },
+        { label: "异步模块", value: "cp.async pipe", note: "真正把 bytes 搬进 shared 的是异步 copy pipe。" },
+        { label: "数据落点", value: ".shared::cta", note: "consumer 最终读的是 CTA shared stage buffer。" },
+        { label: "先看到完成的人", value: "issuing thread", note: "`wait_group` 只证明这条 thread 发出去的 async group 完成。" },
+        { label: "真正能读的人", value: "whole CTA", note: "其他 warps 还要等 `bar.sync` 或 `ttg.barrier` 之后才可读。" }
+      ],
+      links: [
+        { href: "./protocol-overview.html", label: "返回协议总览" },
+        { href: "./README.md", label: "查看目录说明" }
+      ],
+      legend: [
+        { label: "源内存 / 发起方", color: "#dcecff" },
+        { label: "异步搬运模块", color: "#daf8ea" },
+        { label: "目标数据状态", color: "#ece5ff" },
+        { label: "等待 / 发布对象", color: "#fff1d2" },
+        { label: "最终 consumer", color: "#e6effa" }
+      ],
+      journey: {
+        width: 980,
+        height: 360,
+        ariaLabel: "sm80 cp.async data journey",
+        regions: [
+          { id: "cta", x: 438, y: 106, w: 494, h: 192, label: "CTA 共享域：shared tile 会被多个 warps 消费", fill: "rgba(237, 242, 247, 0.48)", stroke: "#8ea0ba" },
+          { id: "thread", x: 196, y: 20, w: 230, h: 98, label: "thread / issuing warp 视角", fill: "rgba(220, 236, 255, 0.25)", stroke: "#6c8ecf" }
+        ],
+        nodes: [
+          { id: "hbm", x: 30, y: 144, w: 156, h: 88, label: "HBM tile", sub: ".global payload", meta: "数据起点", tone: "source" },
+          { id: "issuer", x: 226, y: 36, w: 164, h: 64, label: "issuing warp", sub: "发出 cp.async", meta: "launch scope: warp / thread", tone: "actor" },
+          { id: "cp", x: 240, y: 148, w: 170, h: 82, label: "cp.async pipe", sub: "async copy engine", meta: "真正搬 bytes 的模块", tone: "engine" },
+          { id: "smem", x: 468, y: 148, w: 186, h: 82, label: "stage buffer", sub: ".shared::cta", meta: "consumer 之后读这里", tone: "output" },
+          { id: "wait", x: 486, y: 42, w: 170, h: 66, label: "wait_group", sub: "issuing thread waits", meta: "只在 thread 作用域成立", tone: "sync" },
+          { id: "barrier", x: 702, y: 42, w: 180, h: 66, label: "CTA barrier", sub: "ttg.barrier / bar.sync", meta: "把 shared tile 发布给整个 CTA", tone: "sync" },
+          { id: "readers", x: 706, y: 162, w: 170, h: 80, label: "CTA readers", sub: "local_load / mma.sync", meta: "wait 之后才合法读取", tone: "consumer" }
+        ],
+        arrows: [
+          { id: "issue", from: "issuer", to: "cp", label: "issue T0 / T1 / T2", tone: "control", fromSide: "bottom", toSide: "top", labelAt: { x: 314, y: 124, w: 150 } },
+          { id: "copy", from: "hbm", to: "cp", label: "copy bytes", tone: "data", fromSide: "right", toSide: "left", labelAt: { x: 214, y: 180, w: 110 } },
+          { id: "land", from: "cp", to: "smem", label: "落到 stage buffer", tone: "data", fromSide: "right", toSide: "left", labelAt: { x: 440, y: 186, w: 144 } },
+          { id: "threadwait", from: "cp", to: "wait", label: "issuing thread 观察完成", tone: "sync", fromSide: "top", toSide: "bottom", via: [{ x: 476, y: 110 }], labelAt: { x: 470, y: 96, w: 168 } },
+          { id: "publish", from: "wait", to: "barrier", label: "仍需 CTA publish", tone: "sync", fromSide: "right", toSide: "left", labelAt: { x: 680, y: 62, w: 150 } },
+          { id: "consume", from: "barrier", to: "readers", label: "整个 CTA 才能读", tone: "publish", fromSide: "bottom", toSide: "top", labelAt: { x: 792, y: 136, w: 160 } },
+          { id: "readpath", from: "smem", to: "readers", label: "读 shared tile", tone: "publish", fromSide: "right", toSide: "left", labelAt: { x: 682, y: 202, w: 124 } }
+        ],
+        notes: [
+          { x: 42, y: 124, text: "这页最关键的区别：copy 完成 != 其他 warps 立即可读" }
+        ]
+      },
+      scope: {
+        summary: "Ampere 这里最容易看错的是：`wait_group` 只是 issuing thread 对自己发出的 async group 做 completion observe，不会自动把 tile 发布给同 CTA 的其他 warps。",
+        rows: [
+          { id: "thread", scope: "thread", role: "wait", roleClass: "wait", detail: "`wait_group` 的保证只对 issuing thread 成立。它知道自己发出去的 cp.async group 已经完成。" },
+          { id: "warp", scope: "warp", role: "issue", roleClass: "issue", detail: "`cp.async` 往往由某个 warp 发起，但 warp 级别本身并不是最终 publish scope。" },
+          { id: "warpgroup", scope: "warp-group", role: "unused", roleClass: "unused", detail: "这一代主 protocol 不靠 warp-group 级 completion model。" },
+          { id: "cta", scope: "CTA", role: "publish", roleClass: "publish", detail: "`ttg.barrier` / `bar.sync` 之后，同 CTA 里的其他 warps 才能把 `.shared::cta` 当成合法输入。" },
+          { id: "cluster", scope: "cluster", role: "unused", roleClass: "unused", detail: "Ampere 的这条主链里没有 cluster shared / cluster barrier 参与。" }
+        ],
+        callouts: [
+          { title: "第一个观察到完成的是谁", body: "是 issuing thread，不是整个 CTA。`wait_group` 解决的是 thread-local completion。" },
+          { title: "最终谁可以消费结果", body: "是同一个 CTA 内的所有 consumer warps，但前提是已经过 CTA barrier 完成 publish。" }
+        ]
+      },
+      topology: {
+        width: 1080,
+        height: 404,
+        ariaLabel: "sm80 cp.async microarchitecture cross section",
+        legend: [
+          { label: "片外 / 源数据", color: "#dcecff" },
+          { label: "SM 入口与控制", color: "#dff6fa" },
+          { label: "SM 内 shared SRAM", color: "#ece5ff" },
+          { label: "同步 / 发布门", color: "#fff1d2" },
+          { label: "consumer warps / tensor core side", color: "#e6effa" }
+        ],
+        bands: [
+          { id: "offchip", y: 18, h: 74, label: "片外存储层", sub: "HBM / global memory 在 SM 外", fill: "rgba(220,236,255,0.45)", stroke: "#afc8ef" },
+          { id: "smedge", y: 106, h: 86, label: "SM 入口与发起侧", sub: "issuing warp 与 cp.async pipe 更接近 SM 入口 / LSU 一侧", fill: "rgba(223,246,250,0.52)", stroke: "#b7dfe7" },
+          { id: "shared", y: 208, h: 94, label: "SM 内共享存储层", sub: ".shared::cta stage buffer 和 CTA 级共享状态都在这一层", fill: "rgba(236,229,255,0.48)", stroke: "#d5c6fb" },
+          { id: "compute", y: 316, h: 70, label: "CTA consumer / compute 侧", sub: "其他 warps 与 mma.sync / local_load 消费发生在这里", fill: "rgba(230,239,250,0.58)", stroke: "#c8d7ec" }
+        ],
+        frames: [
+          { id: "sm-shell", x: 210, y: 98, w: 840, h: 290, label: "单个 SM / CTA 作用域", fill: "rgba(255,255,255,0.2)", stroke: "#9eb2ce", dash: "8 7" }
+        ],
+        modules: [
+          { id: "hbm", x: 36, y: 24, w: 154, h: 58, label: "HBM / .global", sub: "源 tile", meta: "SM 外部", tone: "source" },
+          { id: "issuer", x: 246, y: 120, w: 170, h: 58, label: "issuing warp", sub: "发出 cp.async", meta: "launch scope", tone: "actor" },
+          { id: "cp", x: 456, y: 118, w: 178, h: 62, label: "cp.async pipe", sub: "异步 copy pipe", meta: "SM 入口附近", tone: "descriptor" },
+          { id: "smem", x: 462, y: 224, w: 214, h: 62, label: "shared SRAM", sub: "stage buffer", meta: ".shared::cta", tone: "output" },
+          { id: "wait", x: 692, y: 120, w: 170, h: 58, label: "wait_group", sub: "thread-local scoreboarding", meta: "不是 CTA publish", tone: "sync" },
+          { id: "barrier", x: 704, y: 232, w: 170, h: 58, label: "CTA barrier gate", sub: "bar.sync / ttg.barrier", meta: "CTA 级发布门", tone: "sync" },
+          { id: "readers", x: 902, y: 326, w: 132, h: 50, label: "consumer warps", sub: "mma.sync", meta: "CTA reader side", tone: "consumer" }
+        ],
+        arrows: [
+          { id: "topo-copy", from: "hbm", to: "cp", label: "bytes enter SM", tone: "data", fromSide: "right", toSide: "left", via: [{ x: 314, y: 53 }, { x: 314, y: 149 }], labelAt: { x: 318, y: 92, w: 124 } },
+          { id: "issue", from: "issuer", to: "cp", label: "launch", tone: "control", fromSide: "right", toSide: "left", labelAt: { x: 438, y: 104, w: 90 } },
+          { id: "land", from: "cp", to: "smem", label: "fill shared", tone: "data", fromSide: "bottom", toSide: "top", labelAt: { x: 548, y: 206, w: 110 } },
+          { id: "threadwait", from: "cp", to: "wait", label: "thread observes completion", tone: "sync", fromSide: "right", toSide: "left", labelAt: { x: 688, y: 98, w: 176 } },
+          { id: "publish", from: "wait", to: "barrier", label: "still need CTA publish", tone: "sync", fromSide: "bottom", toSide: "top", labelAt: { x: 780, y: 205, w: 164 } },
+          { id: "readpath", from: "smem", to: "readers", label: "CTA readers consume shared tile", tone: "publish", fromSide: "right", toSide: "left", via: [{ x: 814, y: 255 }, { x: 814, y: 350 }], labelAt: { x: 852, y: 302, w: 190 } }
+        ],
+        notes: [
+          { x: 36, y: 398, text: "物理位置感关键词：HBM 在 SM 外；shared SRAM 在 SM 内；CTA barrier 是 shared tile 面向整个 CTA 的发布门。" }
+        ],
+        caption: "这张剖面图刻意把 `wait_group` 画在 issuing thread 一侧，而把 `CTA barrier` 画成 shared SRAM 与 consumer warps 之间的发布门，帮助区分“thread 看见完成”与“CTA 全体可以读”这两层。"
+      },
+      timeline: {
+        ariaLabel: "sm80 cp.async timeline",
+        ticks: [
+          { label: "预热" },
+          { label: "issue T0" },
+          { label: "issue T1" },
+          { label: "issue T2" },
+          { label: "thread wait" },
+          { label: "copy done" },
+          { label: "CTA barrier" },
+          { label: "CTA read" }
+        ],
+        lanes: [
+          { id: "issuer", label: "issuing warp / thread", note: "连续发出多个 cp.async group", bg: "#f8fbff" },
+          { id: "copy", label: "cp.async pipe", note: "多个 copy 在异步 pipe 里重叠执行", bg: "#f6fbf8" },
+          { id: "shared", label: ".shared::cta stage", note: "tile 写进 shared，但还没对其他 warps 发布", bg: "#faf7ff" },
+          { id: "wait", label: "wait / barrier", note: "先 thread wait，再 CTA publish", bg: "#fffaf2" },
+          { id: "consumer", label: "CTA consumers", note: "等 publish 之后才能读", bg: "#f8fbff" }
+        ],
+        bars: [
+          { lane: "issuer", start: 1, end: 2, label: "issue T0", tone: "source" },
+          { lane: "issuer", start: 2, end: 3, label: "issue T1", tone: "source" },
+          { lane: "issuer", start: 3, end: 4, label: "issue T2", tone: "source" },
+          { lane: "copy", start: 1, end: 5, label: "copy T0", sub: "HBM -> shared", tone: "engine" },
+          { lane: "copy", start: 2, end: 5.4, label: "copy T1", sub: "与 T0 重叠", tone: "engine", offsetY: 18 },
+          { lane: "copy", start: 3, end: 5.8, label: "copy T2", sub: "与前两次重叠", tone: "engine", offsetY: -18 },
+          { lane: "shared", start: 5, end: 6.2, label: "tile ready in shared", sub: "但还没 CTA publish", tone: "output" },
+          { lane: "wait", start: 4, end: 5, label: "wait_group", sub: "issuing thread only", tone: "sync" },
+          { lane: "wait", start: 5.2, end: 6.2, label: "CTA barrier", sub: "publish to all warps", tone: "sync", offsetY: 18 },
+          { lane: "consumer", start: 6.2, end: 7.2, label: "CTA reads tile", sub: "mma.sync / local_load", tone: "consumer" }
+        ],
+        markers: [
+          { lane: "issuer", at: 1, label: "launch", kind: "issue", tone: "source" },
+          { lane: "issuer", at: 2, label: "launch", kind: "issue", tone: "source" },
+          { lane: "issuer", at: 3, label: "launch", kind: "issue", tone: "source" },
+          { lane: "wait", at: 4, label: "wait", kind: "wait", tone: "sync" },
+          { lane: "wait", at: 6, label: "publish", kind: "commit", tone: "sync" }
+        ],
+        caption: "时间线故意把“copy 已经落到 shared”和“其他 warps 终于可以读”分开画，这就是 `wait_group` 与 `CTA barrier` 各自解决的问题。"
+      },
+      steps: [
+        {
+          tick: 0,
+          short: "0. 先建立空的 stage buffer",
+          title: "开始时还没有任何 tile 对 consumer 可见",
+          summary: "这时 shared stage 只是空缓冲区。还没有 copy，也没有 barrier 完成，所以任何 consumer warp 都不能把它当输入。",
+          meta: ["shared 还是空的", "没有 outstanding copy", "合法 consumer = none"],
+          activeNodes: ["smem"],
+          activeTopologyLayers: ["shared", "compute"],
+          activeArrows: [],
+          activeScopeRows: ["warp", "cta"],
+          activeRegions: ["cta"]
+        },
+        {
+          tick: 1,
+          short: "1. 发出第一个 cp.async",
+          title: "issuing warp 发出第一批异步搬运任务",
+          summary: "真正执行搬运的是 `cp.async` pipe。数据从 HBM 出发，目标是 `.shared::cta` 的 stage buffer。",
+          meta: ["数据: HBM -> shared", "参与 scope: issuing warp", "consumer 仍不能读"],
+          activeNodes: ["hbm", "issuer", "cp"],
+          activeTopologyLayers: ["offchip", "smedge"],
+          activeTopologyArrows: ["topo-copy"],
+          activeArrows: ["issue", "copy"],
+          activeScopeRows: ["warp"],
+          activeRegions: ["thread"]
+        },
+        {
+          tick: 3,
+          short: "2. 多个任务连续发出",
+          title: "多个 cp.async task 可以先扇出，再晚一点统一等待",
+          summary: "这里同时有 T0、T1、T2 三个 copy 在路上。重点不是一发一等，而是先把 pipeline 填满，让搬运重叠起来。",
+          meta: ["三个 task 并行 in-flight", "issuing side 继续推进", "还没到 barrier"],
+          activeNodes: ["issuer", "cp", "hbm"],
+          activeTopologyLayers: ["offchip", "smedge"],
+          activeTopologyArrows: ["topo-copy"],
+          activeArrows: ["issue", "copy"],
+          activeScopeRows: ["warp"],
+          activeRegions: ["thread"]
+        },
+        {
+          tick: 4,
+          short: "3. issuing thread 碰到 wait_group",
+          title: "第一个 wait 只属于 issuing thread",
+          summary: "`wait_group` 现在检查 issuing thread 自己发出的 async groups 是否完成。它不等于 CTA publish，也不会自动让其他 warps 放行。",
+          meta: ["completion observe = thread", "CTA 其余 warps 仍不能读", "最容易误解的步骤"],
+          activeNodes: ["cp", "wait"],
+          activeTopologyLayers: ["smedge"],
+          activeArrows: ["threadwait"],
+          activeScopeRows: ["thread"],
+          activeRegions: ["thread"]
+        },
+        {
+          tick: 6,
+          short: "4. CTA barrier 发布 shared tile",
+          title: "真正把 tile 交给消费者的是 CTA barrier",
+          summary: "当 issuing side 已经确认 copy 完成后，还要用 `bar.sync` / `ttg.barrier` 把这块 shared tile 作为 CTA 级可见状态发布出去。",
+          meta: ["publish scope = CTA", "shared tile 现在对其他 warps 合法", "barrier != wait_group"],
+          activeNodes: ["wait", "barrier", "smem"],
+          activeTopologyLayers: ["shared"],
+          activeArrows: ["publish", "readpath"],
+          activeScopeRows: ["cta"],
+          activeRegions: ["cta"]
+        },
+        {
+          tick: 7,
+          short: "5. 同一 CTA 的 consumer 正式读取",
+          title: "等 publish 完成后，CTA readers 才能把 shared tile 当成输入",
+          summary: "这一步通常接上 `local_load`、`mma.sync` 或其它 shared-memory consumer。到这里，数据路径和同步路径才真正闭合。",
+          meta: ["合法 consumer = CTA readers", "shared tile 已发布", "协议闭环完成"],
+          activeNodes: ["smem", "barrier", "readers"],
+          activeTopologyLayers: ["shared", "compute"],
+          activeArrows: ["consume", "readpath"],
+          activeScopeRows: ["cta"],
+          activeRegions: ["cta"]
+        }
+      ],
+      notes: [
+        {
+          title: "误区 1：`wait_group` 已经够了",
+          body: "不够。它只告诉 issuing thread 自己发出的 copy 完成了，不能替代 CTA 范围的 publish。"
+        },
+        {
+          title: "误区 2：数据一进 shared 就能随便读",
+          body: "也不对。shared 里虽然已经有 bytes，但对其它 warps 的合法可见性还没有建立。"
+        },
+        {
+          title: "读图口诀",
+          items: [
+            "先看数据起点：这里是 .global / HBM。",
+            "再看硬件模块：这里是 cp.async，而不是 consumer warp 自己搬运。",
+            "最后看谁能读：答案不是 wait_group，而是 CTA barrier 之后的 CTA readers。"
+          ]
+        }
+      ],
+      footerNote: "如果你只记一件事：Ampere 的主链不是“cp.async -> wait_group -> consume”，而是“cp.async -> wait_group(thread) -> CTA barrier -> CTA consume”。"
+    };
+  </script>
+  <script src="./protocol-teaching.js"></script>
+</body>
+</html>

@@ -21,7 +21,7 @@ layout / data-movement organization
 因此它们现在该长成什么样、放在哪里、通过什么介质流动
 ```
 
-如果把 TTGIR 三层压成一句短记忆：
+如果只记前面三类的短记忆：
 
 ```text
 mapping = 分工
@@ -29,21 +29,37 @@ organization = 衔接
 scheduling = 时序
 ```
 
-那么本文只负责第二层：`organization = 衔接`。更准确地说，它桥接的是 producer form 和 consumer-required form。
+但在 [TTGIR_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/TTGIR_GUIDE.md) 的完整框架里，TTGIR 现在按五类来读：
 
-## 2. 和另外两层的边界
+```text
+mapping
+  -> organization
+  -> scheduling
+  -> legality
+  -> cleanup
+```
+
+本文只负责第二类：`layout / data-movement organization`。更准确地说，它桥接的是 producer form 和 consumer-required form。
+
+## 2. 和另外四类的边界
 
 | 主题 | 核心问题 | 典型载体 |
 |---|---|---|
 | distributed execution mapping（执行层级上的分工映射） | 谁拥有这些元素 | `#blocked`、`CGAEncodingAttr`、`#ttg.slice` |
 | layout / data-movement organization | 这些值以什么 form / carrier 流动 | `ttg.convert_layout`、`ttg.local_alloc`、descriptor、TMEM |
 | target-driven scheduling | 这些工作何时发生、如何 overlap、何时同步 | `loop.stage`、async op、wait、barrier |
+| legality repair | 还缺什么约束才能继续 lower | fence、proxy ordering、TMEM reuse barrier |
+| cleanup | 哪些中间表示噪音可以删除 | 冗余 convert、重复链、token、canonical form |
 
-有三个容易混淆的点：
+有五个容易混淆的点：
 
 - 它不是 distributed execution mapping。这里的重点是 CTA / warp / thread 执行层级上的分工；mapping 回答 `who computes`，本文回答 `same values in what form move between uses`。
 - 它不是 scheduling。本文回答 `what form / what path`；scheduling 回答 `when / what ordering`。
 - 它也不是“只要看到 layout attr 就是一回事”。有些 encoding 主要承载 ownership，有些主要承载 memory-facing / compute-facing organization，还有些 op 直接把 carrier 切换显式化。
+- 它不是 legality repair。`FenceInsertion` / `ProxyFenceInsertion` / `TMemBarrierInsertion` 解决的是 ordering / visibility / reuse legality，见
+  [LEGALITY_REPAIR.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/LEGALITY_REPAIR.md)。
+- 它和 cleanup 强相关，但不等于 cleanup。像 `RemoveLayoutConversions` 这种 pass 会围绕 organization anchor 压缩表示链，不过在五类框架里主类更稳地归到 cleanup，见
+  [CLEANUP.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/CLEANUP.md)。
 
 ## 3. 关键载体
 
@@ -213,14 +229,15 @@ ConvertTritonToTritonGPU
 见
 [compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:269)。
 
-可以压成四类职责：
+可以先压成三类 organization 主职责：
 
 | 层 | 主要问题 | 代表 pass |
 |---|---|---|
 | memory-facing organization | load/store 周围的值应以什么 form 访问更合适 | `Coalesce` |
-| representation-chain cleanup | 哪些中间 form 是多余的，哪些 form 更适合当前 consumer | `RemoveLayoutConversions` |
 | compute-facing specialization | dot / mma consumer 需要什么 operand / shared view | `AccelerateMatmul`、`OptimizeDotOperands` |
 | target-specific carrier selection | descriptor/TMA/TMEM 该如何承载这些值 | `OptimizeDescriptorEncoding`、`TMALowering`、`PromoteLHSToTMem`、`OptimizeTMemLayouts` |
+
+`RemoveLayoutConversions` 会频繁出现在这条主干旁边，因为它会围绕这些 organization anchor 压缩 representation chain；但在五类框架里，它的主类更稳地归到 cleanup，而不是 organization 本身。
 
 ### 4.1 `Coalesce`：先回答 memory-facing form
 
@@ -245,7 +262,7 @@ ConvertTritonToTritonGPU
 见
 [CoalesceUtils.cpp](/LocalRun/jiangzhe.zhao/my_repo/triton/lib/Dialect/TritonGPU/Transforms/CoalesceUtils.cpp:17)。
 
-### 4.2 `RemoveLayoutConversions`：压缩 representation 链
+### 4.2 `RemoveLayoutConversions`：organization-adjacent cleanup，不是 organization 主决策
 
 `RemoveLayoutConversions` 的目标不是盲目删 op。它会减少 `ConvertLayoutOp` 的数量，并偏向：
 
@@ -255,7 +272,7 @@ ConvertTritonToTritonGPU
 见
 [Passes.td](/LocalRun/jiangzhe.zhao/my_repo/triton/include/triton/Dialect/TritonGPU/Transforms/Passes.td:250)。
 
-这一步做的是 representation-chain normalization，而不是重新定义 ownership。
+这一步做的是 representation-chain normalization，而不是重新定义 ownership，也不是先回答“该选哪种 form / carrier”。前面的 organization pass 更像是在建立 anchor；它更像是围绕这些 anchor 做 cleanup。
 
 ### 4.3 `OptimizeDotOperands`：从 consumer 反推 shared / memdesc 视图
 
@@ -293,7 +310,7 @@ shared encoding / transpose / reshape / memdesc view
 
 这组对比表达的是：`Coalesce` 改的是值经过 memory op 时的组织形式。
 
-### 5.2 `matmul_contiguous` `sm86`：`RemoveLayoutConversions` 压缩中间表示链
+### 5.2 `matmul_contiguous` `sm86`：organization-adjacent cleanup 怎样压缩中间表示链
 
 `Before TritonGPURemoveLayoutConversions` 时，dot 前的表示链很长：pointer 先转成临时 blocked form，load 后再转回另一种 blocked form，再转成 `#ttg.dot_op`，见
 [030_Before_TritonGPURemoveLayoutConversions.mlir](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/dumps/matmul_contiguous/sm86_num_ctas1/mlir-pass-dump.split/030_Before_TritonGPURemoveLayoutConversions.mlir:68)。
@@ -345,4 +362,5 @@ Blackwell 这份 dump 里：
 3. 看到 `ttg.local_alloc` / `local_load` / `local_store` 时，要意识到值已经进出 shared `memdesc` world。
 4. 看到 `memdesc_subslice` / `trans` / `reshape` / `reinterpret` 时，先把它们当同一块 buffer 的 view 重组。
 5. 看到 `#ttg.dot_op`、`#linear`、`#tmem`、descriptor 时，优先问“这是哪个 consumer / transport path 的专用 form”。
-6. 只有最后才问时序问题；那属于 scheduling 的边界。
+6. 看到大量 `convert_layout` 消失时，不要立刻把它读成 organization 决策；先确认是不是 cleanup 在压缩表示链。
+7. 只有最后才问时序问题；那属于 scheduling 的边界。

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "sm100 tcgen05 / TMEM Protocol Explained",
+    "subtitle": "This path makes TMEM explicit: input comes from shared memory, output lands in TMEM, and completion plus reuse legality are separate concerns.",
+    "output": "learn_triton/docs/barrier_fence_visuals/sm100-tcgen05.html",
+    "viewBox": [720, 980],
+    "animation": "trace"
+  },
+  "lanes": [
+    { "id": "producer", "label": "Producer Scope" },
+    { "id": "input", "label": "Input Memory" },
+    { "id": "engine", "label": "Async Compute Module" },
+    { "id": "output", "label": "Output Memory" },
+    { "id": "complete", "label": "Completion Wait" },
+    { "id": "repair", "label": "Reuse Legality Repair" },
+    { "id": "consumer", "label": "Legal Consumer" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "Prepare operand tile", "fromCol": 0, "toCol": 1 },
+    { "id": "compute", "label": "Async tcgen05 set", "fromCol": 2, "toCol": 4, "variant": "emphasis" },
+    { "id": "join", "label": "Completion and hazard repair", "fromCol": 4, "toCol": 5, "variant": "security" }
+  ],
+  "nodes": [
+    { "id": "prod", "lane": "producer", "col": 0, "type": "frontend", "label": "producer group", "sublabel": "warp-group / CTA-group partition", "tag": "launch scope depends on kernel partition" },
+    { "id": "smem", "lane": "input", "col": 1, "type": "database", "label": "operand tile", "sublabel": ".shared::cta / ::cluster", "tag": "input memory type" },
+    { "id": "tc", "lane": "engine", "col": 2, "type": "backend", "label": "tcgen05 set", "sublabel": "tc_gen5_mma k0/k1/k2", "tag": "async tensor core 5 compute" },
+    { "id": "tmem", "lane": "output", "col": 4, "type": "database", "label": "TMEM result", "sublabel": "tensor memory", "tag": "output memory type" },
+    { "id": "wait", "lane": "complete", "col": 3, "type": "messagebus", "label": "wait_barrier", "sublabel": "after tc_gen5_commit", "tag": "completion scope: shared mbarrier users" },
+    { "id": "repair_node", "lane": "repair", "col": 5, "type": "security", "label": "TMEM barrier", "sublabel": "compiler inserts if hazard exists", "tag": "reuse legality: CTA / cta-group" },
+    { "id": "consumer_node", "lane": "consumer", "col": 4, "type": "backend", "label": "TMEM readers", "sublabel": "tcgen05.ld / next stage", "tag": "may read TMEM after both checks" }
+  ],
+  "edges": [
+    { "from": "prod", "to": "smem", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop" },
+    { "from": "smem", "to": "tc", "label": "feed tcgen05", "variant": "default", "labelDy": 18 },
+    { "from": "tc", "to": "tmem", "label": "write TMEM", "variant": "emphasis", "labelDy": 18 },
+    { "from": "tc", "to": "wait", "label": "commit -> wait", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelDy": 18 },
+    { "from": "wait", "to": "repair_node", "variant": "security" },
+    { "from": "tmem", "to": "consumer_node", "label": "TMEM readable", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelDy": 18 },
+    { "from": "repair_node", "to": "consumer_node", "variant": "default", "fromSide": "left", "toSide": "right", "route": "return-left" }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What Moves Where",
+      "items": [
+        "The input tile is shared memory, not HBM directly in this protocol view",
+        "The compute module is tcgen05",
+        "The result body lands in TMEM, not back into the shared tile"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Why One Wait Is Not The Whole Story",
+      "items": [
+        "wait_barrier proves async tcgen05 completion",
+        "TMEM reuse hazards may still need a separate compiler-inserted barrier",
+        "So completion and legality repair are related, but not identical"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Scope Summary",
+      "items": [
+        "Launch scope: kernel partition such as warp-group or CTA-group",
+        "Completion wait scope: whoever shares the same mbarrier object",
+        "Consumption scope after repair: TMEM readers in the next legal stage"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "diagram_type": "workflow",
+  "meta": {
+    "title": "sm90 WGMMA Protocol Explained",
+    "subtitle": "WGMMA does not read HBM directly here: its input is already a shared-memory tile, and the key scope is the warp-group.",
+    "output": "learn_triton/docs/barrier_fence_visuals/sm90-wgmma.html",
+    "viewBox": [720, 980],
+    "animation": "trace"
+  },
+  "lanes": [
+    { "id": "producer", "label": "Producer Scope" },
+    { "id": "input", "label": "Input Memory" },
+    { "id": "proxy", "label": "Proxy Ordering" },
+    { "id": "engine", "label": "Async Compute Module" },
+    { "id": "output", "label": "Output State" },
+    { "id": "sync", "label": "Wait Scope" },
+    { "id": "consumer", "label": "Who Proceeds Next" }
+  ],
+  "phases": [
+    { "id": "prep", "label": "Prepare operand tile", "fromCol": 0, "toCol": 1 },
+    { "id": "order", "label": "Proxy publish", "fromCol": 2, "toCol": 2, "variant": "security" },
+    { "id": "compute", "label": "Async MMA set", "fromCol": 3, "toCol": 3, "variant": "emphasis" },
+    { "id": "join", "label": "Warp-group join", "fromCol": 4, "toCol": 5 }
+  ],
+  "nodes": [
+    { "id": "prod", "lane": "producer", "col": 0, "type": "frontend", "label": "producer warps", "sublabel": "generic stores / stmatrix", "tag": "producer scope: CTA warps" },
+    { "id": "smem", "lane": "input", "col": 1, "type": "database", "label": "operand tile", "sublabel": ".shared::cta", "tag": "input memory type for WGMMA" },
+    { "id": "fence", "lane": "proxy", "col": 2, "type": "security", "label": "proxy fence", "sublabel": "fence.proxy.async", "tag": "ordering only, not rendezvous" },
+    { "id": "wgmma", "lane": "engine", "col": 3, "type": "backend", "label": "wgmma set", "sublabel": "mma_async k0/k1/k2 + commit_group", "tag": "compute scope: warp-group" },
+    { "id": "accum", "lane": "output", "col": 4, "type": "database", "label": "accumulators", "sublabel": "register fragment state", "tag": "output location" },
+    { "id": "wait", "lane": "sync", "col": 5, "type": "messagebus", "label": "wait_group", "sublabel": "joins committed async MMA", "tag": "sync scope: warp-group" },
+    { "id": "next", "lane": "consumer", "col": 5, "type": "backend", "label": "WG next", "sublabel": "reuse accumulators / rotate", "tag": "only this warp-group proceeds" }
+  ],
+  "edges": [
+    { "from": "prod", "to": "smem", "label": "build tile", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelDy": 12 },
+    { "from": "smem", "to": "fence", "label": "publish tile", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelDy": 12 },
+    { "from": "fence", "to": "wgmma", "label": "async side may read", "variant": "security", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelDy": 12 },
+    { "from": "wgmma", "to": "accum", "label": "update accum", "variant": "emphasis", "labelDy": 12 },
+    { "from": "accum", "to": "wait", "label": "wait_group", "variant": "default", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelDy": 12 },
+    { "from": "wait", "to": "next", "label": "WG advances", "variant": "emphasis", "fromSide": "bottom", "toSide": "top", "route": "drop", "labelDy": 12 }
+  ],
+  "cards": [
+    {
+      "dot": "emerald",
+      "title": "What Moves Where",
+      "items": [
+        "For this protocol, the input is already a .shared::cta tile",
+        "WGMMA consumes shared memory and updates accumulator fragments",
+        "The protocol is about async compute completion, not HBM transport"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "Why There Are Two Sync Ideas",
+      "items": [
+        "fence.proxy.async solves visibility between generic and async proxies",
+        "wait_group solves completion of the async MMA set itself",
+        "Both matter, but they protect different failure modes"
+      ]
+    },
+    {
+      "dot": "orange",
+      "title": "Scope Summary",
+      "items": [
+        "Producer scope before compute: CTA warps publishing shared data",
+        "Compute scope: one warp-group executes WGMMA",
+        "Wait scope after commit_group: that same warp-group"
+      ]
+    }
+  ]
+}
