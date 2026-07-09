@@ -177,6 +177,157 @@ after IR 建立的这份 contract，后面到底是谁来消费？
 5. 这个样本里为什么做了这次具体改写？
 6. after IR 会被谁继续消费？
 
+## 2.2 为什么前面还有 `legality repair` / `cleanup`
+
+这五类不是五件并列、线性完成的工作，更稳定的读法是先分成两组：
+
+| 组 | 类别 | 作用 |
+|---|---|---|
+| decision | mapping / organization / scheduling | 建立 ownership / carrier / timing contract |
+| reconciliation | legality repair / cleanup | 修补局部决策和下一 stage 最终要求之间的缺口 |
+
+前三类 pass 的共同点是：
+
+- 它们负责做局部决策。
+- 它们负责建立新的主 contract。
+- 它们不负责把整条 IR 立即整理成全局最小形式。
+
+后两类 pass 的共同点是：
+
+- 它们主要消费上游已经建立好的 contract。
+- 它们通常不重新定义 ownership / carrier / schedule 本身。
+- 它们解决的是“现在已经知道要怎么执行了，但还不能安全、合法、低噪音地继续 lower”的问题。
+
+所以 `legality repair` 和 `cleanup` 的存在，不应该读成“前面没做干净”，而应该读成：
+
+```text
+局部决策先建立 contract
+  -> contract 之间出现缺口、噪音、target hazard
+  -> 在边界上统一 repair / cleanup
+```
+
+### 2.2.1 为什么 legality 不能一开始就做完
+
+`legality repair` 修的是 target legality，不是抽象上的“最好看 IR”。
+
+它通常要放在：
+
+```text
+最早能判定 hazard 的时刻
+  +
+最后还能在当前抽象层表达和修复的时刻
+```
+
+太早做会有两个问题：
+
+- hazard 还没被上游决策具体化，容易漏插。
+- 为了保守正确性只能过度插入，破坏 overlap 和已有 scheduling 决策。
+
+太晚做也有问题：
+
+- lowering 已经把高层 contract 打散后，虽然问题还在，但未必还能在当前 IR 层方便地表达和修复。
+
+当前 pipeline 里的位置正好体现这个原则：
+
+- `FenceInsertion` 在 `make_ttgir` 末段、`LowerMMA` 之前，见
+  [compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:325)。
+  这时 scheduling / async protocol 基本已成形，但 TTGIR / TTNVGPU 语义还在，适合补 generic-proxy / async-proxy 之间的 ordering。
+- `ProxyFenceInsertion` 和 `TMemBarrierInsertion` 在 `make_llir` 边界，见
+  [compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:390)
+  和
+  [compiler.py](/LocalRun/jiangzhe.zhao/my_repo/triton/third_party/nvidia/backend/compiler.py:391)。
+  它们属于 lowering-side legality repair，不是 TTGIR 主链里的 scheduling pass。
+
+还要把这两者分开看：
+
+- `TMemBarrierInsertion` 依赖 tensor memory allocation 之后的物理 alias / reuse 事实，所以必须晚到 `allocate_tensor_memory` 之后。
+- `ProxyFenceInsertion` 更像 lowering 边界上的兜底 legality analysis：它不是在重新做 scheduling，而是在 shared-memory / async-proxy effect 已经具体可分析时，补齐前面没能显式修掉的 cross-proxy ordering。
+
+### 2.2.2 为什么 cleanup 也不要求上游“一次做净”
+
+`cleanup` 也不是单纯“最后扫地”。
+
+一部分 cleanup 会穿插在主链中间，例如多次 `RemoveLayoutConversions`，因为后续 pass 需要先在较干净的局部形态上工作；但这不等于每个 pass 都必须直接产出全局最小形式。
+
+更准确的约束是：
+
+- SSA / dominance / type legality 这类 IR 正确性 invariant，逐 pass 都要维持。
+- “全局最小表示”不是逐 pass 都要维持的 invariant，而更像局部 fixed-point 或 stage boundary 上再统一收敛的目标。
+
+这背后的原因是模块化：
+
+- organization pass 可以为某个 consumer 就地插入 `ttg.convert_layout` 桥接，不必同时替整个函数做全局 layout 最优。
+- scheduling pass 可以引入 token、临时依赖边、重复 producer chain 作为协议脚手架，不必同时证明这些脚手架在全局上已经最简。
+
+如果强迫每个 pass 都同时做全局 cleanup，会带来两个问题：
+
+- pass 必须持有过多跨层知识，破坏模块化。
+- 一个 pass 的局部“清理”可能直接撤销另一个 pass 刚建立的 contract。
+
+所以 `cleanup` 更准确的读法是：
+
+```text
+允许局部 pass 先生成可组合的中间形态
+  -> 在局部收敛点或 stage 边界上去噪、合并、canonicalize
+```
+
+这也是为什么文档前面给的
+
+```text
+mapping -> organization -> scheduling -> legality -> cleanup
+```
+
+首先是阅读顺序，不是说真实 pipeline 会把这五类严格分成五个连续阶段。
+
+### 2.2.3 为什么是这里，不是更前或更后
+
+问一个 `legality repair` 或 `cleanup` pass 为什么放在这里，最好不要抽象地问“是不是晚一点更好”，而要直接检查这 4 个条件：
+
+1. 它需要的信息，到这里是否刚好齐备。
+2. 它依赖的抽象，到这里是否还没有被 lower 掉。
+3. 它的结果，后面是否不会立刻被新的主决策大规模打坏。
+4. 它修完以后，下一批 consumer 是否马上会用到这份更合法或更干净的 IR。
+
+更短的记法是：
+
+```text
+最早可判定
+  + 最后可表达
+  + 不会立刻失效
+  + 紧接着有人消费
+```
+
+`legality repair` 常见是在找：
+
+```text
+hazard 已经显形
+  -> 但 target-level 语义还没丢
+```
+
+例如：
+
+- `FenceInsertion` 放在 `Pipeline` / layout / protocol pass 之后、`LowerMMA` 之前，是因为它既需要上游已经把 async consumer 和 shared-memory use-def 链具体化，又需要保留 `DotOpInterface`、loop、TTNVGPU 级语义来决定 fence 放置和 hoist。
+- `ProxyFenceInsertion` / `TMemBarrierInsertion` 放在 `allocate_shared_memory_nv` / `allocate_tensor_memory` 之后、`to_llvmir` 之前，是因为 alias / effect 已经可分析，但 Triton/NVIDIA dialect 级别的 proxy / TMEM 语义还没有丢。
+
+`cleanup` 常见是在找：
+
+```text
+局部决策已经收敛到一个小 fixed-point
+  -> 继续留着这些噪音只会干扰后续 pass
+```
+
+例如：
+
+- 前面的 `RemoveLayoutConversions` 放在 `Coalesce` / `AccelerateMatmul` 之后，是因为这一批 organization 决策刚刚引入了新的 `convert_layout`，先做一次局部收敛，后面的 layout pass 才不会被无谓噪音拖住。
+- 后面的 `RemoveLayoutConversions` 放在 `OptimizeTMemLayouts` / `TMALowering` 之后，是因为新的 carrier / protocol 又刚被具体化了一轮，此时再清一次，才能把冗余桥接留在当前 stage 内解决，而不是把它们带到后面的 lowering。
+
+所以“为什么一定在这里”的核心不是时间顺序本身，而是这个位置同时满足了：
+
+- 分析所需信息已经出现。
+- 修复所需抽象仍然存在。
+- 后续 pass 能直接消费结果。
+- 更早会误判，更晚会失去表达能力或把噪音带进下一 stage。
+
 ## 3. Distributed Execution Mapping
 
 这一类回答：谁拥有哪些 logical tensor elements。
@@ -300,6 +451,8 @@ tensor<..., #ttg.blocked<...>>
 
 看这类 pass，重点不是“它是不是也影响时序”，而是“如果没有这一步，lowering 或 target protocol 会在哪个约束上变得不合法”。
 
+不要把这一类读成“前面 scheduling 没做好所以最后补丁”。更准确的读法是：上游已经把主 contract 基本定下来，这一步再在合适的边界上补齐 target legality。
+
 展开见
 [LEGALITY_REPAIR.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/LEGALITY_REPAIR.md)。
 
@@ -325,6 +478,8 @@ tensor<..., #ttg.blocked<...>>
 - 只为 canonical form 服务的 SSA 重排
 
 看这类 pass，重点不是“它改没改语义上重要的对象”，而是“它有没有重新定义 ownership / carrier / schedule”。如果没有，那首先按 cleanup 读。
+
+也不要把这一类简单读成“最后统一扫尾”。很多 cleanup 会穿插在主链中间；它们的共同点不是执行位置晚，而是目标是去噪和收敛，而不是重新建立主 contract。
 
 展开见
 [CLEANUP.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/CLEANUP.md)。

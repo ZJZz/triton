@@ -20,9 +20,15 @@ CUDA Programming Guide（`learn_triton/reference/`）。凡属于 PTX 契约而�
 当前工作树里的配套图放在 `learn_triton/visuals/`：
 
 - [Barrier / Fence scope + fan-in/fan-out 总览页](../visuals/barrier_fence_scope_visual.html)
+- [Async Protocol Simulator](../visuals/async_protocol_simulator/index.html)
 
 > 说明：这篇笔记早期引用过 `learn_triton/docs/barrier_fence_visuals/`；但当前工作树里的
 > 可视化入口已经改到 `learn_triton/visuals/`。
+>
+> `可视化对应` 标记说明：
+> - 看到这个标记，表示本节内容在 `Async Protocol Simulator` 里有直接入口。
+> - 格式里的 `Protocol` / `Arch` / `Panel`，分别对应页面顶部的协议选择、架构选择、以及当前页面里的具体面板。
+> - 没有 `可视化对应` 标记的段落，表示当前 simulator 没有直接做成独立视图，或只在别的视图里被间接提到。
 
 ---
 
@@ -64,6 +70,13 @@ protocol = 交接
 
 ### 0.1 按机制分，Triton/CUDA/PTX 里常见的 protocol 有哪些
 
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Protocol = Execution Rendezvous`
+> - `Protocol = Completion Tracking`
+> - `Protocol = Proxy Visibility`
+> - `Protocol = Complete Pipeline`
+> 这四个 tab 正好对应本节按机制拆开的主协议族。
+
 下面这张表先给总分类。后文的 barrier / fence / wait 清单，本质上都只是这几类协议的
 具体实例。
 
@@ -93,13 +106,18 @@ issue -> completion signal -> completion observe -> visibility/order -> reuse / 
 
 ### 0.2 按 target 看，三代主协议有什么差别
 
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Arch = SM80 / SM90 / SM100`
+> - `Protocol = Completion Tracking` 与 `Protocol = Complete Pipeline`
+> 这一节讲的 target 差异，主要就在 simulator 顶部的 `Architecture selector` 里切换。
+
 同一个 matmul 主循环，在不同 target 上会长成不同协议，不是因为“指令名换了”，而是
 因为执行单元、异步引擎、完成模型、proxy 模型都变了。
 
 | target | 主执行/搬运单元 | 主要 completion model | 典型协议链 | 新增约束 |
 |---|---|---|---|---|
 | `sm80/sm86` | `mma.sync` + `cp.async` | per-thread async-group | `cp.async -> commit_group -> wait_group -> ttg.barrier` | 没有 TMA、cluster、TMEM |
-| `sm90` | `wgmma` + TMA + cluster | `wait_group` + `mbarrier` | `barrier_expect -> async_tma_load -> wait_barrier`；`fence_async_shared -> wgmma.mma_async -> commit_group -> wait_group` | generic proxy 与 async proxy 分离 |
+| `sm90` | `wgmma` + TMA + cluster | `wait_group` + `mbarrier` | `barrier_expect -> async_tma_copy_global_to_local -> wait_barrier`；`fence_async_shared -> wgmma.mma_async -> commit_group -> wait_group` | generic proxy 与 async proxy 分离 |
 | `sm100` | `tcgen05` + TMEM + warp specialization | `tc_gen5_commit -> mbarrier wait` | `init_barrier -> tc_gen5_mma -> tc_gen5_commit -> wait_barrier -> phase rotate` | TMEM reuse hazard、tcgen05 专用跨线程同步 |
 
 所以：
@@ -115,7 +133,64 @@ issue -> completion signal -> completion observe -> visibility/order -> reuse / 
 先用 §9.1 的“三问”定位：它是在等线程到齐、等异步完成，还是在补跨 proxy / 跨 scope
 的顺序与可见性。把这三问和 target 连起来看，比单独背 op 名更稳。
 
+### 0.3.1 再深一层：顺序到底是“从哪里来的”
+
+很多误解不是出在“不知道这个 op 叫什么”，而是出在：
+
+```text
+明明前后两步看起来有先后，
+这个先后到底是谁保证的？
+```
+
+这件事不能笼统回答“靠 barrier”或“靠 fence”。更稳的办法是把顺序来源直接拆开：
+
+| 顺序来源 | 它在回答什么 | 典型代表 | 最容易误读成什么 |
+|---|---|---|---|
+| **ISA 自带 program order / pairing** | 硬件是否已承诺这类同线程指令天然按顺序衔接 | 某些 pipelined `tcgen05` pairing、部分引擎自己的 canonical issue order | 误读成“所有异步后续都不用再等” |
+| **execution rendezvous** | 参与者是否都先到齐再继续 | `ttg.barrier`、`bar.sync`、`bar.warp.sync`、cluster barrier | 误读成“到齐就等于异步已完成” |
+| **completion observation** | 异步动作是否真的完成、现在能否进入消费 | `cp.async.wait_group`、`wgmma.wait_group`、`mbarrier.wait`、`tc_gen5_commit -> wait_barrier` | 误读成“wait 就是 barrier” |
+| **visibility / ordering fence** | 前面的写是否已经对后续消费者可见 | `fence.proxy.async`、`tensormap_fenceproxy_acquire`、`fence.mbarrier_init.release.cluster` | 误读成“fence 会等硬件完成” |
+| **specialized inter-thread handoff fence** | 某类异步流水怎样和 thread-sync / execution-ordering 点接起来 | `tcgen05.fence::before_thread_sync` / `after_thread_sync` | 误读成 generic `fence.proxy.async` |
+| **compiler hazard repair** | 如果上面都不够，编译器还要补什么合法性边界 | `MembarAnalysis`、`TMemBarrierInsertion`、`ProxyFenceInsertion` | 误读成“源码作者主动设计的协议本体” |
+
+这张表真正想建立的是一个判断习惯：
+
+```text
+顺序不是只有一种来源
+```
+
+同一个 pipeline 里，很可能同时出现：
+
+- 某一段同线程 issue 顺序由 ISA 自带
+- 中间还要用 completion 观察异步完成
+- 之后还要用 fence 把可见性发布给别的使用者
+- 最后再补一个 rendezvous 或 compiler repair
+
+所以读同步点时，应该多问一步：
+
+```text
+我现在缺的是：
+  本来就没有顺序？
+  还是有顺序，但没有 completion？
+  还是 completion 有了，但没有 visibility？
+  还是跨线程 handoff 还没接上？
+```
+
+如果把本文后面所有内容都压回这个框架，可以粗略这么读：
+
+- `§3` 主要在回答：**谁和谁需要 execution order**
+- `§4` 主要在回答：**异步完成怎样变成可观察事实**
+- `§5` 主要在回答：**可见性 / ordering 怎样发布给后续消费者**
+- `§6` 主要在回答：**不同 target 把这几种顺序来源组合成了什么主协议**
+- `§7` 主要在回答：**源码没写时，编译器又补了哪些边界**
+
 ### 0.4 先给总判断：barrier 和 fence 不是一类东西
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Execution Rendezvous` 对应 execution barrier
+> - `Completion Tracking` 对应 completion tracking
+> - `Proxy Visibility` 对应 proxy fence / ordering fence
+> - `Complete Pipeline` 把前三类重新串回一条 stage lifecycle
 
 在 Triton 里，`barrier` 和 `fence` **至少要分成 4 组看**。这是理解全部原语最
 重要的框架——按"它到底在等什么/守什么"来分，而不是按名字：
@@ -312,6 +387,11 @@ mask** 驱动：`getCGABroadcastMask() != 0` 会把 `.shared::cta` 翻成
    - `tc_gen5_commit -> wait_barrier`：负责异步完成
    - `TMemBarrierInsertion`：专门补 `load->mma` / `store->mma` 这类 TMEM hazard
 
+   这里的 `AsyncToken` 不是硬件里的 barrier object，也不是“任务已经完成”的信号。
+   它只是 IR 里的一条 **dependency edge**：把 TMEM / accumulator 上本来不够显眼的
+   read/write 依赖显式串起来，方便编译器做 alias / modref 判断、禁止错误重排。真正回答
+   “异步 tcgen05 完成了没”的，仍然是 `tc_gen5_commit -> wait_barrier`。
+
    一个很实用的记忆法是：
 
    ```text
@@ -357,7 +437,7 @@ mask** 驱动：`getCGABroadcastMask() != 0` 会把 `.shared::cta` 翻成
    ```
 
    典型 TMA load 路径
-   `init/expect -> async_tma_load -> wait_barrier -> local_load`
+   `init/expect -> async_tma_copy_global_to_local -> wait_barrier -> local_load`
    里没有额外 `fence_async_shared`，就是这个原因。`ProxyFenceInsertion.cpp` 里也能看
    到：TMA load 的写被单独归入 `proxyBlockInfo.syncWriteSlices`，而不是当成“普通
    generic 写后面还要补 fence”的那一路。
@@ -365,6 +445,11 @@ mask** 驱动：`getCGABroadcastMask() != 0` 会把 `.shared::cta` 翻成
 ---
 
 ## 3. 会合类：先回答“哪些线程必须先到齐”
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Protocol = Execution Rendezvous`
+> - `Panel = Swimlanes / Protocol Console / Role / Object Map / Compiler Mapping`
+> 这一页专门把“谁先到齐、谁在等、何时一起 release”拆开显示。
 
 如果你看到的是 `ttg.barrier`、命名 barrier、`bar.warp.sync`、cluster barrier，这一组
 都优先按“会合”来理解，而不是按“等待某个异步动作完成”来理解。
@@ -481,6 +566,12 @@ block 都停住”。这里恰恰不是。
 
 ### 3.3 Cluster barrier：会合对象已经不是线程子集，而是多个 CTA
 
+> 可视化对应（部分）：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Protocol = Execution Rendezvous`
+> - `Arch = SM90`
+> - `Panel = Compiler Mapping / Information Panel`
+> 当前 simulator 会提示 `cluster_barrier` 这类 execution rendezvous 的 target 变体；但它没有单独做一页完整 DSMEM / multi-CTA cluster timeline。
+
 先抓一句话：
 
 ```text
@@ -530,6 +621,11 @@ cluster barrier = “不是一个 block 内部等，而是多个 CTA 之间等�
 ---
 
 ## 4. 完成类：mbarrier 把“发信号”和“阻塞等待”拆开
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Protocol = Completion Tracking`
+> - `Panel = Swimlanes / Protocol Console / mbarrier State / Compiler Mapping / Role / Object Map`
+> 这一页最适合对照本节的 `issue -> completion object -> observe -> consume` 骨架。
 
 mbarrier（`mbarrier.*`）是一个**驻留在 shared memory 中**的 64-bit 对象，跟踪两个
 计数：一个 *arrival* 计数和（可选的）一个 *transaction/byte* 计数。它的目的是把
@@ -604,7 +700,22 @@ mbarrier 只回答一件事：
 -> 结果被消费 / 槽位被复用
 ```
 
+这里有一个最容易混的边界：
+
+- `barrier_expect(bytes)` 说的是：这轮 transaction / byte completion 条件是什么。
+- `arrive_barrier` 说的是：某个 participant 已经对 barrier 发出了一次 arrival signal。
+
+所以 `arrive` 不是“当前已经到了多少 bytes”，而更像“记一票 / 报到一次”；bytes 进度则由
+异步 producer 完成后记到账到 mbarrier。`wait_barrier` 最终观察的是 arrival 条件和
+transaction / byte 条件是否都满足。
+
 ### 4.3 标准模板：先记一条最典型路径
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Protocol = Completion Tracking`
+> - `Arch = SM90`
+> - `Panel = Swimlanes / Shared Memory View / mbarrier State`
+> 这里对应的是最典型的 `init_barrier -> barrier_expect -> async_tma_copy_global_to_local -> wait_barrier` 路径。
 
 最值得先背的是 TMA load 这条，因为它把 mbarrier 的全部角色都用全了。
 
@@ -643,103 +754,118 @@ init_barrier
 
 ### 4.4 两个变体：CLC 和 tcgen05 只是换了 producer，不是换了协议
 
-上面的 TMA load 是“标准版”。CLC 和 tcgen05 只是把第 3 步的 producer 换掉了。
+> 可视化对应（部分）：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Protocol = Completion Tracking`
+> - `Arch = SM100`
+> - `Panel = Swimlanes / mbarrier State / Compiler Mapping`
+> 当前 simulator 直接覆盖的是 `tcgen05 -> tc_gen5_commit -> wait_barrier` 这条变体；`CLC` 这条 mbarrier 变体目前没有单独做成可视化页。
 
-先把这两个变体的差异压成一张表：
-
-| 变体 | 第 3 步的 async producer 是谁 | 它完成后写到哪里 | `wait_barrier` 等的是什么 |
-|---|---|---|---|
-| CLC | `clc_try_cancel` | smem result buffer + mbarrier 记账 | “取消结果已经写好了” |
-| tcgen05 | `tc_gen5_mma` + `tc_gen5_commit` | TMEM 结果 + mbarrier 完成信号 | “此前异步 tcgen05 指令已经完成” |
-
-这样看就容易很多：
-
-- **CLC** 的结果本体就是一小块 smem 数据，`wait_barrier` 之后直接把它读回来。
-- **tcgen05** 的结果本体在 TMEM 里，`wait_barrier` 等的是“异步 MMA 已经做完”，然后
-  后续路径再去消费 TMEM 结果。
-
-#### A. CLC：把“取消结果是否写好”接到 mbarrier 上
-
-先抓一句话：
+读这两个变体时，先不要一上来盯着具体指令名。先固定 4.3 的协议骨架：
 
 ```text
-CLC 变体里，mbarrier 等的不是 tile 数据，而是 “try_cancel 的结果是否已经写到 smem”
+init
+-> 设完成条件
+-> issue async producer
+-> completion object 记录“已完成”
+-> observer wait
+-> consume / reuse
 ```
 
-把它套回 5 步模板：
+然后只问 4 件事：
 
-| 步骤 | CLC 里对应什么 |
-|---|---|
-| `init` | `init_barrier(count=1)` |
-| `expect / arrive` | `barrier_expect(16)`，因为结果是 `2xi64 = 16 bytes` |
-| `issue + bookkeeping` | `clc_try_cancel` 发起异步 cancel，请硬件把结果写到 smem，并在完成时 signal mbarrier |
-| `wait` | `wait_barrier` |
-| `consume / reuse` | `clc_load_result`（`:136`）把结果读回寄存器 |
+1. **producer 是谁**
+2. **结果本体写到哪里**
+3. **mbarrier 记录的“完成”到底是哪件事**
+4. **`wait_barrier` 之后 consumer 获得了什么资格**
 
-所以 CLC 的关键不是“又多了一种 barrier”，而是：
+把 CLC 和 tcgen05 放到这 4 个问题里，就不会乱：
 
-- 异步 producer 不再是 TMA engine
-- 它写的也不是 tile，而是一份 16-byte 的结果
-- 但 consumer 仍然通过同一个 `wait_barrier` 来判断“现在能不能读”
+| 变体 | async producer | 结果本体在哪里 | mbarrier 记录什么完成事实 | `wait_barrier` 之后可以做什么 |
+|---|---|---|---|---|
+| CLC | `clc_try_cancel` | smem result buffer | “16-byte cancel result 已经写入 smem” | 直接读取这份 smem 结果 |
+| tcgen05 | `tc_gen5_mma`，再由 `tc_gen5_commit` 连接完成 | TMEM | “此前异步 tcgen05 MMA 已完成” | 后续阶段可以安全消费 TMEM 结果 |
 
-测试 `test/TritonNvidiaGPU/membar-cluster.mlir:494` 之所以重要，就是因为它把这套模式写得
-很直白：
+这一节真正想表达的是：
+
+```text
+CLC 和 tcgen05 换掉的是 producer
+没有换掉的是 completion protocol
+```
+
+也就是说，`mbarrier` 仍然只是一个 **completion object**。它不关心你前面发起的是
+TMA、CLC 还是 tcgen05；它只负责把“那个异步动作已经完成”变成 observer 可观察的状态。
+
+#### A. CLC：observer 等的是“结果写入 smem”
+
+CLC 这条线最容易读懂，因为它的结果本体就落在 smem：
 
 ```text
 init_barrier(count=1)
--> clc_try_cancel
 -> barrier_expect(16)
+-> clc_try_cancel
+-> wait_barrier
+-> clc_load_result
 ```
 
-这说明 CLC 和 TMA load 在 mbarrier 看来是同一种 completion protocol：
+这里要抓住两点：
+
+- `barrier_expect(16)` 说的是：这次完成条件和 **16-byte result buffer** 绑定。
+- `wait_barrier` 等的不是“某个线程到了没”，而是“这 16-byte 结果已经写好了没”。
+
+所以 CLC 变体的语义可以压成一句话：
 
 ```text
-先声明要等的字节数
-异步 producer 完成后把字节记账
-consumer 再 wait
+异步 producer = clc_try_cancel
+完成事实 = cancel result 已写入 smem
+observer 在 wait 之后才能把这份结果当成有效数据读取
 ```
 
-#### B. tcgen05：把“异步 MMA 是否做完”接到 mbarrier 上
+#### B. tcgen05：observer 等的是“异步 MMA 已完成”
 
-先抓一句话：
+tcgen05 更容易让人绕进去，因为它的结果本体不在 smem，而在 **TMEM**。因此这里要把
+“计算本体”和“完成记账”拆开看：
+
+1. `tc_gen5_mma[_scaled]` 负责发起异步 MMA
+2. `tc_gen5_commit` 负责把“这些异步 MMA 已完成”接到 `mbarrier`
+
+所以它的核心不是“写一块 smem 数据”，而是：
 
 ```text
-tcgen05 变体里，mbarrier 等的不是 “smem 有没有写好”，而是 “异步 MMA 有没有做完”
+先让异步 MMA 在后台执行
+再把完成事实链接到 mbarrier
+最后由 observer 用 wait_barrier 观察这件事
 ```
 
-这里最容易误解的点是：tcgen05 的结果本体在 **TMEM**，不是像 TMA load/CLC 那样直接
-落在一块 smem 结果缓冲上。所以要分两层看：
-
-1. `tc_gen5_mma[_scaled]`（`:632`/`:696`）负责真正的异步 MMA 计算
-2. `tc_gen5_commit` 负责把“这些异步 MMA 完成了”这件事接到 mbarrier 上
-
-这样后面的 consumer 就仍然能沿用统一模板：
+把它套回统一骨架，就是：
 
 | 步骤 | tcgen05 里对应什么 |
 |---|---|
-| `init` | barrier 先被建好 |
-| `expect / arrive` | 由 tcgen05 配套协议准备完成条件 |
-| `issue + bookkeeping` | `tc_gen5_mma` 发异步 MMA，`tc_gen5_commit` 把完成记到 mbarrier |
-| `wait` | `wait_barrier` 等“此前 tcgen05 已完成” |
-| `consume / reuse` | 后续路径再去消费 TMEM 结果 |
+| `init` | barrier 先建好 |
+| `设完成条件` | 由 tcgen05 配套协议准备好完成条件 |
+| `issue async producer` | `tc_gen5_mma` 发起异步 MMA |
+| `completion object 记账` | `tc_gen5_commit` 把完成状态链接到 `mbarrier` |
+| `observer wait` | `wait_barrier` 观察“此前 tcgen05 已完成” |
+| `consume / reuse` | 后续阶段再去消费 TMEM 结果 |
 
-所以 tcgen05 和 TMA load 的真正区别不在于“有没有 wait”：
-
-- TMA load 是：**异步搬运完成后，smem 数据可读**
-- tcgen05 是：**异步 MMA 完成后，TMEM 结果可被后续阶段消费**
-
-`wait_barrier` 在两者里的角色是一样的：
+所以 tcgen05 这条线里，`wait_barrier` 的含义不是“等 smem 可读”，而是：
 
 ```text
-都不是自己做计算或搬运
-只是负责把“异步动作已经完成”这个事实变成 consumer 可观察到的同步点
+observer 现在终于能确认：
+前面的异步 MMA 已经完成，可以进入消费 TMEM 结果的下一阶段
 ```
 
-所以这一节最该建立的系统感其实是：
+最后把这节压成一句最稳的心智模型：
 
 ```text
-mbarrier 协议基本不变
-变的是第 3 步：到底是哪种 async producer 在把完成记到账
+CLC:
+  producer 把结果写到 smem，mbarrier 记录“结果已写好”
+
+tcgen05:
+  producer 在 TMEM 路径上做异步 MMA，mbarrier 记录“MMA 已完成”
+
+两者共同点:
+  observer 都不是直接盯硬件执行本体
+  而是通过 mbarrier 去观察“完成事实”
 ```
 
 ### 4.5 最后单独记：mbarrier 不解决什么
@@ -772,6 +898,11 @@ init -> expect/arrive -> async producer 记账 -> wait -> consume/reuse
 ---
 
 ## 5. 顺序类：fence 只补内存顺序，不负责会合
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Protocol = Proxy Visibility`
+> - `Panel = Swimlanes / Protocol Console / Shared Data or Descriptor View / Role / Object Map`
+> 这一页专门把“execution 不停、visibility 在后台建立”的语义和本节对齐。
 
 **fence** 只为*发起线程*（或某个 scope）建立内存访问的先后顺序，而**不**阻塞等待
 其它线程。它回答“让我此前的写对后续使用者可见”，而不是“等所有人”。
@@ -820,7 +951,59 @@ execution rendezvous。
 - 元数据对象是 **tensormap / descriptor**
 - 同步对象是 **mbarrier 本身**
 
+### 5.2.1 再压成一张表：这三类 fence 到底各自跨了什么边界
+
+很多人一看到 `fence`，就只会想到：
+
+```text
+是不是跨了 generic proxy 和 async proxy？
+```
+
+这只覆盖了第一类。更稳的读法是直接问：
+
+```text
+这个 fence 到底在给谁发布什么对象？
+```
+
+三类 fence 可以并排压成下面这张表：
+
+| fence | 发布的对象 | 发布者 | 后续消费者 | 真正跨的边界 |
+|---|---|---|---|---|
+| `fence.proxy.async` | shared tile / shared buffer 中的数据 | generic thread | async engine / async consumer | **proxy 边界** |
+| `tensormap_fenceproxy_acquire` | descriptor / tensormap metadata | 线程侧或 host-side metadata writer | TMA 单元 | **metadata consumer 边界** |
+| `fence.mbarrier_init.release.cluster` | mbarrier object 本身 | 初始化该对象的 CTA | cluster 内 peer CTA | **object publication / scope 边界** |
+
+这一张表最想表达的是：
+
+```text
+“视图不一样”不只会发生在 proxy 不同时
+也会发生在：
+  元数据写方 和 硬件消费者 不同时
+  对象初始化方 和 peer 使用方 不同时
+```
+
+所以这三类 fence 的统一心智模型不是“都在修 proxy”，而是：
+
+```text
+把“某个对象已经准备好给某类消费者使用”这件事发布出去
+```
+
+只是三者发布的对象不同：
+
+- `fence.proxy.async`
+  发布的是：shared data 对 async consumer 已可见
+- `tensormap_fenceproxy_acquire`
+  发布的是：descriptor metadata 对 TMA consumer 已可获取
+- `fence.mbarrier_init.release.cluster`
+  发布的是：mbarrier object 对 peer CTA 已可合法使用
+
 ### 5.3 最值得先抓的主线：shared memory 的 generic ↔ async proxy 边界
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Protocol = Proxy Visibility`
+> - `Arch = SM90 / SM100`
+> - `Panel = Swimlanes / Shared Data View / Protocol Console`
+> 这里最直接看的就是 `Generic Proxy Writer -> fence.proxy.async -> Async Proxy Reader` 这条线。
 
 这是最常见、也最容易误解的一类。
 
@@ -918,6 +1101,12 @@ async -> generic
 
 ### 5.4 第二类：不是数据 tile，而是 descriptor / tensormap 元数据
 
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Protocol = Proxy Visibility`
+> - `Arch = SM100`
+> - `Panel = Swimlanes / TensorMap / Descriptor View / Protocol Console`
+> 这里看的不是 Shared Data，而是 `Descriptor Metadata` 的写入、`Acquire ordering`、以及后续 async consumer 什么时候才能安全读取这些 metadata。
+
 这一类最容易被误读成“是不是又一种 barrier”。其实不是。它解决的是：
 
 ```text
@@ -974,6 +1163,11 @@ mbarrier 自己
 ```
 
 这里不要再把它读成数据流问题，而要读成“同步对象的初始化顺序”问题。
+
+这里的 `cluster` 不是 Triton 额外发明的抽象，而是 SM90+ 的 **thread block cluster**：
+多个 CTA 组成一个协作组，共享 `.shared::cluster` / DSMEM 视图。既然 peer CTA 之后会对
+同一个 cluster-scoped mbarrier 做 `arrive` / `wait`，那就必须先把“这个 mbarrier
+已经初始化好”这件事，以 `release.cluster` 的形式发布给同一个 cluster 里的其它 CTA。
 
 #### A. 它在补哪条顺序
 
@@ -1035,6 +1229,11 @@ rendezvous。
 
 ## 6. 按 target 看：同一条主链在三代 GPU 上怎么换协议
 
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Arch = SM80 / SM90 / SM100`
+> - `Protocol = Completion Tracking` 与 `Protocol = Complete Pipeline`
+> 这一节最适合一边读，一边在 simulator 顶部切 `Arch` 和 `Protocol` 做横向对照。
+
 如果前面 §3、§4、§5 是按职责拆开，这一节就只做一件事：
 
 ```text
@@ -1092,7 +1291,32 @@ rendezvous。
    - `sm90` 要补 proxy fence、cluster、mbarrier 生命周期
    - `sm100` 还要补 TMEM hazard 和更复杂的跨 warp-group / cta-group 交接
 
+再往深一层看，这三代最常见的“顺序来源”并不一样：
+
+| target | 哪些顺序更多是 ISA / 引擎自带 | 哪些顺序主要靠 completion | 哪些顺序主要靠 fence / handoff | 哪些地方常由编译器补 repair |
+|---|---|---|---|---|
+| `sm80/sm86` | 同线程 `cp.async` issue + `commit_group` bookkeeping | `cp.async.wait_group` | 很少有 proxy-specialized fence 主角化 | shared memory `ttg.barrier local` |
+| `sm90` | 同 warp-group 的 WGMMA issue / group bookkeeping | TMA 的 `mbarrier.wait`；WGMMA 的 `wait_group` | `fence_async_shared`，必要时 cluster 生命周期 fence | shared memory / proxy repair |
+| `sm100` | 某些 pipelined `tcgen05` pairing | `tc_gen5_commit -> wait_barrier`、`wait::ld/st` | `tcgen05.fence::before/after_thread_sync`，外加 proxy / publication fence | TMEM hazard barrier、proxy repair |
+
+所以看 target 差异时，最好不要只背“它用了哪个 wait”，而要问：
+
+```text
+这个 target 的主顺序来源，
+到底更偏向：
+  ISA 自带顺序
+  completion object / wait
+  specialized fence
+  还是 compiler repair？
+```
+
 ### 6.3 `sm80/sm86`：最经典的是 “cp.async 完成，但还没自动变成 CTA 可消费”
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Arch = SM80`
+> - `Protocol = Completion Tracking`
+> - `Protocol = Complete Pipeline`
+> 前者看 `cp.async Group` 的 completion observation，后者看它怎么和最后的 CTA reuse rendezvous 串起来。
 
 先抓一句话：
 
@@ -1130,6 +1354,12 @@ cp.async
 "does not provide any synchronization in the CTA"
 的含义，也是为什么后面还经常要接 `ttg.barrier local`。
 
+这里的 `cp.async` `group` 不是线程组，而是 **一批 async copy 组成的 completion
+batch**。`commit_group` 的意思也不是“数据已经写完”或“已经可见”，而是把当前这批
+已经 issue 的 `cp.async` 正式封成一个可等待的 batch；后面的 `wait_group N` 则等待
+“outstanding copy groups <= N”。这套 bookkeeping 是 **per-thread** 的，不会自动升级成
+CTA rendezvous。
+
 所以 `sm80` 的主线可以压成一句：
 
 ```text
@@ -1139,6 +1369,12 @@ per-thread completion
 ```
 
 ### 6.4 `sm90`：开始分成两条主线，搬运和计算各有自己的完成协议
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Arch = SM90`
+> - `Protocol = Completion Tracking`
+> - `Protocol = Complete Pipeline`
+> `Completion Tracking / SM90` 看的是 `TMA + mbarrier` 载入线；`Complete Pipeline / SM90` 看的是 `fence_async_shared -> wgmma -> wait_group -> bar.sync` 计算线。
 
 到了 Hopper，最该先建立的系统感是：
 
@@ -1155,7 +1391,7 @@ TMA 搬运线
 
 ```text
 barrier_expect(bytes)
--> async_tma_load
+-> async_tma_copy_global_to_local
 -> wait_barrier(phase)
 -> local_load / 下游消费
 ```
@@ -1199,12 +1435,87 @@ generic shared write
 
 这一条线最容易混的地方是：它的“完成”不是 `mbarrier`，而是 **group wait**。
 
+这里的 `wgmma` `group` 同样不是“producer/consumer group”，而是 **一批 async MMA
+组成的 completion batch**。`wgmma.commit_group` 把当前已发出的 `wgmma.mma_async`
+ 关成一个 batch，之后由 `wgmma.wait_group` 去等 outstanding MMA groups 的数量下降到
+目标值。和 `cp.async` 的主要区别不是“有没有 group”，而是：
+
+- `cp.async` group 是 per-thread async copy bookkeeping
+- `wgmma` group 是 per warp-group async MMA bookkeeping
+
 所以 `sm90` 真正的 target 视角不是“统一用一种 wait”，而是：
 
 - **搬运完成**看 `mbarrier.wait`
 - **计算完成**看 `wgmma.wait_group`
 
+这里再单独钉住一个最容易混的点：
+
+```text
+wgmma.wait_group 不看 mbarrier
+mbarrier 也不记录 WGMMA 在 SM90 上的完成数
+```
+
+两者只是经常出现在同一条 pipeline 里，但它们维护的是两套不同的 completion bookkeeping：
+
+- `mbarrier.wait` 观察的是：某批 async copy / TMA 搬运是否完成
+- `wgmma.wait_group` 观察的是：某批 async MMA group 是否已经 retire 到目标深度以内
+
+所以它们的关系不是“一个等另一个”，而是：
+
+```text
+先用 mbarrier.wait 确认输入 tile 真的到位
+再用 wgmma.wait_group 确认计算结果已经可以被后续安全消费
+```
+
+#### C. `wgmma.wait_group` 到底在等什么
+
+它等的不是某个 shared-memory barrier object，也不是“多少字节到了”。它等的是：
+
+```text
+outstanding committed WGMMA groups 的数量
+```
+
+这里的 `group` 要按 completion batch 理解：
+
+- `wgmma.commit_group`：把当前已经 issue 的 `wgmma.mma_async` 关成一个可等待的 batch
+- `wgmma.wait_group N`：等待直到 **outstanding groups <= N**
+
+所以：
+
+- `wait_group 0` = 把此前 committed 的 group 全部 drain 掉
+- `wait_group 1` = 允许还保留 1 个尚未完成的 group
+- `wait_group N` = 允许还保留 `N` 个尚未完成的 group
+
+#### D. 它怎么知道“要等多少”和“已经结束了几个”
+
+这两件事分别来自不同层：
+
+1. **“要等多少”是编译器静态决定的**
+
+   Triton 在 pipeline 变换里会决定这里要保留多少异步 WGMMA depth，然后把这个目标值写进
+   `ttng.warp_group_dot_wait {pendings = ...}`。lowering 以后就是 PTX
+   `wgmma.wait_group.sync.aligned N`。
+
+2. **“已经结束了几个”是硬件内部的 group bookkeeping**
+
+   WGMMA 硬件会跟踪哪些 committed groups 还 outstanding。随着异步 MMA 真正 retire，
+   outstanding group 数量自动下降；当这个数量已经 `<= pendings` 时，`wait_group`
+   就可以通过。
+
+所以 `wgmma.wait_group` 和 `mbarrier.wait` 的差异可以压成一句话：
+
+```text
+mbarrier.wait = 等一个可观察的 completion object
+wgmma.wait_group = 等硬件内部 outstanding-group 计数降到阈值
+```
+
 ### 6.5 `sm100`：主链继续统一到 mbarrier，但 TMEM 成为新约束中心
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Arch = SM100`
+> - `Protocol = Completion Tracking`
+> - `Protocol = Complete Pipeline`
+> `Completion Tracking / SM100` 看的是 `tcgen05.commit -> mbarrier -> wait_barrier`；`Complete Pipeline / SM100` 再把 Shared Memory payload、Tensor Memory result、以及最后的 reuse rendezvous 串回同一条时间线。
 
 先抓一句话：
 
@@ -1232,22 +1543,255 @@ init_barrier
 | `完成` | `ttng.tc_gen5_commit`（`:774`）把完成记到 mbarrier，再由 `wait_barrier` 观察 |
 | `补丁` | `TMemBarrierInsertion`、`NVVM::BarrierOp` 封边、必要的 cluster / cta_group 约束 |
 
-这条线和 `sm90` WGMMA 最大的差别是：
+这里最值得和 `sm90` 对照着记，因为两代都在做“异步计算完成观察”，但完成模型不一样。
 
-- WGMMA 主要靠 group 模型回收计算完成
-- tcgen05 选择把计算完成**折回 mbarrier**
+#### A. 先把一句话说硬一点
 
-原因在于：
+```text
+sm90 / WGMMA:
+  计算完成主要是 queue-count completion
 
-- tcgen05 结果写到 **TMEM**
-- 后续 `tcgen05.ld` / consumer 需要一个跨阶段都能共享的 completion 观察点
-- mbarrier 正好提供了这种“公共货币”
+sm100 / tcgen05:
+  计算完成被外化成 object-based completion
+```
+
+翻成原语就是：
+
+- `sm90` 主要看 `wgmma.commit_group -> wgmma.wait_group`
+- `sm100` 主要看 `tc_gen5_commit -> wait_barrier`
+
+#### B. `sm90` 为什么不把 WGMMA completion 也接到 mbarrier
+
+不是因为 `mbarrier` 不能用，而是因为 **WGMMA 本身的 native completion interface**
+就不是 barrier object，而是 **outstanding group 计数**。
+
+也就是说，`sm90` 这条计算线最自然的问题是：
+
+```text
+我这个 issuing warp-group 之前发出去的 async MMA
+现在还剩几个尚未完成的 group？
+```
+
+于是对应的 wait 也自然长成：
+
+```text
+wgmma.wait_group N
+= 等到 outstanding committed groups <= N
+```
+
+这种模型很适合下面这种场景：
+
+- 同一个 warp-group 发起 `wgmma.mma_async`
+- 还是同一个 warp-group 之后执行 `wgmma.wait_group`
+- 然后继续消费 accumulator / 继续发下一批 WGMMA
+
+这里当然也有“阶段”，但这些阶段主要都留在 **同一个计算 actor** 的局部视角里：
+
+```text
+issue WGMMA
+-> group bookkeeping
+-> wait_group
+-> 本 warp-group 继续消费结果
+```
+
+所以 `sm90` 不是没有跨阶段，而是：
+
+- **搬运线** 已经把完成外化成 `mbarrier` 了
+- **计算线** 仍然保持为 warp-group 自己的 queue-count completion
+
+#### C. `sm100` 为什么把 tcgen05 completion 接回 mbarrier
+
+`tcgen05` 这条线的重心不只是“发起它的 warp-group 什么时候能继续”，而是：
+
+```text
+此前异步 tcgen05 什么时候完成，
+才能让后面的观察者和使用者把 TMEM 结果当成可消费对象？
+```
+
+这里的关键变化有两个：
+
+1. **结果对象换成了 TMEM**
+
+   `sm90` 的 WGMMA 更像“warp-group 围着自己的 async MMA queue 和 accumulator 回收计算”。
+   `sm100` 的 tcgen05 则把结果明确落到 **TMEM**，于是结果对象本身更像一个后续阶段要继续
+   使用的存储体，而不只是 issuing warp-group 的内部瞬时状态。
+
+2. **完成事实要被外部观察者共享**
+
+   后面不只是“发起者自己再等等”，还可能出现：
+
+   - 后续 `tcgen05.ld`
+   - 后续 consumer warp-group / cta_group
+   - 下一轮 reuse 之前的观察点
+
+   这时就更需要一个 **公共 completion object**，让“计算已完成”这件事能被不同程序点、
+   不同角色、不同后续阶段用同一种方式观察。
+
+而 `mbarrier` 正好提供这种“公共货币”。`tc_gen5_commit` 的作用，就是把：
+
+```text
+此前 tcgen05 异步计算已完成
+```
+
+翻译成：
+
+```text
+mbarrier 上出现一个可 wait / 可共享观察的 completion fact
+```
+
+#### D. 这里说的“跨阶段”具体跨哪里
+
+这里的“阶段”不是编译器阶段，不是 `TTIR -> TTGIR -> PTX`。这里说的是 **protocol /
+pipeline stage**。
+
+至少可以拆成这几段：
+
+1. **issue stage**
+   `tc_gen5_mma` 发起异步计算
+2. **completion-link stage**
+   `tc_gen5_commit` 把“已完成”链接到 `mbarrier`
+3. **observation stage**
+   某个 observer 执行 `wait_barrier`
+4. **consume / reuse stage**
+   `tcgen05.ld` 或后续 consumer 使用 TMEM 结果，或者进入下一轮复用
+
+所以“跨阶段共享 completion 观察点”真正想表达的是：
+
+```text
+发起计算的地方
+!= 观察完成的地方
+!= 真正消费结果的地方
+```
+
+这三者不必总是同一个程序点，甚至不必总是同一个 warp-group。
+
+#### E. 所以为什么 `sm100` 这里更适合 mbarrier，而 `sm90` 不必
+
+不是 `mbarrier` 越通用越应该 everywhere，而是要看 completion 需要满足什么形态：
+
+- 如果 completion 只需要回答：
+  “这个 warp-group 自己发出的 async MMA 还剩多少尚未完成？”
+  那 `wait_group` 就很自然。
+- 如果 completion 需要回答：
+  “这批异步计算完成了没，能不能把这个事实交给后面的 observer / consumer / reuse 阶段共用？”
+  那 `mbarrier` 更自然。
 
 所以 `sm100` 的 target 视角可以压成：
 
 ```text
-计算完成也被纳入 mbarrier 世界
-+ 但 TMEM hazard 需要额外的 barrier repair
+tcgen05 把计算完成也外化成 mbarrier completion
++ 但 TMEM hazard 仍然需要额外的 barrier repair
+```
+
+#### F. 再把 `tcgen05` 的“顺序”拆成 3 类，不要把所有 wait / fence 混成一类
+
+到 Blackwell 这里，最容易误读的是：
+
+```text
+既然有 tcgen05.fence::*，
+是不是凡是 tcgen05 顺序都靠 fence？
+```
+
+不是。`tcgen05` 的顺序至少要拆成 3 类看：
+
+##### 1. 同线程、属于 pipelined pairing
+
+这一类 **不需要显式 fence**。顺序由 `tcgen05` ISA 的 pipelined pairing 规则直接保证。
+
+可以把它理解成：
+
+```text
+同一线程里，
+某些特定 tcgen05 指令对
+天然按 program order 串起来
+```
+
+这类场景回答的是：
+
+```text
+同一个 issuing thread 连续发的 tcgen05 pipeline 片段，
+硬件是否已经承诺了先后顺序？
+```
+
+如果答案是“是”，那就不用再额外补一个显式 ordering 机制。
+
+##### 2. 同线程、但不是 pipelined pairing
+
+这一类不能只靠“程序里写在前后”来推断安全。重点不是再补一个普通 fence，而是：
+
+```text
+要等 completion 条件真的满足
+```
+
+典型地分两路：
+
+- `tcgen05.ld` / `tcgen05.st`
+  主要看 `tcgen05.wait::ld` / `tcgen05.wait::st`
+- `tcgen05.mma` / `tcgen05.cp` / `tcgen05.shift`
+  主要看 `tcgen05.commit ... + mbarrier.try_wait...`
+
+这一类和本文前面 `§4`、`§6.5` 的主线是同一件事：
+
+```text
+issue async tcgen05
+-> commit / link completion
+-> wait / observe completion
+-> 再进入后续消费
+```
+
+所以这里真正依赖的是 **completion protocol**，不是 generic 的 visibility fence。
+
+##### 3. 跨线程交接
+
+这时才会看到 `tcgen05` 专用的 inter-thread fence：
+
+- `tcgen05.fence::before_thread_sync`
+- `tcgen05.fence::after_thread_sync`
+
+它们解决的不是“异步动作完成了没”，也不是 `fence.proxy.async` 那种 generic↔async proxy
+可见性问题，而是：
+
+```text
+tcgen05 异步流水
+如何和 thread-sync / execution-ordering 操作正确衔接
+```
+
+更稳的读法是：
+
+- `before_thread_sync`
+  把前面的异步 `tcgen05` 排到后续 thread-sync / execution-ordering 之前
+- `after_thread_sync`
+  把后面的异步 `tcgen05` 排到前面的 thread-sync / execution-ordering 之后
+
+所以这一类本质上是在回答：
+
+```text
+当 tcgen05 异步流水要跨线程 handoff 时，
+怎么把“异步流水里的顺序”
+和“线程之间的同步点”
+接起来？
+```
+
+##### 4. 把三类压成一张表
+
+| 场景 | 主要问题 | 主要机制 | 不要误读成什么 |
+|---|---|---|---|
+| 同线程 + pipelined pairing | ISA 是否已承诺 program order | ISA 内建 pipeline pairing | 不要误读成“凡是 tcgen05 都要显式 fence” |
+| 同线程 + 非 pairing | 后续使用前是否真的完成 | `wait::ld/st` 或 `commit + mbarrier.wait` | 不要误读成“只要程序顺序在前后就够了” |
+| 跨线程 handoff | 异步 tcgen05 和 thread-sync 如何衔接 | `tcgen05.fence::before_thread_sync` / `after_thread_sync` | 不要误读成 `fence.proxy.async` 或 completion wait |
+
+所以你如果把 `tcgen05` 这条线压成最短判断树，可以这样记：
+
+```text
+先问：是不是同线程的 pipeline pairing？
+  是 -> ISA program order 已保证
+  否 -> 再问：我缺的是 completion，还是跨线程 handoff 顺序？
+
+缺 completion
+  -> 看 wait::ld/st 或 commit + mbarrier.wait
+
+缺跨线程 handoff 顺序
+  -> 看 tcgen05.fence::before/after_thread_sync
 ```
 
 ### 6.6 最后把三代压成一张“演化表”
@@ -1277,6 +1821,11 @@ init_barrier
 ---
 
 ## 7. 编译器如何自动补齐：为什么源码没写，TTGIR 里却多了同步点
+
+> 可视化对应（部分）：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Panel = Compiler Mapping`
+> - `Panel = Role / Object Map`
+> 当前 simulator 会把 `TTIR -> TTGIR -> PTX -> Hardware` 的协议落点显示出来，但不会直接展示 `MembarAnalysis` / `TMemBarrierInsertion` / `ProxyFenceInsertion` 这些 pass 在哪里做决策；这部分仍以本节文字和源码为准。
 
 前面 §3、§4、§5 讲的是“这些同步原语各自是什么意思”。这一节只回答一个更实用的问题：
 
@@ -1551,6 +2100,12 @@ ProxyFence 问：前一个 proxy 的写，后一个 proxy 到底看不看得见�
 
 ## 8. 为什么需要同步 —— 因果链
 
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Execution Rendezvous` 对应“线程组不是天然锁步”
+> - `Completion Tracking` 对应“异步引擎和 SM 不是同一个时间轴”
+> - `Proxy Visibility` 对应“同一块内存不只有一个观察世界”
+> - `Complete Pipeline` 对应“把三类缺口重新串成一条完整 stage lifecycle”
+
 前面各节已经把原语分成了三种职责：
 
 - `§3` 会合：哪些线程必须先到齐
@@ -1664,7 +2219,7 @@ cp.async / TMA / wgmma / tcgen05 返回“已发起”，
 这类根因主要对应 `§4` 和 `§6` 的完成协议：
 
 - `cp.async.commit_group -> wait_group`
-- `barrier_expect -> async_tma_load -> wait_barrier`
+- `barrier_expect -> async_tma_copy_global_to_local -> wait_barrier`
 - `wgmma.commit_group -> wait_group`
 - `tc_gen5_commit -> wait_barrier`
 
@@ -1851,6 +2406,12 @@ Triton 只是把这些缺口显式化、协议化、再在必要时自动修补�
 
 ## 9. 统一心智模型与速查
 
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Panel = Role / Object Map`
+> - `Panel = Information Panel`
+> - `Panel = Compiler Mapping`
+> 这一节的对象视角、角色视角、以及抽象边界，在 simulator 里分别对应这三个面板。
+
 这一节不再引入新知识，只做一件事：
 
 ```text
@@ -1876,6 +2437,23 @@ Triton 只是把这些缺口显式化、协议化、再在必要时自动修补�
 4. 这些同步点是源码里没写、后来多出来的吗？
    - 是：再去 `§7`
    - 说明你看到的是 hazard repair，不只是协议本体
+
+如果前三问都定位到了，再继续问第 5 问：
+
+5. 我现在依赖的这个顺序，**到底是谁提供的**？
+   - 是 ISA / 引擎内建的同线程顺序吗？
+   - 是 execution rendezvous 吗？
+   - 是 completion wait 吗？
+   - 是 visibility / ordering fence 吗？
+   - 是 inter-thread handoff fence 吗？
+   - 还是编译器后补的 repair？
+
+这一步非常关键，因为很多表面上都长成“前一个 op 在前，后一个 op 在后”，但缺的东西完全不同：
+
+- 可能缺的是“**完成没观察到**”
+- 可能缺的是“**可见性没发布出去**”
+- 可能缺的是“**跨线程 handoff 没接上**”
+- 也可能什么都不缺，因为 **ISA pairing 本来就保证了**
 
 最容易混掉的是第 2 和第 3：
 
@@ -1918,6 +2496,11 @@ repair = 修补
 ```
 
 ### 9.3 再压成一个对象视角：到底在保护什么对象
+
+> 可视化对应：[`Async Protocol Simulator`](../visuals/async_protocol_simulator/index.html)
+> - `Panel = Role / Object Map`
+> - `Panel = Shared Data View / TensorMap / Descriptor View / mbarrier State`
+> 这几块面板分别把 `shared tile`、`descriptor metadata`、`mbarrier object`、`Tensor Memory result` 这些对象拆开显示。
 
 前面所有同步，最终都围绕几类对象打转。按对象看，结构会非常稳定：
 
