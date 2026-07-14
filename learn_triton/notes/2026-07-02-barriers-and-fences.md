@@ -2538,6 +2538,100 @@ repair = 修补
 | `fence.mbarrier_init.release.cluster` | 顺序 / 可见性 | smem mbarrier 对象 | thread（cluster） | 否 | mbarrier init 先于 peer CTA 使用可见 |
 | `TMemBarrierInsertion` 插的 `ttg.barrier local` | 自动修补 | TMEM 使用边界（形式上 local） | per CTA | 是 | 隔离 TMEM 数据 hazard，不是 completion 本体 |
 
+### 9.4A 按“scope / 缺口 / 原因 / 补法”重排所有同步原语
+
+这一节把正文里出现过的同步原语，按你现在已经建立起来的模型重排：
+
+```text
+这个原语在哪个 scope 用？
+它补的到底是哪一种缺口？
+为什么这个缺口会出现？
+它是怎么补上的？
+补完之后还缺不缺别的东西？
+```
+
+这里的“原语”只统计同步/完成/顺序原语本身，不把 `async_tma_copy_*`、`wgmma.mma_async`、
+`tcgen05.mma` 这类 **producer issue op** 也混进来。因为后者回答的是“谁发起了异步工作”，
+不是“缺口怎么被补上”。
+
+#### A. execution rendezvous：缺的是“谁必须先到齐”
+
+| 原语 | 典型 scope | 缺了什么 | 为什么会缺 | 它怎么补 | 补完后通常还要不要别的东西 |
+|---|---|---|---|---|---|
+| `ttg.barrier` / `bar.sync 0` | CTA | 缺 CTA 内 execution rendezvous | warp 独立调度；shared memory producer/consumer 不是天然锁步 | 让整个 CTA 先会合，再继续 | 如果前面还有 async completion 没观察完，仍要先配 `wait_group` / `wait_barrier` |
+| `bar.sync N, cnt`（命名 barrier） | CTA 子集 | 缺 sub-CTA rendezvous | 只是一部分线程在协作，不想把整个 CTA 都停下 | 只同步注册到该 barrier 的线程子集 | 若这批线程还跨 proxy / async completion，仍要另配 fence 或 wait |
+| `bar.warp.sync` / `__syncwarp` | warp | 缺 warp 内重收敛 | 同一 warp 内 lanes 也可能因控制流分歧失去收敛 | 只让一个 warp 的 32 lanes 对齐 | 不替代 CTA barrier，更不替代 completion |
+| `barrier.cluster.arrive` / `barrier.cluster.wait` / `cluster_barrier` | cluster | 缺多个 CTA 之间的 rendezvous | 会合对象已经不是 CTA 内线程，而是 peer CTA | 让 cluster 内 CTA 在 arrive/wait 点对齐 | 不替代 mbarrier init publication；对象初始化若跨 CTA 仍要 `fence.mbarrier_init.release.cluster` |
+
+#### B. mbarrier object：缺的是“异步完成怎么变成共享可观察事实”
+
+| 原语 | 典型 scope | 缺了什么 | 为什么会缺 | 它怎么补 | 补完后通常还要不要别的东西 |
+|---|---|---|---|---|---|
+| `init_barrier` / `mbarrier.init` | thread 执行，效果到 CTA/cluster barrier object | 缺 completion object 生命周期起点 | shared memory 里一开始只是普通 bytes，不是可用 barrier object | 把该 smem 槽位初始化成 mbarrier | 若该对象要给 peer CTA 用，还要 `fence.mbarrier_init.release.cluster` |
+| `inval_barrier` / `mbarrier.inval` | CTA/cluster object lifecycle | 缺对象退役 / reuse 闭环 | 不退役就可能把旧 phase / 旧状态带进下一轮 | 明确结束本轮协议，允许后续复用 | 只是 lifecycle closure，不替代 completion wait |
+| `barrier_expect(bytes)` / `mbarrier.expect_tx` | CTA/cluster object | 缺 completion condition 定义 | consumer 若不知道“等什么”，wait 就没有判定条件 | 先声明本轮预期 bytes / tx 条件 | 还要有真实 producer 去把完成记到账 |
+| `arrive_barrier` / `mbarrier.arrive` | CTA/cluster object | 缺 arrival bookkeeping | 有些协议不仅等 bytes，还要等 participant arrival | 往 object 里记一次 arrival / count | 不是 wait，不负责阻塞 consumer |
+| `wait_barrier` / `mbarrier.try_wait` | whoever waits | 缺 completion observation | 异步引擎完成与 SM 执行解耦；“已发起”不等于“已完成” | 在 phase/ready 条件满足前阻塞或轮询 | 只回答完成，不回答 execution rendezvous 或 proxy visibility |
+| `async_copy_mbarrier_arrive` | producer thread/warp -> CTA object | 缺“非 bulk async copy 完成如何共享观察” | 非 bulk async copy 的完成原本只在引擎/本线程内部 | 把该类 async copy completion 链接到 mbarrier | 之后仍由 `wait_barrier` 去观察 |
+| `tc_gen5_commit -> wait_barrier` | warp-group / cta_group + CTA object | 缺“tcgen05 完成如何被共享观察” | `tcgen05` 结果落在 TMEM，后续 observer/consumer 不一定是同一个 actor | `tc_gen5_commit` 先把 completion 折回 mbarrier，再由 `wait_barrier` 观察 | TMEM hazard 仍可能要额外 `ttg.barrier local` 修补 |
+| `clc_try_cancel -> wait_barrier` | producer + CTA object | 缺“CLC result buffer 完成如何共享观察” | 结果写完这件事需要变成共享 completion fact | 先把完成挂到 mbarrier，再 wait | 只是 completion，不替代其它顺序边界 |
+
+#### C. group completion：缺的是“本 actor 自己发出的异步批次是否已经完成”
+
+| 原语 | 典型 scope | 缺了什么 | 为什么会缺 | 它怎么补 | 补完后通常还要不要别的东西 |
+|---|---|---|---|---|---|
+| `cp.async.commit_group` | executing thread | 缺 waitable batch 边界 | 一串 `cp.async` 只是连续 issue；硬件需要知道哪一批要一起等 | 把当前已 issue 的 copy 封成一个 group | 还要 `cp.async.wait_group` 去真正观察 completion |
+| `cp.async.wait_group` | executing thread | 缺 per-thread completion observation | `cp.async` 异步推进；本线程后续读 smem 前必须先确认完成 | 等到本线程 outstanding cp.async groups 满足阈值 | 若 tile 要给别的线程/warp 用，通常还要 `ttg.barrier local` / `bar.sync` |
+| `wgmma.fence` | warp-group | 缺进入 WGMMA 计算管线前的输入顺序边界 | shared/generic 一侧准备好的输入，不会自动以 WGMMA 需要的顺序进入 async MMA pipeline | 在 WGMMA issue 前建立该计算协议要求的输入顺序 | 若前面还是 generic->async proxy 边界，往往还要先有 `fence_async_shared` |
+| `wgmma.commit_group` | warp-group | 缺 waitable MMA batch 边界 | 一串 `wgmma.mma_async` 也只是连续 issue；需要 group bookkeeping | 把当前 WGMMA issue 封成一个 completion batch | 还要 `wgmma.wait_group` 去等 outstanding groups 下降 |
+| `wgmma.wait_group` | warp-group | 缺 compute completion observation | WGMMA 完成模型不是 mbarrier object，而是 outstanding-group 计数 | 等到 committed groups 数量降到目标阈值 | 这只解决计算 completion；跨 warp/CTA 交接还要 CTA barrier 或别的 handoff |
+| `tcgen05.wait::ld` / `tcgen05.wait::st` | issuing thread | 缺 `ld/st` 这一路的 completion observation | `tcgen05.ld/st` 不属于前面那些 pipelined pairing 就绪即用的场景 | 用 wait-based completion 明确等 `ld/st` 完成 | 不是 mbarrier-based 那一路，不能和 `mma/cp/shift` 的 wait 随意互换 |
+
+#### D. visibility / ordering fence：缺的是“前面的写对后续消费者还不可见”
+
+| 原语 | 典型 scope | 缺了什么 | 为什么会缺 | 它怎么补 | 补完后通常还要不要别的东西 |
+|---|---|---|---|---|---|
+| `fence.proxy.async.shared::{cta,cluster}` / `fence_async_shared` | thread issue，scope = CTA/cluster | 缺 generic proxy -> async proxy ordering / visibility | shared memory 的 generic 视图和 async 视图不是同一个可见性世界 | 把前面的 generic 写发布给后续 async reader | 它不等待硬件完成；completion 仍要靠 `wait_group` / `wait_barrier` |
+| `tensormap_fenceproxy_acquire` | GPU | 缺 descriptor / tensormap metadata 对 TMA 单元的可见性 | metadata 虽然也是 data，但它面向的是 TMA/tensormap consumer 的单独读取路径 | 用 acquire fence 保证 descriptor 写先于 TMA 读 | 它只补 metadata visibility，不观察 TMA completion |
+| `fence.mbarrier_init.release.cluster` | cluster | 缺 mbarrier object 初始化对 peer CTA 的 publication | barrier object 在一个 CTA 初始化后，peer CTA 不会自动看到“已初始化”这个事实 | 用 release fence 把 init 后状态发布给 cluster 内其它 CTA | 它只保证对象初始化可见，不回答后续 async work 是否完成 |
+
+#### E. specialized inter-thread handoff fence：缺的是“异步 tcgen05 流水怎样接到 thread-sync 上”
+
+| 原语 | 典型 scope | 缺了什么 | 为什么会缺 | 它怎么补 | 补完后通常还要不要别的东西 |
+|---|---|---|---|---|---|
+| `tcgen05.fence::before_thread_sync` | thread -> 后续 thread-sync / execution-ordering 点 | 缺 tcgen05 async pipeline 到 thread-sync 前的 handoff ordering | `tcgen05` 异步流水的顺序，不会自动接到后面的线程同步点上 | 让前面的异步 tcgen05 排在后续 thread-sync / execution-ordering 之前 | 它不是 completion wait；若结果还没完成，仍要 completion 机制 |
+| `tcgen05.fence::after_thread_sync` | 前序 thread-sync / execution-ordering 点 -> 后续 thread | 缺 thread-sync 到后续 tcgen05 async pipeline 的 handoff ordering | 前面的线程同步点，不会自动约束后续 tcgen05 异步流水怎样接上 | 让后续异步 tcgen05 排在前面的 thread-sync / execution-ordering 之后 | 它不是 generic proxy fence，也不替代 `wait::ld/st` / `wait_barrier` |
+
+#### F. compiler-inserted repair：缺的是“completion 有了，但 legality 还没闭环”
+
+| 原语 | 典型 scope | 缺了什么 | 为什么会缺 | 它怎么补 | 补完后通常还要不要别的东西 |
+|---|---|---|---|---|---|
+| `MembarAnalysis` 插的 `ttg.barrier local` | CTA | 缺 shared memory 数据 hazard 隔离 | CTA 内 shared 复用会出现 RAW/WAR/WAW；源码未必显式写 barrier | 自动在合适位置补 `ttg.barrier local` / `bar.sync` | 它不观察异步完成；若前面是 async op，仍尽量推到 wait 后 |
+| `TMemBarrierInsertion` 插的 `ttg.barrier local` | CTA | 缺 TMEM use-edge legality | `load->mma` / `store->mma` 等 TMEM 边界即使 completion 成立，也可能仍有 use hazard | 自动在这些 use-edge 前插 CTA barrier | 它隔离的是 TMEM hazard，不是 tcgen05 completion 本体 |
+| `FenceInsertion` / `ProxyFenceInsertion` 插的 `fence_async_shared` | CTA/cluster | 缺 generic↔async proxy ordering | 前一个 proxy 的写，对后一个 proxy 还不可见 | 自动在 pattern / alias 分析认定需要时补 `fence.proxy.async` | 仍不替代 completion wait，也不替代 execution barrier |
+
+#### G. 一句话速记：每类原语到底在补哪条缺口
+
+```text
+ttg.barrier / bar.sync / cluster barrier
+  = 缺 execution rendezvous
+
+mbarrier.* / wait_barrier / tc_gen5_commit
+  = 缺 shared completion observation
+
+cp.async.wait_group / wgmma.wait_group / tcgen05.wait::ld/st
+  = 缺 issuing actor 自己的 completion observation
+
+fence.proxy.async / tensormap_fenceproxy_acquire / fence.mbarrier_init.release.cluster
+  = 缺 visibility / ordering publication
+
+tcgen05.fence::before/after_thread_sync
+  = 缺 specialized inter-thread handoff ordering
+
+Membar / TMemBarrierInsertion / ProxyFenceInsertion
+  = 缺 legality repair，不是协议本体
+```
+
 ### 9.5 补充：ARef 不是新原语，而是同步抽象（NVWS 层）
 
 读 NVWS IR 时会看到 `nvws.aref.{create,put.enter,put.exit,get.enter,get.exit}`，容易
