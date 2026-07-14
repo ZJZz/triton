@@ -25,6 +25,10 @@
 
 - [docs/GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/GUIDE.md)
 
+学习 TTGIR / TTNGIR pass 的实现细节：
+
+- [docs/PASS_IMPLEMENTATION_LEARNING_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/PASS_IMPLEMENTATION_LEARNING_GUIDE.md)
+
 查看今天的学习笔记：
 
 - [notes/2026-06-26-notes.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/notes/2026-06-26-notes.md)

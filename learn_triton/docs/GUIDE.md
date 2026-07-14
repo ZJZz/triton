@@ -247,3 +247,5 @@ python learn_triton/tools/mark_effective_passes.py \
   负责把 TTGIR 拆成“执行层级分工映射”、layout / movement、scheduling 三个主题分别讲清
 - [IR_PASS_DIFF_LEARNING_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/IR_PASS_DIFF_LEARNING_GUIDE.md)
   负责具体的 pass-diff 方法
+- [PASS_IMPLEMENTATION_LEARNING_GUIDE.md](/LocalRun/jiangzhe.zhao/my_repo/triton/learn_triton/docs/PASS_IMPLEMENTATION_LEARNING_GUIDE.md)
+  负责从 pass 概念进入源码实现，系统学习算法、数据结构、设计模式和验证方法
